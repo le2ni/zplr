@@ -1,4 +1,4 @@
-import { BarcodeFieldDefault } from "@/commands/BacodeFieldDefault";
+import { BarcodeFieldDefault } from "@/commands/BarcodeFieldDefault";
 import { BarcodeFieldCode128 } from "@/commands/BarcodeFieldCode128";
 import { FieldData } from "@/commands/FieldData";
 import { FieldOrigin } from "@/commands/FieldOrigin";
@@ -79,27 +79,52 @@ describe("parse", () => {
   it("parses simple commands", () => {
     const input = "^XA^FO100,100^FDHello, World!^FS^XZ";
     const parsed = parse(input);
-    expect(parsed).toEqual([
-      [
-        new FieldOrigin("100,100"),
-        new FieldData("Hello, World!"),
-        new FieldSeparator(),
-      ],
-    ]);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toHaveLength(3);
+    expect(parsed[0][0]).toBeInstanceOf(FieldOrigin);
+    expect(parsed[0][0]).toMatchObject({
+      x: 100,
+      y: 100,
+      sourceStart: 3,
+      sourceEnd: 13,
+    });
+    expect(parsed[0][1]).toBeInstanceOf(FieldData);
+    expect(parsed[0][1]).toMatchObject({
+      data: "Hello, World!",
+      sourceStart: 13,
+      sourceEnd: 29,
+    });
+    expect(parsed[0][2]).toBeInstanceOf(FieldSeparator);
+    expect(parsed[0][2]).toMatchObject({ sourceStart: 29, sourceEnd: 32 });
   });
 
   it("parses a barcode command", () => {
     const input = `^BY5,2,270
 ^FO100,550^BC^FD12345678^FS`;
     const parsed = parse(input);
-    expect(parsed).toEqual([
-      [
-        new BarcodeFieldDefault("5,2,270"),
-        new FieldOrigin("100,550"),
-        new BarcodeFieldCode128(""),
-        new FieldData("12345678"),
-        new FieldSeparator(),
-      ],
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toHaveLength(5);
+    expect(parsed[0][0]).toBeInstanceOf(BarcodeFieldDefault);
+    expect(parsed[0][0]).toMatchObject({ width: 5, ratio: 2, height: 270 });
+    expect(parsed[0][1]).toBeInstanceOf(FieldOrigin);
+    expect(parsed[0][1]).toMatchObject({ x: 100, y: 550 });
+    expect(parsed[0][2]).toBeInstanceOf(BarcodeFieldCode128);
+    expect(parsed[0][3]).toBeInstanceOf(FieldData);
+    expect(parsed[0][4]).toBeInstanceOf(FieldSeparator);
+  });
+
+  it("does not parse XA as the one-character A command", () => {
+    const [commands] = parse("^XA^A0R,20,10^FDX^FS^XZ");
+    expect(commands.map((command) => command.constructor.name)).toEqual([
+      "ScalableBitmappedFont",
+      "FieldData",
+      "FieldSeparator",
     ]);
+  });
+
+  it("preserves legacy field data when a custom delimiter is active", () => {
+    const [commands] = parse("^XA^CD;^FO1;2^FDhello;world^FS^XZ");
+    expect(commands[1]).toBeInstanceOf(FieldData);
+    expect(commands[1]).toMatchObject({ data: "hello;world" });
   });
 });

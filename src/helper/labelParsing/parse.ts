@@ -1,20 +1,27 @@
 import { CommandMap, Commands } from "@/commands";
+import { parseDocument } from "@/core/documentParser";
 import { CommandClass } from "@/types/CommandClass";
+import { ZplLabelNode } from "@/types/ZplDocument";
+
+const parsedLabelNode = Symbol("zplr.parsedLabelNode");
+
+interface ParsedLabelMetadata {
+  label: ZplLabelNode;
+  commandIndexMap: ReadonlyMap<number, number>;
+}
+
+type StructuralCommand = "XA" | "XZ" | "CC" | "CD" | "CT";
 
 export function nextCommandIndex(
   zpl: string,
   caret: string,
   tilde: string
 ): number {
-  const tildeIndex = zpl.indexOf(caret);
-  const caretIndex = zpl.indexOf(tilde);
+  const caretIndex = zpl.indexOf(caret);
+  const tildeIndex = zpl.indexOf(tilde);
   let index = zpl.length;
-  if (tildeIndex !== -1) {
-    index = Math.min(index, tildeIndex);
-  }
-  if (caretIndex !== -1) {
-    index = Math.min(index, caretIndex);
-  }
+  if (caretIndex !== -1) index = Math.min(index, caretIndex);
+  if (tildeIndex !== -1) index = Math.min(index, tildeIndex);
   return index;
 }
 
@@ -23,10 +30,7 @@ export function skipToCommandStart(
   caret: string,
   tilde: string
 ): string {
-  let index = nextCommandIndex(zpl, caret, tilde);
-
-  const remaining = zpl.slice(index);
-  return remaining;
+  return zpl.slice(nextCommandIndex(zpl, caret, tilde));
 }
 
 export function getCommandEnd(
@@ -34,9 +38,14 @@ export function getCommandEnd(
   caret: string,
   tilde: string
 ): number {
-  let index = nextCommandIndex(zpl.slice(1), caret, tilde);
-  if (index === -1) return zpl.length;
-  return index + 1;
+  return nextCommandIndex(zpl.slice(1), caret, tilde) + 1;
+}
+
+function legacyCommandName(commandText: string): string | undefined {
+  if (commandText.startsWith("A@")) return "A@";
+  if (commandText.startsWith("A")) return "A";
+  const command = commandText.slice(0, 2);
+  return /^[A-Z0-9]{2}$/.test(command) ? command : undefined;
 }
 
 export function getCommandInfo(
@@ -45,103 +54,71 @@ export function getCommandInfo(
   tilde: string
 ):
   | {
-      name: Commands | "XA" | "XZ" | "CC";
+      name: Commands | StructuralCommand | "A@";
       paramText: string;
       remaining: string;
     }
   | undefined {
-  const commandNameRegex = new RegExp(`[B-Z0-9]{2}|A@|A`);
-  const commandText = zpl.slice(1);
-  const commandName = commandText.match(commandNameRegex)?.[0] as
-    | Commands
-    | "XA"
-    | "XZ"
-    | "CC"
-    | undefined;
-  if (!commandName) {
-    console.warn(`INVALID command: ${commandText}`);
-    return undefined;
-  }
+  if (zpl[0] !== caret && zpl[0] !== tilde) return undefined;
+  const commandName = legacyCommandName(zpl.slice(1));
+  if (!commandName) return undefined;
   const commandEnd = getCommandEnd(zpl, caret, tilde);
-  const paramText = zpl.slice(commandName.length + 1, commandEnd);
-  const remaining = zpl.slice(commandEnd);
   return {
-    name: commandName,
-    paramText,
-    remaining,
+    name: commandName as Commands | StructuralCommand | "A@",
+    paramText: zpl.slice(commandName.length + 1, commandEnd),
+    remaining: zpl.slice(commandEnd),
   };
 }
 
-export function parse(zpl: string): CommandClass[][] {
-  const labels: CommandClass[][] = [];
-  let caretChar = "^";
-  let tildeChar = "~";
-
-  let commands: CommandClass[] = [];
-  let label = zpl;
-  let currentPosition = 0; // Track position in original ZPL string
-
-  while (label.length > 0) {
-    const commandStart = skipToCommandStart(label, caretChar, tildeChar);
-    if (commandStart === "") {
-      break;
-    }
-
-    // Calculate position before this command
-    const skippedChars = label.length - commandStart.length;
-    currentPosition += skippedChars;
-
-    const sourceStart = currentPosition;
-
-    const commandInfo = getCommandInfo(label, caretChar, tildeChar);
-    if (!commandInfo) {
-      currentPosition += label.length;
-      break;
-    }
-    const commandName = commandInfo.name;
-    const commandParamText = commandInfo.paramText;
-
-    // Calculate the full command length including marker and name
-    const commandLength = label.length - commandInfo.remaining.length;
-    const sourceEnd = currentPosition + commandLength;
-
-    if (commandName === "CC") {
-      caretChar = commandParamText[0] || "^";
-      label = label.slice(4);
-      currentPosition += 4;
-      continue;
-    }
-    label = commandInfo.remaining;
-    currentPosition = sourceEnd;
-
-    if (commandName === "XA") {
-      commands = [];
-      continue;
-    }
-    if (commandName === "XZ") {
-      labels.push(commands);
-      commands = [];
-      continue;
-    }
-
-    const commandClass = CommandMap[commandName];
-
-    if (commandClass) {
-      const commandInstance = new commandClass(
-        commandParamText
-      ) as CommandClass;
-      commandInstance.sourceStart = sourceStart;
-      commandInstance.sourceEnd = sourceEnd;
-      commands.push(commandInstance);
-    } else {
-      console.warn(`Unknown command: ^${commandName}`);
-    }
-  }
-
-  if (commands.length > 0) {
-    console.warn("Unfinished commands");
-    labels.push(commands);
-  }
-
-  return labels;
+export function getParsedLabelNode(
+  commands: readonly CommandClass[]
+): ZplLabelNode | undefined {
+  return getParsedLabelMetadata(commands)?.label;
 }
+
+export function getParsedLabelMetadata(
+  commands: readonly CommandClass[]
+): ParsedLabelMetadata | undefined {
+  return (
+    commands as CommandClass[] & {
+      [parsedLabelNode]?: ParsedLabelMetadata;
+    }
+  )[parsedLabelNode];
+}
+
+/**
+ * Legacy parser adapter. New integrations should use parseDocument() so unknown
+ * commands and structured diagnostics remain available.
+ */
+export function parse(zpl: string): CommandClass[][] {
+  const document = parseDocument(zpl);
+  return document.labels.map((label) => {
+    const commands: CommandClass[] = [];
+    const commandIndexMap = new Map<number, number>();
+    for (const node of label.commands) {
+      const commandClass = CommandMap[node.code as Commands];
+      if (!commandClass) continue;
+      const normalizedParameters =
+        node.code === "FD" || node.code === "FX"
+          ? node.rawParameters
+          : node.parameters.join(",");
+      const commandInstance = new commandClass(
+        normalizedParameters
+      ) as CommandClass;
+      commandInstance.sourceStart = node.span.start;
+      commandInstance.sourceEnd = node.span.end;
+      commandIndexMap.set(node.index, commands.length);
+      commands.push(commandInstance);
+    }
+
+    Object.defineProperty(commands, parsedLabelNode, {
+      value: { label, commandIndexMap } satisfies ParsedLabelMetadata,
+      configurable: false,
+      enumerable: false,
+      writable: false,
+    });
+    return commands;
+  });
+}
+
+export { parseDocument } from "@/core/documentParser";

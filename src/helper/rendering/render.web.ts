@@ -1,12 +1,20 @@
 import { Command } from "@/commands";
+import { interpretLabel } from "@/core/interpreter";
+import { renderLayout } from "@/core/layoutRenderer";
 import { FieldBlock } from "@/commands/FieldBlock";
 import { FieldSeparator } from "@/commands/FieldSeparator";
 import { RenderContext, HighlightRegion } from "@/types/RenderContext";
 import { createCanvas, drawCanvasToCanvas } from "./canvas.web";
+import {
+  getParsedLabelMetadata,
+  getParsedLabelNode,
+} from "@/helper/labelParsing/parse";
+import { ZplDiagnostic } from "@/types/ZplDocument";
 
 export interface RenderResult {
   canvas: HTMLCanvasElement;
   highlightRegions: HighlightRegion[];
+  diagnostics: ZplDiagnostic[];
 }
 
 /**
@@ -24,6 +32,32 @@ export async function render(
   height: number,
   highlightedCommandIndex?: number
 ): Promise<RenderResult> {
+  const parsedLabel = getParsedLabelNode(commands);
+  if (parsedLabel) {
+    const layout = interpretLabel(parsedLabel);
+    const rendered = await renderLayout<HTMLCanvasElement>(
+      layout,
+      width,
+      height,
+      { createCanvas, drawCanvasToCanvas } as any
+    );
+    const metadata = getParsedLabelMetadata(commands);
+    const highlightRegions = rendered.highlightRegions
+      .map((region) => {
+        const legacyIndex = metadata?.commandIndexMap.get(region.commandIndex);
+        return legacyIndex === undefined
+          ? undefined
+          : { ...region, commandIndex: legacyIndex };
+      })
+      .filter((region): region is HighlightRegion => region !== undefined);
+    drawHighlights(
+      rendered.canvas.getContext("2d"),
+      highlightRegions,
+      highlightedCommandIndex
+    );
+    return { ...rendered, highlightRegions };
+  }
+
   const canvas = createCanvas(width, height) as HTMLCanvasElement;
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -36,13 +70,13 @@ export async function render(
     fieldData: "",
     fieldBlock: new FieldBlock(""),
     barcodeDefaults: {
-      moduleWidth: 5,
-      ratio: 2,
-      height: 20,
+      moduleWidth: 2,
+      ratio: 3,
+      height: 10,
     },
-    charHeight: 12,
-    charWidth: 12,
-    fontKey: "0",
+    charHeight: 9,
+    charWidth: 5,
+    fontKey: "A",
     rotation: 0,
     x: 0,
     y: 0,
@@ -62,17 +96,21 @@ export async function render(
 
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "black";
+  ctx.strokeStyle = "black";
 
   if (!commands || commands.length === 0) {
-    return { canvas, highlightRegions: [] };
+    return { canvas, highlightRegions: [], diagnostics: [] };
   }
 
-  // Ensure we have a field separator at the end
-  commands.push(new FieldSeparator());
+  const renderCommands =
+    commands[commands.length - 1] instanceof FieldSeparator
+      ? commands
+      : [...commands, new FieldSeparator()];
 
   // Render all commands
-  for (let i = 0; i < commands.length; i++) {
-    const command = commands[i];
+  for (let i = 0; i < renderCommands.length; i++) {
+    const command = renderCommands[i];
     renderContext.highlight.currentCommandIndex = i;
     await command.applyToContext(renderContext);
   }
@@ -141,5 +179,49 @@ export async function render(
   return {
     canvas,
     highlightRegions: renderContext.highlight.regions,
+    diagnostics: [],
   };
+}
+
+function drawHighlights(
+  ctx: CanvasRenderingContext2D | null,
+  regions: HighlightRegion[],
+  highlightedCommandIndex?: number
+): void {
+  if (!ctx || highlightedCommandIndex === undefined) return;
+  for (const region of regions) {
+    if (region.commandIndex !== highlightedCommandIndex) continue;
+    ctx.save();
+    ctx.fillStyle = "rgba(255, 165, 0, 0.3)";
+    ctx.strokeStyle = "rgba(255, 165, 0, 0.8)";
+    ctx.lineWidth = 2;
+    if (
+      (region.type === "box" ||
+        region.type === "barcode" ||
+        region.type === "text") &&
+      region.width !== undefined &&
+      region.height !== undefined
+    ) {
+      ctx.fillRect(region.x, region.y, region.width, region.height);
+      ctx.strokeRect(region.x, region.y, region.width, region.height);
+    } else if (region.type === "circle" && region.radius !== undefined) {
+      ctx.beginPath();
+      ctx.arc(region.x, region.y, region.radius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    } else if (region.type === "origin") {
+      const size = 20;
+      ctx.beginPath();
+      ctx.moveTo(region.x - size, region.y);
+      ctx.lineTo(region.x + size, region.y);
+      ctx.moveTo(region.x, region.y - size);
+      ctx.lineTo(region.x, region.y + size);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(region.x, region.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 }

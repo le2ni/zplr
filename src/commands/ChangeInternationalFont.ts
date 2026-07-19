@@ -17,6 +17,8 @@ export class ChangeInternationalFont implements CommandClass {
   }
 
   applyToContext(context: RenderContext): void {
-    // Not implemented yet
+    throw new Error(
+      `^CI${this.a} is not supported by the zpl-ii-2006 renderer profile.`
+    );
   }
 }

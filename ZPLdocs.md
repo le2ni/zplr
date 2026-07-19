@@ -2,28 +2,37 @@
 
 ## Implementation Status
 
-The following ZPL commands are currently implemented in this library:
+The source of truth is the exported `commandCapabilities` registry in `src/core/capabilities.ts`. Unknown and unsupported commands are retained by `parseDocument` and produce diagnostics; they are not silently discarded.
 
-| Command | Name                      | Status         |
-| :------ | :------------------------ | :------------- |
-| `^A`    | Scalable/Bitmapped Font   | ✅ Implemented |
-| `^B3`   | Code 39 Barcode           | ✅ Implemented |
-| `^BC`   | Code 128 Barcode          | ✅ Implemented |
-| `^BQ`   | QR Code Barcode           | ✅ Implemented |
-| `^BY`   | Barcode Field Default     | ✅ Implemented |
-| `^CF`   | Change Alpha Default Font | ✅ Implemented |
-| `^CI`   | Change International Font | ✅ Implemented |
-| `^FB`   | Field Block               | ✅ Implemented |
-| `^FD`   | Field Data                | ✅ Implemented |
-| `^FO`   | Field Origin              | ✅ Implemented |
-| `^FR`   | Field Reverse Print       | ✅ Implemented |
-| `^FS`   | Field Separator           | ✅ Implemented |
-| `^FX`   | Comment                   | ✅ Implemented |
-| `^GB`   | Graphic Box               | ✅ Implemented |
-| `^GC`   | Graphic Circle            | ✅ Implemented |
-| `^LR`   | Label Reverse Print       | ✅ Implemented |
+| Command | Name | Status | Limitations |
+| :--- | :--- | :--- | :--- |
+| `^A` | Scalable/Bitmapped Font | Supported | Fonts are cross-platform approximations. |
+| `^A@` | Font by Name | Unsupported | — |
+| `^B3` | Code 39 Barcode | Supported | Core 2006-guide parameters and Mod-43. |
+| `^B4` | Code 49 Barcode | Unsupported | No bundled encoder. |
+| `^BC` | Code 128 Barcode | Partial | Modes N and A supported; U and D diagnosed. |
+| `^BQ` | QR Code Barcode | Partial | Model 2 normal mode supported; Model 1, mixed/divided input, and Kanji input diagnosed. |
+| `^BY` | Barcode Field Default | Supported | — |
+| `^CC`, `~CC` | Change Caret | Supported | — |
+| `^CD`, `~CD` | Change Delimiter | Supported | — |
+| `^CF` | Change Default Font | Supported | Fonts are cross-platform approximations. |
+| `^CI` | Change International Font/Encoding | Unsupported | Remapping and later `^CI28` are not implemented. |
+| `^CT`, `~CT` | Change Tilde | Supported | — |
+| `^FB` | Field Block | Supported | — |
+| `^FD` | Field Data | Supported | — |
+| `^FH` | Field Hexadecimal Indicator | Supported | — |
+| `^FO` | Field Origin | Supported | — |
+| `^FR` | Field Reverse Print | Supported | — |
+| `^FS` | Field Separator | Supported | SI control-character alternative is supported. |
+| `^FW` | Field Orientation | Supported | — |
+| `^FX` | Comment | Supported | — |
+| `^GB` | Graphic Box | Supported | — |
+| `^GC` | Graphic Circle | Supported | — |
+| `^LH` | Label Home | Supported | — |
+| `^LR` | Label Reverse Print | Supported | — |
+| `^XA`, `^XZ` | Format Boundaries | Supported | STX and ETX alternatives are supported. |
 
-> **Note:** Any command not listed here is currently not supported and will be ignored by the parser.
+Commands not listed above are currently unsupported by the semantic renderer.
 
 ## Label Structure & Formatting
 
@@ -194,11 +203,11 @@ Formats text into a block. It handles word wrapping, alignment (justification), 
 
 ### `^CI` - Change International Font
 
-Changes the character set encoding (mapping) to support different languages and special characters.
+Changes the character set encoding (mapping) on a Zebra printer. ZPLr retains this command and emits an unsupported-command diagnostic; it does not apply character-set remapping in the `zpl-ii-2006` profile.
 
 - **Format:** `^CIa`
 - **Parameters:**
-  - `a`: Character set number (e.g., `0`=USA1, `13`=Zebra Code Page 850, `28`=Unicode/UTF-8).
+  - `a`: Character set number. Later extensions such as `28` are outside the bundled 2006 profile.
 
 ### `^SF` - Serialization Field
 
@@ -225,7 +234,7 @@ An older, alternative command to `^SF` and `^FD` combined. It indexes data field
 
 ### `^BC` - Code 128
 
-Creates a Code 128 barcode. It handles Subsets A, B, and C automatically or manually.
+Creates a Code 128 barcode. ZPLr supports mode `N`, including subset invocation codes, and automatic mode `A`. Modes `U` and `D` are retained and diagnosed as unsupported.
 
 - **Format:** `^BCo,h,f,g,e,m`
 - **Parameters:**
@@ -250,7 +259,7 @@ Creates a standard Code 39 barcode.
 
 ### `^BQ` - QR Code
 
-Creates a QR Code (2D matrix). Note: Requires specific `^FD` formatting to set error correction levels (e.g., `^FDQA,data`).
+Creates a QR Code (2D matrix). ZPLr supports Model 2 normal-mode automatic input and manual `N`, `A`, and `B` input. Model 1, mixed/divided input, and manual Kanji input are retained and diagnosed as unsupported. The `^FD` prefix selects error correction and input mode (for example, `^FDQA,data`).
 
 - **Format:** `^BQa,b,c,d,e`
 - **Parameters:**
@@ -258,7 +267,7 @@ Creates a QR Code (2D matrix). Note: Requires specific `^FD` formatting to set e
   - `b`: Model (1 or 2).
   - `c`: Magnification factor (1-10).
   - `d`: Error correction level (`H`, `Q`, `M`, `L`).
-  - `e`: Mask value (0-7).
+  - `e`: Mask value (1-7; default 7).
 
 ### `^BX` - Data Matrix
 

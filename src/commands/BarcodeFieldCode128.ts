@@ -25,12 +25,12 @@ export class BarcodeFieldCode128 implements BarcodeCommand {
   constructor(paramString: string) {
     const args = paramString.split(",");
 
-    this.orientation = parseOrientation(args[5]);
+    this.orientation = parseOrientation(args[0]);
     this.height = parseInt(args[1]);
     this.printInterpretationBelow = yesNoDefault(args[2], true);
     this.printInterpretationAbove = yesNoDefault(args[3], false);
     this.uccCheckDigit = yesNoDefault(args[4], false);
-    this.mode = enumValOrDefault(args[0], ["N", "U", "A", "D"], "N");
+    this.mode = enumValOrDefault(args[5], ["N", "U", "A", "D"], "N");
   }
 
   applyToContext(context: RenderContext): void {
@@ -38,6 +38,9 @@ export class BarcodeFieldCode128 implements BarcodeCommand {
   }
 
   render(context: RenderContext): void {
+    if (this.mode === "U" || this.mode === "D") {
+      throw new Error(`Code 128 mode ${this.mode} is not supported.`);
+    }
     const nextCanvas = context.createCanvas();
 
     JsBarcode(nextCanvas, context.fieldData || "", {
@@ -54,7 +57,7 @@ export class BarcodeFieldCode128 implements BarcodeCommand {
         this.printInterpretationBelow || this.printInterpretationAbove,
 
       margin: 0,
-      format: "CODE128B",
+      format: this.mode === "A" ? "CODE128" : "CODE128B",
       fontOptions: "normal",
       background: "#00000000",
       fontSize: 10 * context.barcodeDefaults.moduleWidth,

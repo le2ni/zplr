@@ -16,11 +16,7 @@
     "src/helper/**/*"
   ],
   "exclude": [
-    "src/index.ts",
-    "src/index.ts.old",
-    "src/main.ts",
     "src/examples.ts",
-    "src/helper/rendering/render.ts",
     "src/**/*.test.ts",
     "src/**/__snapshots__",
     "node_modules",

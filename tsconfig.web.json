@@ -3,12 +3,8 @@
   "exclude": [
     "node_modules",
     "dist",
-    "src/main.ts",
     "src/examples.ts",
-    "src/index.ts.old",
     "src/index.node.ts",
-    "src/helper/rendering/render.ts",
-    "src/helper/rendering/render.node.ts",
     "src/**/*.test.ts"
   ],
   "compilerOptions": {

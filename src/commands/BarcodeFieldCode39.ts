@@ -51,7 +51,6 @@ export class BarcodeFieldCode39 implements BarcodeCommand {
   }
 
   applyToContext(context: RenderContext): void {
-    // ...existing code...
     context.barcodeCommand = this;
   }
 
@@ -110,4 +109,3 @@ export class BarcodeFieldCode39 implements BarcodeCommand {
     });
   }
 }
-// ...existing code...

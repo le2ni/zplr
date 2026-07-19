@@ -5,12 +5,33 @@ import {
   RenderResult,
 } from "./helper/rendering/render.web";
 import { HighlightRegion } from "./types/RenderContext";
+import { renderDocumentWithPlatform } from "./core/renderDocument";
+import { createCanvas, drawCanvasToCanvas } from "./helper/rendering/canvas.web";
+import type {
+  RenderDocumentOptions,
+  ZplDocument,
+} from "./types/ZplDocument";
 
 // Re-export parse
 export { parse } from "./helper/labelParsing/parse";
+export { parseDocument } from "./core/documentParser";
+export {
+  commandCapabilities,
+  getCommandCapability,
+} from "./core/capabilities";
 
 // Re-export types
 export type { RenderResult, HighlightRegion };
+
+export async function renderDocument(
+  document: ZplDocument,
+  options: RenderDocumentOptions
+): Promise<RenderResult[]> {
+  return renderDocumentWithPlatform<HTMLCanvasElement>(document, options, {
+    createCanvas,
+    drawCanvasToCanvas,
+  } as any);
+}
 
 /**
  * Render ZPL commands to a canvas using web browser APIs
@@ -278,3 +299,15 @@ export function findCommandAtCoordinate(
 export type { CommandClass } from "./types/CommandClass";
 export type { Orientation } from "./types/Orientation";
 export type { RenderContext } from "./types/RenderContext";
+export type {
+  CommandCapability,
+  CommandCapabilityStatus,
+  ParseDocumentOptions,
+  RenderDocumentOptions,
+  SourceSpan,
+  ZplCommandNode,
+  ZplDiagnostic,
+  ZplDocument,
+  ZplLabelNode,
+  ZplProfile,
+} from "./types/ZplDocument";

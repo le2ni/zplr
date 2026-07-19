@@ -1,4 +1,4 @@
-import { BarcodeFieldDefault } from "./BacodeFieldDefault";
+import { BarcodeFieldDefault } from "./BarcodeFieldDefault";
 import { BarcodeFieldCode128 } from "./BarcodeFieldCode128";
 import { BarcodeFieldCode39 } from "./BarcodeFieldCode39";
 import { BarcodeFieldQRCode } from "./BarcodeFieldQRCode";

@@ -19,7 +19,7 @@ async function example1() {
   const canvas = await render(labels[0], 400, 600);
 
   // Save to file (skia-canvas specific feature)
-  await canvas.saveAs("example1.png");
+  await canvas.toFile("example1.png");
   console.log("Saved to example1.png\n");
 }
 
@@ -35,7 +35,7 @@ async function example2() {
 
   // Save each canvas
   for (let i = 0; i < canvases.length; i++) {
-    await canvases[i].saveAs(`example2-label${i + 1}.png`);
+    await canvases[i].toFile(`example2-label${i + 1}.png`);
     console.log(`Saved label ${i + 1} to example2-label${i + 1}.png`);
   }
   console.log();
@@ -52,7 +52,7 @@ async function example3() {
   // Render with custom dimensions
   const canvas = await render(labels[0], 400, 600);
 
-  await canvas.saveAs("example3.png");
+  await canvas.toFile("example3.png");
   console.log("Saved to example3.png\n");
 }
 

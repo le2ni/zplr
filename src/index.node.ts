@@ -2,9 +2,42 @@ import { Canvas } from "skia-canvas";
 import { Command } from "./commands/index";
 import { parse as parseZPL } from "./helper/labelParsing/parse";
 import { render as renderInternal } from "./helper/rendering/render-node";
+import { renderDocumentWithPlatform } from "./core/renderDocument";
+import { createCanvas, drawCanvasToCanvas } from "./helper/rendering/canvas-node";
+import type {
+  RenderDocumentOptions,
+  ZplDiagnostic,
+  ZplDocument,
+} from "./types/ZplDocument";
+import type { HighlightRegion } from "./types/RenderContext";
 
 // Re-export parse
 export { parse } from "./helper/labelParsing/parse";
+export { parseDocument } from "./core/documentParser";
+export {
+  commandCapabilities,
+  getCommandCapability,
+} from "./core/capabilities";
+
+export interface NodeDocumentRenderResult {
+  canvas: Canvas;
+  diagnostics: ZplDiagnostic[];
+  highlightRegions: HighlightRegion[];
+}
+
+export async function renderDocument(
+  document: ZplDocument,
+  options: RenderDocumentOptions
+): Promise<NodeDocumentRenderResult[]> {
+  const results = await renderDocumentWithPlatform<any>(document, options, {
+    createCanvas,
+    drawCanvasToCanvas,
+  } as any);
+  return results.map((result) => ({
+    ...result,
+    canvas: result.canvas as Canvas,
+  }));
+}
 
 /**
  * Render ZPL commands to a canvas using Node.js (skia-canvas)
@@ -21,7 +54,7 @@ export { parse } from "./helper/labelParsing/parse";
  * const canvas = await render(commands[0], 400, 600);
  *
  * // Save to file (skia-canvas specific feature)
- * await canvas.saveAs("output.png");
+ * await canvas.toFile("output.png");
  */
 export async function render(
   commands: Command[],
@@ -43,7 +76,7 @@ export async function render(
  * import { parseAndRender } from "zplr/node";
  *
  * const canvases = await parseAndRender("^XA^FO100,100^FDHello^FS^XZ", 400, 600);
- * await canvases[0].saveAs("label.png");
+ * await canvases[0].toFile("label.png");
  */
 export async function parseAndRender(
   zpl: string,
@@ -96,3 +129,15 @@ export async function parseAndRenderPNG(
 export type { CommandClass } from "./types/CommandClass";
 export type { Orientation } from "./types/Orientation";
 export type { RenderContext } from "./types/RenderContext";
+export type {
+  CommandCapability,
+  CommandCapabilityStatus,
+  ParseDocumentOptions,
+  RenderDocumentOptions,
+  SourceSpan,
+  ZplCommandNode,
+  ZplDiagnostic,
+  ZplDocument,
+  ZplLabelNode,
+  ZplProfile,
+} from "./types/ZplDocument";

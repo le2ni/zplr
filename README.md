@@ -1,178 +1,120 @@
 # ZPLr
 
-A TypeScript library for parsing and rendering ZPL label files. Works in both Node.js and web environments with separate optimized entry points.
+A TypeScript library for parsing and rendering a documented subset of ZPL II in Node.js and web browsers.
+
+ZPLr targets the bundled 2006 ZPL II Programming Guide. Parsing is tolerant and source-preserving: unknown or unsupported commands remain in the document model and produce structured diagnostics instead of console output.
 
 ## Installation
 
 ```bash
 npm install zplr
 # or
-pnpm install zplr
+pnpm add zplr
 ```
 
-For Node.js usage, you'll also need `skia-canvas`:
+The Node entry point uses the optional `skia-canvas` package:
 
 ```bash
-npm install skia-canvas
-# or
-pnpm install skia-canvas
+pnpm add skia-canvas
 ```
 
-## Usage
+## Existing API
+
+The existing environment-specific entry points remain supported.
 
 ### Node.js
 
 ```typescript
 import { parse, render } from "zplr/node";
 
-// Parse ZPL string
-const zpl = "^XA^FO100,100^FDHello World^FS^XZ";
-const labels = parse(zpl); // Returns array of command arrays (one per label)
-
-// Render first label to canvas
+const labels = parse("^XA^FO100,100^FDHello World^FS^XZ");
 const canvas = await render(labels[0], 400, 600);
-
-// Save to file (skia-canvas feature)
-await canvas.saveAs("output.png");
+await canvas.toFile("output.png");
 ```
 
-### Web (Browser)
+### Browser
 
 ```typescript
 import { parse, render } from "zplr/web";
 
-// Parse and render
-const zpl = "^XA^FO100,100^FDHello World^FS^XZ";
-const labels = parse(zpl);
-
-// Render to canvas
+const labels = parse("^XA^FO100,100^FDHello World^FS^XZ");
 const canvas = await render(labels[0], 400, 600);
-
-// Append to document or use as needed
 document.body.appendChild(canvas);
 ```
 
-### Convenience Function
+`parseAndRender` and the environment-specific PNG helpers remain available. Rendering a parsed label is immutable and repeatable.
 
-Both entry points provide a `parseAndRender` convenience function:
+The legacy command-object interfaces are deprecated but remain available through the 0.2 release line. Their removal is planned no earlier than 0.3.
+
+## Document API
+
+New integrations should use the document API when diagnostics or unsupported-command visibility matter.
 
 ```typescript
-// Node.js
-import { parseAndRender } from "zplr/node";
-const canvases = await parseAndRender("^XA^FO100,100^FDHello^FS^XZ", 400, 600);
-await canvases[0].saveAs("label.png");
+import { parseDocument, renderDocument } from "zplr/node";
 
-// Web
-import { parseAndRender } from "zplr/web";
-const canvases = await parseAndRender("^XA^FO100,100^FDHello^FS^XZ", 400, 600);
-document.body.appendChild(canvases[0]);
+const document = parseDocument("^XA^FO100,100^FDHello World^FS^XZ", {
+  profile: "zpl-ii-2006",
+});
+
+const results = await renderDocument(document, {
+  width: 400,
+  height: 600,
+  dpi: 300,
+});
+
+for (const diagnostic of results[0].diagnostics) {
+  console.log(diagnostic.code, diagnostic.message, diagnostic.span);
+}
+
+await results[0].canvas.toFile("output.png");
 ```
 
-## API
+`parseDocument` preserves label boundaries, command prefixes, raw parameters, active delimiters, and end-exclusive source spans. It recognizes changed caret, tilde, and delimiter characters as well as the STX, ETX, and SI control-character alternatives.
 
-### `parse(zpl: string): Command[][]`
+## Command support
 
-Parses a ZPL string into command arrays. Returns an array of arrays, where each inner array represents one label (multiple labels are separated by `^XA`/`^XZ` pairs).
+The runtime source of truth is `commandCapabilities`, exported from both entry points.
 
-### Node.js: `render(commands: Command[], width: number, height: number): Promise<Canvas>`
+| Status | Commands |
+| --- | --- |
+| Supported | `^A`, `^B3`, `^BY`, `^CC`/`~CC`, `^CD`/`~CD`, `^CF`, `^CT`/`~CT`, `^FB`, `^FD`, `^FH`, `^FO`, `^FR`, `^FS`, `^FW`, `^FX`, `^GB`, `^GC`, `^LH`, `^LR`, `^XA`, `^XZ` |
+| Partial | `^BC` (modes N and A), `^BQ` (Model 2 normal mode; automatic/manual N, A, and B input) |
+| Unsupported | `^A@`, `^B4`, `^CI`, and commands not listed above |
 
-Renders parsed ZPL commands to a skia-canvas Canvas.
+Unsupported commands are retained in `ZplDocument` and reported. They are never silently substituted with another symbology or behavior.
 
-**Parameters:**
+Font A and font 0 use cross-platform approximations. ZPLr honors requested dot dimensions, orientation, field-block layout, and field/label reverse behavior, but it does not promise dot-identical Zebra printer glyphs.
 
-- `commands`: Array of parsed ZPL commands
-- `width`: Canvas width in pixels
-- `height`: Canvas height in pixels
+## Public types
 
-**Returns:** A skia-canvas Canvas instance with `saveAs()` and other Node.js features
-
-### Web: `render(commands: Command[], width: number, height: number): Promise<HTMLCanvasElement>`
-
-Renders parsed ZPL commands to an HTMLCanvasElement.
-
-**Parameters:**
-
-- `commands`: Array of parsed ZPL commands
-- `width`: Canvas width in pixels
-- `height`: Canvas height in pixels
-
-**Returns:** An HTMLCanvasElement ready to use in the browser
-
-### `parseAndRender(zpl: string, width: number, height: number): Promise<Canvas[] | HTMLCanvasElement[]>`
-
-Convenience function that parses and renders in one call. Returns an array of canvas instances, one per label.
-
-## Supported ZPL Commands
-
-- `^FO` - Field Origin (positioning)
-- `^FD` - Field Data (text content)
-- `^FS` - Field Separator
-- `^CF`/`^CFA` - Change Alphanumeric Default Font
-- `^GB` - Graphic Box
-- `^GC` - Graphic Circle
-- `^BC` - Code 128 Barcode
-- `^B3` - Code 39 Barcode
-- `^B4` - Code 49 Barcode
-- `^BQ` - QR Code
-- `^FB` - Field Block (text wrapping)
-- `^FR` - Field Reverse Print
-- And more...
-
-## Examples
-
-### Node.js Example
-
-```bash
-# Run the Node.js examples
-pnpm examples
-```
-
-### Web Example
-
-A modern, beautiful web interface built with Vue 3, Vite, and Tailwind CSS:
-
-```bash
-# Start the web development server
-pnpm dev:web
-```
-
-Then open your browser to `http://localhost:5173`
-
-**Features:**
-
-- 🎨 Modern Tailwind UI with gradient backgrounds
-- ⚡ Live auto-render as you type
-- 📝 5 pre-built example templates
-- 💾 Download rendered labels as PNG
-- 📊 Real-time performance metrics
-
-See `web/README.md` for more details.
+- `ZplDocument`, `ZplLabelNode`, and `ZplCommandNode`
+- `SourceSpan` and `ZplDiagnostic`
+- `ParseDocumentOptions` and `RenderDocumentOptions`
+- `CommandCapability` and `CommandCapabilityStatus`
+- Legacy `CommandClass`, `Orientation`, and `RenderContext` types
 
 ## Development
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Run dev mode (watches src/examples.ts)
-pnpm dev
-
-# Run tests
 pnpm test
-
-# Build the library
-pnpm build
+pnpm run typecheck
+pnpm run typecheck:web
+pnpm run build
+pnpm run dev:web
 ```
 
-## Architecture
+Use `pnpm run test:watch` for watch mode and `pnpm run test:conformance` for the parser, interpreter, and renderer suite.
 
-This library uses a command pattern where each ZPL command is a class that:
+The implementation pipeline is:
 
-1. Parses its parameters in the constructor
-2. Implements `applyToContext(context)` to either modify state or draw to canvas
+```text
+ZPL source -> source-preserving document -> semantic field layout -> shared renderer -> Node/Web canvas
+```
 
-See `.github/copilot-instructions.md` for detailed architecture documentation.
+The command capability table and detailed profile notes are in [ZPLdocs.md](./ZPLdocs.md).
 
 ## License
 
-ISC
+MIT

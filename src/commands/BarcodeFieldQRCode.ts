@@ -5,7 +5,6 @@ import QRCode, { QRCodeErrorCorrectionLevel } from "qrcode";
 
 type QRModel = "1" | "2";
 type QRReliability = "H" | "Q" | "M" | "L";
-type QREncoding = "N" | "A" | "B" | "K";
 
 /**
  * BQ - Barcode Field (QR Code)
@@ -16,7 +15,7 @@ type QREncoding = "N" | "A" | "B" | "K";
  * b = model (1=original, 2=enhanced)
  * c = magnification factor (1-10)
  * d = reliability level (H,Q,M,L)
- * e = encoding (N,A,B,K) values 1-7
+ * e = mask value (1-7)
  */
 export class BarcodeFieldQRCode implements BarcodeCommand {
   static readonly command = "BQ";
@@ -24,7 +23,7 @@ export class BarcodeFieldQRCode implements BarcodeCommand {
   public model: QRModel;
   public magnification: number;
   public reliability: QRReliability;
-  public encoding: QREncoding;
+  public mask: number;
 
   constructor(paramString: string) {
     const args = paramString.split(",");
@@ -35,12 +34,12 @@ export class BarcodeFieldQRCode implements BarcodeCommand {
       ? Math.min(Math.max(parseInt(args[2]), 1), 10)
       : this.getDefaultMagnification();
     this.reliability = enumValOrDefault(args[3], ["H", "Q", "M", "L"], "Q");
-    this.encoding = enumValOrDefault(args[4], ["N", "A", "B", "K"], "A");
+    const mask = Number.parseInt(args[4]);
+    this.mask = Number.isFinite(mask) ? Math.min(Math.max(mask, 1), 7) : 7;
   }
 
   private getDefaultMagnification(): number {
-    // TODO: Implement DPI detection
-    return 2; // Assuming 300 DPI
+    return 3;
   }
 
   applyToContext(context: RenderContext): void {
@@ -49,59 +48,59 @@ export class BarcodeFieldQRCode implements BarcodeCommand {
 
   async render(context: RenderContext): Promise<void> {
     if (!context.fieldData) return;
+    if (this.model === "1") {
+      throw new Error("QR Model 1 is not supported.");
+    }
 
-    const fieldData = context.fieldData.slice(4);
-    const errorCorrectionLevel: QRCodeErrorCorrectionLevel = enumValOrDefault(
-      context.fieldData.slice(0, 1),
-      ["H", "Q", "M", "L"],
-      "Q"
-    );
-    const inputMode = context.fieldData.slice(1, 2);
-    const characterMode = context.fieldData.slice(3, 4);
+    const match = /^([HQML])([AM]),/.exec(context.fieldData);
+    if (!match) {
+      throw new Error("QR field data requires an error level and A or M input mode.");
+    }
+    const errorCorrectionLevel = match[1] as QRCodeErrorCorrectionLevel;
+    const inputMode = match[2];
+    let fieldData = context.fieldData.slice(3);
+    if (inputMode === "M") {
+      const characterMode = fieldData[0];
+      if (characterMode === "K") {
+        throw new Error("QR Kanji manual input is not supported.");
+      }
+      if (!["N", "A", "B"].includes(characterMode)) {
+        throw new Error("QR manual input requires N, A, B, or K character mode.");
+      }
+      fieldData = fieldData.slice(1);
+      if (characterMode === "B") {
+        if (!/^\d{4}/.test(fieldData)) {
+          throw new Error("QR manual byte input requires a four-digit byte count.");
+        }
+        fieldData = fieldData.slice(4);
+      }
+    }
 
     const nextCanvas = context.createCanvas();
-    const size = 50 * this.magnification; // Base size * magnification
-    // nextCanvas.width = size;
-    // nextCanvas.height = size;
+    await QRCode.toCanvas(nextCanvas, fieldData, {
+      errorCorrectionLevel,
+      scale: this.magnification,
+      margin: 0,
+      maskPattern: this.mask as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7,
+    });
 
-    try {
-      // Generate QR code onto canvas
-      console.log("Generated QR code:", fieldData);
-      await QRCode.toCanvas(nextCanvas, fieldData, {
-        // errorCorrectionLevel: errorCorrectionLevel,
-        // version: this.model === "1" ? 1 : 2, // Force version 1 for model 1
-        // margin: 0,
-        // // width: size,
-        // scale: this.magnification,
-        errorCorrectionLevel: errorCorrectionLevel,
-        scale: this.magnification,
-        margin: 0,
-        version: 1,
-        maskPattern: 7,
-        // maskPattern: 1,
-      });
+    context.drawCanvasToCanvas(
+      context.ctx,
+      nextCanvas,
+      context.fieldX,
+      context.fieldY
+    );
 
-      // Draw the QR code canvas onto the main canvas
-      context.drawCanvasToCanvas(
-        context.ctx,
-        nextCanvas,
-        context.fieldX,
-        context.fieldY + 10
-      );
-
-      const commandIndex =
-        context.highlight.currentFieldStartIndex ??
-        context.highlight.currentCommandIndex;
-      context.highlight.regions.push({
-        type: "barcode",
-        commandIndex: commandIndex,
-        x: context.fieldX,
-        y: context.fieldY + 10,
-        width: nextCanvas.width,
-        height: nextCanvas.height,
-      });
-    } catch (error) {
-      console.error("Failed to generate QR code:", error);
-    }
+    const commandIndex =
+      context.highlight.currentFieldStartIndex ??
+      context.highlight.currentCommandIndex;
+    context.highlight.regions.push({
+      type: "barcode",
+      commandIndex,
+      x: context.fieldX,
+      y: context.fieldY,
+      width: nextCanvas.width,
+      height: nextCanvas.height,
+    });
   }
 }

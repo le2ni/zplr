@@ -1,6 +1,9 @@
 import { Command } from "@/commands";
+import { interpretLabel } from "@/core/interpreter";
+import { renderLayout } from "@/core/layoutRenderer";
 import { FieldBlock } from "@/commands/FieldBlock";
 import { FieldSeparator } from "@/commands/FieldSeparator";
+import { getParsedLabelNode } from "@/helper/labelParsing/parse";
 import { RenderContext } from "@/types/RenderContext";
 import { Canvas } from "skia-canvas";
 import { createCanvas, drawCanvasToCanvas } from "./canvas-node";
@@ -18,6 +21,18 @@ export async function render(
   width: number,
   height: number
 ): Promise<Canvas> {
+  const parsedLabel = getParsedLabelNode(commands);
+  if (parsedLabel) {
+    const layout = interpretLabel(parsedLabel);
+    const result = await renderLayout<any>(
+      layout,
+      width,
+      height,
+      { createCanvas, drawCanvasToCanvas } as any
+    );
+    return result.canvas as Canvas;
+  }
+
   const canvas = new Canvas(width, height);
   const ctx = canvas.getContext("2d");
   if (!ctx) {
@@ -30,13 +45,13 @@ export async function render(
     fieldData: "",
     fieldBlock: new FieldBlock(""),
     barcodeDefaults: {
-      moduleWidth: 5,
-      ratio: 2,
-      height: 20,
+      moduleWidth: 2,
+      ratio: 3,
+      height: 10,
     },
-    charHeight: 12,
-    charWidth: 12,
-    fontKey: "0",
+    charHeight: 9,
+    charWidth: 5,
+    fontKey: "A",
     rotation: 0,
     x: 0,
     y: 0,
@@ -56,13 +71,17 @@ export async function render(
 
   ctx.fillStyle = "white";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "black";
+  ctx.strokeStyle = "black";
 
   if (!commands || commands.length === 0) return canvas;
 
-  // Ensure we have a field separator at the end
-  commands.push(new FieldSeparator());
+  const renderCommands =
+    commands[commands.length - 1] instanceof FieldSeparator
+      ? commands
+      : [...commands, new FieldSeparator()];
 
-  for (let command of commands) {
+  for (let command of renderCommands) {
     await command.applyToContext(renderContext);
   }
 
