@@ -8,6 +8,7 @@ export default [
     dts: true,
     outDir: "dist",
     sourcemap: true,
+    hash: false,
     clean: true,
     // Keep native modules external
     external: ["skia-canvas"],
@@ -20,6 +21,7 @@ export default [
     dts: true,
     outDir: "dist",
     sourcemap: true,
+    hash: false,
     platform: "browser",
     target: "es2020",
     // Bundle all dependencies for the browser

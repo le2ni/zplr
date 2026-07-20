@@ -5,12 +5,21 @@ import {
   RenderResult,
 } from "./helper/rendering/render.web";
 import { HighlightRegion } from "./types/RenderContext";
-import { renderDocumentWithPlatform } from "./core/renderDocument";
+import type { DocumentRenderResult } from "./core/renderDocument";
+import {
+  createRenderSessionWithPlatform,
+  renderZplWithPlatform,
+} from "./core/jobRenderer";
 import { createCanvas, drawCanvasToCanvas } from "./helper/rendering/canvas.web";
 import type {
   RenderDocumentOptions,
   ZplDocument,
 } from "./types/ZplDocument";
+import type {
+  RenderJobOptions,
+  RenderJobResult,
+  ZplRenderSession,
+} from "./types/RenderJob";
 
 // Re-export parse
 export { parse } from "./helper/labelParsing/parse";
@@ -18,19 +27,67 @@ export { parseDocument } from "./core/documentParser";
 export {
   commandCapabilities,
   getCommandCapability,
+  getCommandCapabilityStatus,
 } from "./core/capabilities";
 
 // Re-export types
 export type { RenderResult, HighlightRegion };
 
+export interface WebDocumentRenderResult
+  extends DocumentRenderResult<HTMLCanvasElement> {}
+
+/** @deprecated Use renderZpl() or createRenderSession(); retained through 0.2. */
 export async function renderDocument(
   document: ZplDocument,
-  options: RenderDocumentOptions
-): Promise<RenderResult[]> {
-  return renderDocumentWithPlatform<HTMLCanvasElement>(document, options, {
+  options: RenderDocumentOptions = {}
+): Promise<WebDocumentRenderResult[]> {
+  const result = await createRenderSessionWithPlatform<HTMLCanvasElement>(
+    { createCanvas, drawCanvasToCanvas } as any,
+    options
+  ).renderDocument(document);
+  return result.labels.map((label) => ({
+    ...label,
+    canvas: label.canvas!,
+  }));
+}
+
+/** Parse and render a complete ZPL job with a fresh virtual printer state. */
+export async function renderZpl(
+  source: string,
+  options: RenderJobOptions = {}
+): Promise<RenderJobResult<HTMLCanvasElement>> {
+  return renderZplWithPlatform<HTMLCanvasElement>(source, options, {
     createCanvas,
     drawCanvasToCanvas,
   } as any);
+}
+
+/** Create an explicit FIFO-serialized virtual printer session. */
+export function createRenderSession(
+  options: RenderJobOptions = {}
+): ZplRenderSession<HTMLCanvasElement> {
+  return createRenderSessionWithPlatform<HTMLCanvasElement>({
+    createCanvas,
+    drawCanvasToCanvas,
+  } as any, options);
+}
+
+export async function renderZplPNG(
+  source: string,
+  options: RenderJobOptions = {}
+): Promise<Blob[]> {
+  const result = await renderZpl(source, options);
+  return Promise.all(
+    result.labels.map(
+      (label) =>
+        new Promise<Blob>((resolve, reject) => {
+          label.canvas!.toBlob((blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error("The rendered label could not be encoded as PNG."));
+          }, "image/png");
+        })
+    )
+  );
 }
 
 /**
@@ -53,6 +110,8 @@ export async function renderDocument(
  *
  * // Append to document
  * document.body.appendChild(canvas);
+ *
+ * @deprecated Use renderZpl(); retained through the 0.2 release line.
  */
 export async function render(
   commands: Command[],
@@ -89,6 +148,8 @@ export async function render(
  *   const commandIndex = findCommandAtCoordinate(result.highlightRegions, e.offsetX, e.offsetY);
  *   console.log('Clicked command:', commandIndex);
  * });
+ *
+ * @deprecated Use renderZpl() and its highlightRegions; retained through 0.2.
  */
 export async function renderAdvanced(
   commands: Command[],
@@ -113,20 +174,14 @@ export async function renderAdvanced(
  * const canvases = await parseAndRender("^XA^FO100,100^FDHello^FS^XZ", 400, 600);
  * document.body.appendChild(canvases[0]);
  */
+/** @deprecated Use renderZpl(); retained through the 0.2 release line. */
 export async function parseAndRender(
   zpl: string,
   width: number,
   height: number
 ): Promise<HTMLCanvasElement[]> {
-  const labels = parseZPL(zpl);
-  const canvases: HTMLCanvasElement[] = [];
-
-  for (const commands of labels) {
-    const canvas = await render(commands, width, height);
-    canvases.push(canvas);
-  }
-
-  return canvases;
+  const result = await renderZpl(zpl, { width, height });
+  return result.labels.map((label) => label.canvas!);
 }
 
 /**
@@ -144,26 +199,27 @@ export async function parseAndRender(
  * const results = await parseAndRenderAdvanced("^XA^FO100,100^FDHello^FS^XZ", 400, 600);
  * document.body.appendChild(results[0].canvas);
  */
+/** @deprecated Use renderZpl(); retained through the 0.2 release line. */
 export async function parseAndRenderAdvanced(
   zpl: string,
   width: number,
   height: number,
   highlightedCommandIndex?: number
 ): Promise<RenderResult[]> {
-  const labels = parseZPL(zpl);
-  const results: RenderResult[] = [];
-
-  for (const commands of labels) {
-    const result = await renderAdvanced(
-      commands,
-      width,
-      height,
-      highlightedCommandIndex
+  if (highlightedCommandIndex !== undefined) {
+    const labels = parseZPL(zpl);
+    return Promise.all(
+      labels.map((commands) =>
+        renderAdvanced(commands, width, height, highlightedCommandIndex)
+      )
     );
-    results.push(result);
   }
-
-  return results;
+  const result = await renderZpl(zpl, { width, height });
+  return result.labels.map((label) => ({
+    canvas: label.canvas!,
+    highlightRegions: label.highlightRegions,
+    diagnostics: label.diagnostics,
+  }));
 }
 
 /**
@@ -184,6 +240,7 @@ export async function parseAndRenderAdvanced(
  * img.src = pngDataUrls[0];
  * document.body.appendChild(img);
  */
+/** @deprecated Use renderZplPNG(); retained through the 0.2 release line. */
 export async function parseAndRenderPNG(
   zpl: string,
   width: number,
@@ -255,6 +312,7 @@ export function findCommandAtCoordinate(
 
     switch (region.type) {
       case "box":
+      case "ellipse":
       case "barcode":
       case "text":
         if (region.width && region.height) {
@@ -301,7 +359,14 @@ export type { Orientation } from "./types/Orientation";
 export type { RenderContext } from "./types/RenderContext";
 export type {
   CommandCapability,
+  CommandCategory,
+  CommandEffect,
+  CommandPersistenceScope,
   CommandCapabilityStatus,
+  ZplDiagnosticPhase,
+  ZplDiagnosticSeverity,
+  ZplJobItem,
+  ZplPrefixKind,
   ParseDocumentOptions,
   RenderDocumentOptions,
   SourceSpan,
@@ -310,4 +375,16 @@ export type {
   ZplDocument,
   ZplLabelNode,
   ZplProfile,
+  ZplSyntaxState,
 } from "./types/ZplDocument";
+export type {
+  DownloadedFontSource,
+  FontProvider,
+  MonochromeRaster,
+  PrintDensity,
+  RenderJobOptions,
+  RenderJobResult,
+  RenderedLabel,
+  RenderLimits,
+  ZplRenderSession,
+} from "./types/RenderJob";

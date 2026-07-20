@@ -1,9 +1,11 @@
 import { BarcodeCommand } from "./CommandClass";
 import { FieldBlock } from "@/commands/FieldBlock";
+import type { SourceSpan } from "./ZplDocument";
 
 export type HighlightRegionType =
   | "box"
   | "circle"
+  | "ellipse"
   | "barcode"
   | "origin"
   | "text";
@@ -11,6 +13,8 @@ export type HighlightRegionType =
 export interface HighlightRegion {
   type: HighlightRegionType;
   commandIndex: number; // Index of the command that created this region
+  /** Exact source range for modern renderer regions, including expanded formats. */
+  sourceSpan?: SourceSpan;
   x: number;
   y: number;
   width?: number;

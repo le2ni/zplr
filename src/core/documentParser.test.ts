@@ -32,9 +32,11 @@ describe("parseDocument", () => {
       "A@",
       "XZ",
     ]);
-    expect(document.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
-      "UNSUPPORTED_COMMAND"
-    );
+    expect(document.labels[0].commands[2]).toMatchObject({
+      canonical: "^A@",
+      capability: "supported",
+    });
+    expect(document.diagnostics).toEqual([]);
   });
 
   it("tracks changed caret, control prefix, and delimiter characters", () => {
@@ -61,9 +63,19 @@ describe("parseDocument", () => {
       "HS",
       "XZ",
     ]);
-    expect(control.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
-      "UNKNOWN_COMMAND"
+    expect(control.labels[0].commands[2].canonical).toBe("~HS");
+    expect(control.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "NON_RENDERING_COMMAND",
+        command: "~HS",
+        severity: "info",
+      })
     );
+
+    const invalidPrefix = parseDocument("^XA^DGname^XZ");
+    expect(
+      invalidPrefix.diagnostics.map((diagnostic) => diagnostic.code)
+    ).toContain("INVALID_COMMAND_PREFIX");
   });
 
   it("recognizes STX, ETX, and SI command alternatives", () => {
@@ -80,23 +92,24 @@ describe("parseDocument", () => {
     );
   });
 
-  it("retains fragments, unknown commands, and unsupported commands", () => {
-    const document = parseDocument("junk^FO1,2^ZZabc^CI28^FS");
+  it("retains fragments, unknown commands, and supported commands", () => {
+    const document = parseDocument("junk^FO1,2^QZabc^B4^FS");
     expect(document.labels[0].explicit).toBe(false);
     expect(document.labels[0].commands.map((command) => command.code)).toEqual([
       "FO",
-      "ZZ",
-      "CI",
+      "QZ",
+      "B4",
       "FS",
     ]);
-    expect(document.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
+    const codes = document.diagnostics.map((diagnostic) => diagnostic.code);
+    expect(codes).toEqual(
       expect.arrayContaining([
         "TEXT_OUTSIDE_COMMAND",
         "UNKNOWN_COMMAND",
-        "UNSUPPORTED_COMMAND",
         "IMPLICIT_LABEL",
       ])
     );
+    expect(codes).not.toContain("PARTIALLY_SUPPORTED_COMMAND");
   });
 
   it("reports unmatched and incomplete format boundaries", () => {
@@ -157,9 +170,15 @@ describe("parseDocument", () => {
     const profile = parseDocument("^XA^XZ", {
       profile: "future-profile" as "zpl-ii-2006",
     });
-    expect(profile.profile).toBe("zpl-ii-2006");
+    expect(profile.profile).toBe("zpl-ii-2025");
     expect(profile.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "UNSUPPORTED_PROFILE"
+    );
+
+    const legacy = parseDocument("^XA^XZ", { profile: "zpl-ii-2006" });
+    expect(legacy.profile).toBe("zpl-ii-2025");
+    expect(legacy.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "DEPRECATED_PROFILE", severity: "warning" })
     );
   });
 });

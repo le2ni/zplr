@@ -1,4 +1,8 @@
-import { getCommandCapabilityStatus } from "./capabilities";
+import {
+  commandCapabilities,
+  getCommandCapability,
+  getCommandCapabilityStatus,
+} from "./capabilities";
 import {
   ParseDocumentOptions,
   SourceSpan,
@@ -7,28 +11,26 @@ import {
   ZplDocument,
   ZplLabelNode,
   ZplPrefixKind,
+  ZplSyntaxState,
 } from "@/types/ZplDocument";
 
 const STX = "\u0002";
 const ETX = "\u0003";
 const SI = "\u000f";
 
-interface LexicalState {
-  formatPrefix: string;
-  controlPrefix: string;
-  delimiter: string;
-}
+type LexicalState = ZplSyntaxState;
 
 interface TokenizeResult {
   commands: ZplCommandNode[];
   diagnostics: ZplDiagnostic[];
+  syntax: ZplSyntaxState;
 }
 
 function diagnostic(
   code: string,
   message: string,
   span: SourceSpan,
-  severity: "warning" | "error" = "warning",
+  severity: "info" | "warning" | "error" = "warning",
   command?: string
 ): ZplDiagnostic {
   return { code, message, span, severity, command, phase: "parse" };
@@ -63,6 +65,36 @@ function controlCharacterCommand(value: string): string {
   return "FS";
 }
 
+function binaryCommandEnd(
+  source: string,
+  parameterStart: number,
+  delimiter: string,
+  code: string,
+  prefixKind: ZplPrefixKind
+): number | undefined {
+  const headerFields =
+    code === "DY" && prefixKind === "control"
+      ? 5
+      : code === "GF" && prefixKind === "format"
+      ? 4
+      : 0;
+  if (headerFields === 0) return undefined;
+  const delimiters: number[] = [];
+  for (let index = parameterStart; index < source.length; index++) {
+    if (source[index] !== delimiter) continue;
+    delimiters.push(index);
+    if (delimiters.length === headerFields) break;
+  }
+  if (delimiters.length < headerFields) return undefined;
+  const lastDelimiter = delimiters[headerFields - 1];
+  const header = source.slice(parameterStart, lastDelimiter).split(delimiter);
+  const format = header[code === "DY" ? 1 : 0]?.trim().toUpperCase();
+  if (format !== "B" && format !== "C") return undefined;
+  const bytes = Number.parseInt(header[code === "DY" ? 3 : 1] ?? "", 10);
+  if (!Number.isFinite(bytes) || bytes < 0) return undefined;
+  return Math.min(source.length, lastDelimiter + 1 + bytes);
+}
+
 function commandCodeAt(
   source: string,
   prefixIndex: number
@@ -80,13 +112,16 @@ function commandCodeAt(
   return { code, length: 2 };
 }
 
-function tokenize(source: string): TokenizeResult {
+function tokenize(
+  source: string,
+  initialSyntax: Partial<ZplSyntaxState> = {}
+): TokenizeResult {
   const commands: ZplCommandNode[] = [];
   const diagnostics: ZplDiagnostic[] = [];
   const state: LexicalState = {
-    formatPrefix: "^",
-    controlPrefix: "~",
-    delimiter: ",",
+    formatPrefix: initialSyntax.formatPrefix?.[0] ?? "^",
+    controlPrefix: initialSyntax.controlPrefix?.[0] ?? "~",
+    delimiter: initialSyntax.delimiter?.[0] ?? ",",
   };
 
   let index = 0;
@@ -112,6 +147,7 @@ function tokenize(source: string): TokenizeResult {
       commands.push({
         kind: "command",
         code,
+        canonical: `^${code}`,
         prefix,
         prefixKind: "control-character",
         rawParameters: "",
@@ -119,7 +155,7 @@ function tokenize(source: string): TokenizeResult {
         delimiter: state.delimiter,
         span: { start: boundary, end: boundary + 1 },
         index: 0,
-        capability: getCommandCapabilityStatus(code),
+        capability: getCommandCapabilityStatus(`^${code}`),
       });
       index = boundary + 1;
       continue;
@@ -142,17 +178,27 @@ function tokenize(source: string): TokenizeResult {
 
     const prefixKind: ZplPrefixKind =
       prefix === state.formatPrefix ? "format" : "control";
+    const canonicalPrefix = prefixKind === "format" ? "^" : "~";
+    const canonical = `${canonicalPrefix}${codeInfo.code}`;
     const parameterStart = boundary + 1 + codeInfo.length;
     const changesLexicalState = ["CC", "CD", "CT"].includes(codeInfo.code);
+    const binaryEnd = binaryCommandEnd(
+      source,
+      parameterStart,
+      state.delimiter,
+      codeInfo.code,
+      prefixKind
+    );
     const end = changesLexicalState
       ? Math.min(parameterStart + 1, source.length)
-      : findBoundary(source, parameterStart, state);
+      : binaryEnd ?? findBoundary(source, parameterStart, state);
     const rawParameters = source.slice(parameterStart, end);
     const activeDelimiter = state.delimiter;
 
     const node: ZplCommandNode = {
       kind: "command",
       code: codeInfo.code,
+      canonical,
       prefix,
       prefixKind,
       rawParameters,
@@ -161,28 +207,56 @@ function tokenize(source: string): TokenizeResult {
       delimiter: activeDelimiter,
       span: { start: boundary, end },
       index: 0,
-      capability: getCommandCapabilityStatus(codeInfo.code),
+      capability: getCommandCapabilityStatus(canonical),
     };
     commands.push(node);
 
     if (node.capability === "unknown") {
+      const codeIsKnown = commandCapabilities.some(
+        (capability) => capability.code === node.code
+      );
       diagnostics.push(
         diagnostic(
-          "UNKNOWN_COMMAND",
-          `${node.code} is not recognized and was retained without interpretation.`,
+          codeIsKnown ? "INVALID_COMMAND_PREFIX" : "UNKNOWN_COMMAND",
+          codeIsKnown
+            ? `${node.canonical} uses a prefix that is not documented for ${node.code}.`
+            : `${node.canonical} is not recognized and was retained without interpretation.`,
           node.span,
           "warning",
-          node.code
+          node.canonical
         )
       );
     } else if (node.capability === "unsupported") {
       diagnostics.push(
         diagnostic(
           "UNSUPPORTED_COMMAND",
-          `${node.code} is recognized but is not supported by this profile.`,
+          `${node.canonical} is recognized but is not supported by this profile.`,
           node.span,
           "warning",
-          node.code
+          node.canonical
+        )
+      );
+    } else if (node.capability === "partial") {
+      const limitations = getCommandCapability(node.canonical)?.limitations ?? [];
+      diagnostics.push(
+        diagnostic(
+          "PARTIALLY_SUPPORTED_COMMAND",
+          `${node.canonical} is supported with limitations${
+            limitations.length ? `: ${limitations.join(" ")}` : "."
+          }`,
+          node.span,
+          "info",
+          node.canonical
+        )
+      );
+    } else if (node.capability === "non-rendering") {
+      diagnostics.push(
+        diagnostic(
+          "NON_RENDERING_COMMAND",
+          `${node.canonical} is recognized and has no label-raster effect.`,
+          node.span,
+          "info",
+          node.canonical
         )
       );
     }
@@ -220,7 +294,7 @@ function tokenize(source: string): TokenizeResult {
     index = Math.max(end, boundary + 1);
   }
 
-  return { commands, diagnostics };
+  return { commands, diagnostics, syntax: { ...state } };
 }
 
 function makeLabel(
@@ -241,16 +315,34 @@ function makeLabel(
   };
 }
 
-function groupLabels(
+function groupItems(
   commands: ZplCommandNode[],
   diagnostics: ZplDiagnostic[]
-): ZplLabelNode[] {
+): { items: Array<ZplLabelNode | ZplCommandNode>; labels: ZplLabelNode[] } {
+  const items: Array<ZplLabelNode | ZplCommandNode> = [];
   const labels: ZplLabelNode[] = [];
   let current: ZplCommandNode[] = [];
   let explicit = false;
 
+  const currentIsSessionSetup = () =>
+    !explicit &&
+    current.length > 0 &&
+    current.every(
+      (command) => getCommandCapability(command.canonical)?.scope === "session"
+    );
+
+  const finishSessionSetup = () => {
+    items.push(...current);
+    current = [];
+    explicit = false;
+  };
+
   const finishCurrent = () => {
-    if (current.length > 0) labels.push(makeLabel(current, explicit));
+    if (current.length > 0) {
+      const label = makeLabel(current, explicit);
+      labels.push(label);
+      items.push(label);
+    }
     current = [];
     explicit = false;
   };
@@ -258,7 +350,9 @@ function groupLabels(
   for (const command of commands) {
     if (command.code === "XA") {
       if (current.length > 0) {
-        if (explicit) {
+        if (currentIsSessionSetup()) {
+          finishSessionSetup();
+        } else if (explicit) {
           diagnostics.push(
             diagnostic(
               "NESTED_FORMAT",
@@ -309,37 +403,55 @@ function groupLabels(
       continue;
     }
 
+    if (!explicit && current.length === 0) {
+      const capability = getCommandCapability(command.canonical);
+      if (capability?.effect === "job" || capability?.effect === "device") {
+        items.push(command);
+        continue;
+      }
+    }
+
     current.push(command);
   }
 
   if (current.length > 0) {
-    diagnostics.push(
-      diagnostic(
-        explicit ? "UNTERMINATED_FORMAT" : "IMPLICIT_LABEL",
-        explicit
-          ? "The label started with XA but did not end with XZ."
-          : "Commands outside XA/XZ were retained as an implicit label.",
-        { start: current[0].span.start, end: current[current.length - 1].span.end },
-        explicit ? "error" : "warning"
-      )
-    );
-    finishCurrent();
+    if (currentIsSessionSetup()) {
+      finishSessionSetup();
+    } else {
+      diagnostics.push(
+        diagnostic(
+          explicit ? "UNTERMINATED_FORMAT" : "IMPLICIT_LABEL",
+          explicit
+            ? "The label started with XA but did not end with XZ."
+            : "Commands outside XA/XZ were retained as an implicit label.",
+          { start: current[0].span.start, end: current[current.length - 1].span.end },
+          explicit ? "error" : "warning"
+        )
+      );
+      finishCurrent();
+    }
   }
 
-  return labels;
+  return { items, labels };
 }
 
 export function parseDocument(
   source: string,
   options: ParseDocumentOptions = {}
 ): ZplDocument {
-  const profile = "zpl-ii-2006";
+  const profile = "zpl-ii-2025" as const;
   if (typeof source !== "string") {
     return {
       kind: "document",
       source: "",
       profile,
+      items: [],
       labels: [],
+      syntax: {
+        formatPrefix: options.initialSyntax?.formatPrefix?.[0] ?? "^",
+        controlPrefix: options.initialSyntax?.controlPrefix?.[0] ?? "~",
+        delimiter: options.initialSyntax?.delimiter?.[0] ?? ",",
+      },
       diagnostics: [
         diagnostic(
           "INVALID_INPUT",
@@ -350,9 +462,18 @@ export function parseDocument(
       ],
     };
   }
-  const tokenized = tokenize(source);
+  const tokenized = tokenize(source, options.initialSyntax);
   const diagnostics = [...tokenized.diagnostics];
-  if (options.profile !== undefined && options.profile !== profile) {
+  if (options.profile === "zpl-ii-2006") {
+    diagnostics.push(
+      diagnostic(
+        "DEPRECATED_PROFILE",
+        "zpl-ii-2006 is a deprecated compatibility alias; zpl-ii-2025 semantics were used.",
+        { start: 0, end: 0 },
+        "warning"
+      )
+    );
+  } else if (options.profile !== undefined && options.profile !== profile) {
     diagnostics.push(
       diagnostic(
         "UNSUPPORTED_PROFILE",
@@ -362,7 +483,7 @@ export function parseDocument(
       )
     );
   }
-  const labels = groupLabels(tokenized.commands, diagnostics);
+  const { items, labels } = groupItems(tokenized.commands, diagnostics);
 
   diagnostics.forEach((item) => {
     const labelIndex = labels.findIndex(
@@ -378,7 +499,9 @@ export function parseDocument(
     kind: "document",
     source,
     profile,
+    items,
     labels,
+    syntax: tokenized.syntax,
     diagnostics,
   };
 }

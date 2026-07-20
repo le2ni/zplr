@@ -29,11 +29,17 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Verify generated command support
+        run: pnpm run docs:support:check
+
       - name: Type check Node
         run: pnpm run typecheck
 
       - name: Type check web
         run: pnpm run typecheck:web
 
-      - name: Build
+      - name: Build Node package
         run: pnpm run build
+
+      - name: Build playground
+        run: pnpm run build:web

@@ -89,6 +89,8 @@ export function getParsedLabelMetadata(
 /**
  * Legacy parser adapter. New integrations should use parseDocument() so unknown
  * commands and structured diagnostics remain available.
+ *
+ * @deprecated Use parseDocument(); retained through the 0.2 release line.
  */
 export function parse(zpl: string): CommandClass[][] {
   const document = parseDocument(zpl);

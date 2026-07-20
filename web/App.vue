@@ -1,12 +1,12 @@
 <template>
-  <div class="bg-white relative isolate overflow-hidden dark:bg-zinc-900">
+  <div class="relative isolate min-h-screen overflow-hidden bg-white dark:bg-zinc-950">
     <svg
-      class="inset-0 stroke-zinc-200 -z-10 absolute size-full mask-[radial-gradient(100%_100%_at_top_right,white,transparent)] dark:stroke-white/10"
+      class="absolute inset-0 -z-10 size-full stroke-zinc-200 mask-[radial-gradient(100%_100%_at_top_right,white,transparent)] dark:stroke-white/10"
       aria-hidden="true"
     >
       <defs>
         <pattern
-          id="983e3e4c-de6d-4c3f-8d64-b9761d1534cc"
+          id="zplr-landing-grid"
           width="200"
           height="200"
           x="50%"
@@ -16,211 +16,402 @@
           <path d="M.5 200V.5H200" fill="none" />
         </pattern>
       </defs>
-      <svg
-        x="50%"
-        y="-1"
-        class="fill-zinc-50 overflow-visible dark:fill-zinc-800/20"
-      >
+      <svg x="50%" y="-1" class="overflow-visible fill-zinc-50 dark:fill-zinc-900/40">
         <path
           d="M-200 0h201v201h-201Z M600 0h201v201h-201Z M-400 600h201v201h-201Z M200 800h201v201h-201Z"
           stroke-width="0"
         />
       </svg>
-      <rect
-        width="100%"
-        height="100%"
-        stroke-width="0"
-        fill="url(#983e3e4c-de6d-4c3f-8d64-b9761d1534cc)"
-      />
+      <rect width="100%" height="100%" fill="url(#zplr-landing-grid)" stroke-width="0" />
     </svg>
+
     <div
-      class="transform-gpu top-10 left-[calc(50%-4rem)] -z-10 absolute blur-3xl sm:left-[calc(50%-18rem)] lg:top-[calc(50%-30rem)] lg:left-48 xl:left-[calc(50%-24rem)]"
+      class="absolute top-10 left-[calc(50%-4rem)] -z-10 transform-gpu blur-3xl sm:left-[calc(50%-18rem)] lg:top-[calc(50%-30rem)] lg:left-48 xl:left-[calc(50%-24rem)]"
       aria-hidden="true"
     >
       <div
-        class="bg-linear-to-r from-black to-black opacity-20 w-277 aspect-1108/632"
-        style="
-          clip-path: polygon(
-            73.6% 51.7%,
-            91.7% 11.8%,
-            100% 46.4%,
-            97.4% 82.2%,
-            92.5% 84.9%,
-            75.7% 64%,
-            55.3% 47.5%,
-            46.5% 49.4%,
-            45% 62.9%,
-            50.3% 87.2%,
-            21.3% 64.1%,
-            0.1% 100%,
-            5.4% 51.1%,
-            21.4% 63.9%,
-            58.9% 0.2%,
-            73.6% 51.7%
-          );
-        "
+        class="aspect-1108/632 w-277 bg-linear-to-r from-zinc-400 to-zinc-900 opacity-20 dark:from-white dark:to-zinc-500 dark:opacity-10"
+        style="clip-path: polygon(73.6% 51.7%,91.7% 11.8%,100% 46.4%,97.4% 82.2%,92.5% 84.9%,75.7% 64%,55.3% 47.5%,46.5% 49.4%,45% 62.9%,50.3% 87.2%,21.3% 64.1%,.1% 100%,5.4% 51.1%,21.4% 63.9%,58.9% .2%,73.6% 51.7%)"
       />
     </div>
-    <div
-      class="mx-auto max-w-7xl px-6 pt-10 pb-24 sm:pb-32 lg:flex lg:py-40 lg:px-8 lg:justify-between"
+
+    <main
+      class="mx-auto grid min-h-dvh max-w-7xl items-center gap-12 px-6 py-10 sm:py-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(430px,1.1fr)] lg:gap-10 lg:px-8 lg:py-6 xl:gap-14 xl:py-8"
     >
-      <div class="mx-auto max-w-2xl shrink-0 lg:mx-0 lg:pt-8">
-        <img class="h-16" src="./assets/logo.svg" alt="ZPLr Logo" />
-        <div class="space-x-6 mt-24 inline-flex sm:mt-32 lg:mt-16">
+      <section class="mx-auto max-w-2xl lg:mx-0">
+        <img class="h-12 dark:invert sm:h-14 lg:h-12 xl:h-14" src="./assets/logo.svg" alt="ZPLr logo" />
+
+        <div class="mt-10 flex flex-wrap items-center gap-3 lg:mt-8 xl:mt-10">
           <a
             href="https://github.com/lennartkoebe/zplr"
-            class="space-x-6 inline-flex"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center rounded-full bg-zinc-50 px-3 py-1 text-sm/6 font-semibold text-zinc-600 ring-1 ring-zinc-600/20 ring-inset transition hover:bg-zinc-100 dark:bg-white/5 dark:text-zinc-300 dark:ring-white/10 dark:hover:bg-white/10"
           >
-            <span
-              class="rounded-full flex flex-row font-semibold bg-zinc-50 ring-inset py-1 px-3 ring-1 ring-zinc-600/20 text-sm/6 text-zinc-600 items-center whitespace-nowrap dark:bg-zinc-500/10 dark:ring-zinc-500/25 dark:text-zinc-400"
-            >
-              <svg
-                class="h-4 mr-2 w-4 inline-block"
-                fill="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
-                />
-              </svg>
-              <span>GitHub</span></span
-            >
+            <svg class="mr-2 size-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.79-.26.79-.58v-2.23c-3.34.72-4.03-1.42-4.03-1.42-.55-1.39-1.33-1.76-1.33-1.76-1.09-.74.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.49 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23A11.5 11.5 0 0 1 12 6.8c1.02.01 2.05.14 3.01.41 2.29-1.56 3.3-1.23 3.3-1.23.65 1.65.24 2.87.12 3.17.77.84 1.23 1.91 1.23 3.22 0 4.61-2.81 5.62-5.48 5.92.43.37.82 1.1.82 2.22v3.3c0 .32.19.69.8.57A12 12 0 0 0 12 0Z" />
+            </svg>
+            GitHub
           </a>
           <a
             href="https://www.npmjs.com/package/zplr"
-            class="space-x-6 inline-flex"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-1 text-sm/6 font-medium text-zinc-600 transition hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-white"
           >
-            <span
-              class="font-medium space-x-2 text-sm/6 text-zinc-600 inline-flex items-center dark:text-zinc-300"
-            >
-              <span>v{{ currentPackageVersion }}</span>
-              <IconChevronRight
-                class="text-zinc-400 size-5 dark:text-zinc-500"
-                aria-hidden="true"
-              />
-            </span>
+            v{{ packageVersion }}
+            <IconChevronRight class="size-5 text-zinc-400" aria-hidden="true" />
           </a>
         </div>
-        <h1
-          class="font-extrabold mt-10 text-pretty tracking-tight text-5xl text-zinc-900 sm:text-7xl dark:text-white"
-        >
+
+        <h1 class="mt-6 text-5xl font-extrabold tracking-tight text-zinc-950 sm:text-6xl lg:text-5xl xl:text-6xl dark:text-white">
           ZPLr
         </h1>
-        <p
-          class="font-medium mt-8 text-lg text-pretty text-zinc-500 sm:text-xl/8 dark:text-zinc-400"
-        >
-          TypeScript library for parsing and rendering ZPL label files
+        <p class="mt-5 max-w-xl text-lg/8 font-medium text-zinc-500 sm:text-xl/8 lg:text-lg/7 xl:text-xl/8 dark:text-zinc-400">
+          Parse, inspect, and render ZPL labels with deterministic black-and-white output in Node.js and the browser.
         </p>
-        <div class="flex mt-10 gap-x-6 items-center">
-          <a
-            href="#"
-            class="rounded-md font-semibold bg-zinc-600 text-sm text-white py-2.5 px-3.5 shadow-2xs dark:bg-zinc-500 hover:bg-zinc-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-600 dark:hover:bg-zinc-400 dark:focus-visible:outline-zinc-500"
-            >Get started</a
-          >
-          <button
-            @click="editorOpen = true"
-            class="rounded-full cursor-pointer flex font-semibold py-1 px-3 text-sm/6 text-zinc-900 items-center dark:text-white hover:bg-black/5"
-          >
-            <IconTextBoxEdit class="mr-2 inline-block" />
-            live editor
-          </button>
-        </div>
-      </div>
-      <div
-        class="flex mx-auto mt-16 max-w-2xl sm:mt-24 lg:flex-none lg:max-w-none lg:mt-0 lg:mr-0 lg:ml-10 xl:ml-32"
-      >
-        <div class="flex-none max-w-3xl sm:max-w-5xl lg:max-w-none">
-          <img
-            :src="renderedExampleBase64"
-            alt="App screenshot"
-            @click="handleCanvasClick"
-            @mousemove="handleCanvasMouseMove"
-            :style="{ cursor: canvasCursor }"
-            width="2432"
-            height="1442"
-            class="bg-zinc-50 rounded-3xl shadow-xl w-120"
-          />
-        </div>
-      </div>
-    </div>
-  </div>
-  <TransitionRoot as="template" :show="editorOpen">
-    <Dialog class="z-10 relative" @close="editorOpen = false">
-      <div class="bg-black/5 inset-0 fixed" />
+        <p class="mt-3 max-w-lg text-sm/6 text-zinc-500 dark:text-zinc-500">
+          A modern ZPL II 2025 renderer with packed rasters, real label dimensions, diagnostics, graphics, fonts, and common barcodes.
+        </p>
 
-      <div class="inset-0 fixed overflow-hidden">
-        <div class="inset-0 absolute overflow-hidden">
-          <div
-            class="flex inset-0 pointer-events-none fixed"
+        <div class="mt-6 flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            class="inline-flex cursor-pointer items-center rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+            @click="editorOpen = true"
           >
-            <TransitionChild
-              as="template"
-              enter="transform transition ease-in-out duration-500 sm:duration-700"
-              enter-from="opacity-0"
-              enter-to="opacity-100"
-              leave="transform transition ease-in-out duration-500 sm:duration-700"
-              leave-from="opacity-100"
-              leave-to="opacity-0"
-            >
-              <DialogPanel class="w-screen h-screen pointer-events-auto">
-                <div
-                  class="bg-white flex flex-col h-screen shadow-xl relative overflow-hidden dark:bg-gray-800"
+            <IconTextBoxEdit class="mr-2 size-5" aria-hidden="true" />
+            Open live playground
+          </button>
+          <a
+            href="https://github.com/lennartkoebe/zplr#readme"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center rounded-lg px-3 py-2.5 text-sm font-semibold text-zinc-900 transition hover:bg-black/5 dark:text-white dark:hover:bg-white/5"
+          >
+            Get started
+            <IconChevronRight class="ml-1 size-5 text-zinc-400" aria-hidden="true" />
+          </a>
+        </div>
+
+        <dl class="mt-8 grid max-w-lg grid-cols-3 divide-x divide-zinc-200 dark:divide-white/10">
+          <div class="pr-5">
+            <dt class="text-xs text-zinc-500">Commands classified</dt>
+            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">223</dd>
+          </div>
+          <div class="px-5">
+            <dt class="text-xs text-zinc-500">Canonical raster</dt>
+            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">1-bit</dd>
+          </div>
+          <div class="pl-5">
+            <dt class="text-xs text-zinc-500">Runtime parity</dt>
+            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">Exact</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="mx-auto w-full max-w-2xl lg:mx-0">
+        <button
+          type="button"
+          class="group block w-full cursor-pointer text-left"
+          aria-label="Open the live ZPL playground"
+          @click="editorOpen = true"
+        >
+          <div class="overflow-hidden rounded-[2rem] border border-zinc-200 bg-white shadow-2xl shadow-zinc-900/15 ring-1 ring-black/5 transition duration-300 group-hover:-translate-y-1 group-hover:shadow-zinc-900/20 dark:border-white/10 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-white/5">
+            <div class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-white/10 sm:px-5">
+              <div class="flex items-center gap-2" aria-hidden="true">
+                <span class="size-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                <span class="size-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+                <span class="size-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+              </div>
+              <span class="font-mono text-xs text-zinc-400">zplr.zpl</span>
+              <span class="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold tracking-wide text-emerald-700 uppercase dark:bg-emerald-400/10 dark:text-emerald-300">
+                Live
+              </span>
+            </div>
+            <div class="landing-preview-grid flex min-h-[420px] items-center justify-center p-6 sm:min-h-[520px] sm:p-8 lg:h-[clamp(360px,calc(100dvh-12rem),580px)] lg:min-h-0 lg:p-6">
+              <span v-if="rendering" class="text-sm text-zinc-400">Rendering label…</span>
+              <span v-else-if="renderFailure" class="max-w-sm text-center text-sm text-rose-600">
+                {{ renderFailure }}
+              </span>
+              <img
+                v-else-if="previewUrl"
+                :src="previewUrl"
+                alt="Rendered shipping label preview"
+                class="max-h-[480px] max-w-full bg-white object-contain shadow-xl shadow-zinc-900/15 ring-1 ring-zinc-900/10 transition duration-300 group-hover:scale-[1.01] sm:max-h-[520px] lg:h-full lg:max-h-full lg:w-auto"
+              />
+            </div>
+            <div class="flex items-center justify-between border-t border-zinc-200 px-4 py-3 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-400 sm:px-5">
+              <span v-if="activeLabel">
+                {{ activeLabel.width }} × {{ activeLabel.height }} dots · {{ activeLabel.printDensity }} dots/mm
+              </span>
+              <span v-else>Deterministic label preview</span>
+              <span class="font-semibold text-zinc-700 transition group-hover:text-zinc-950 dark:text-zinc-300 dark:group-hover:text-white">
+                Edit label →
+              </span>
+            </div>
+          </div>
+        </button>
+      </section>
+    </main>
+  </div>
+
+  <TransitionRoot as="template" :show="editorOpen">
+    <Dialog class="relative z-50" @close="editorOpen = false">
+      <TransitionChild
+        as="template"
+        enter="duration-200 ease-out"
+        enter-from="opacity-0"
+        enter-to="opacity-100"
+        leave="duration-150 ease-in"
+        leave-from="opacity-100"
+        leave-to="opacity-0"
+      >
+        <div class="fixed inset-0 bg-zinc-950/60 backdrop-blur-sm" />
+      </TransitionChild>
+
+      <div class="fixed inset-0 p-0 sm:p-3">
+        <TransitionChild
+          as="template"
+          enter="duration-250 ease-out"
+          enter-from="translate-y-4 opacity-0 sm:scale-[.98]"
+          enter-to="translate-y-0 opacity-100 sm:scale-100"
+          leave="duration-150 ease-in"
+          leave-from="translate-y-0 opacity-100 sm:scale-100"
+          leave-to="translate-y-4 opacity-0 sm:scale-[.98]"
+        >
+          <DialogPanel class="mx-auto flex h-full max-w-[1800px] flex-col overflow-hidden bg-white shadow-2xl sm:rounded-2xl dark:bg-zinc-950">
+            <header class="flex h-16 shrink-0 items-center justify-between border-b border-zinc-200 px-4 sm:px-6 dark:border-white/10">
+              <div class="flex min-w-0 items-center gap-3">
+                <img class="size-8 dark:invert" src="./assets/logo.svg" alt="" />
+                <div class="min-w-0">
+                  <DialogTitle class="truncate text-sm font-semibold text-zinc-950 dark:text-white">
+                    ZPLr live playground
+                  </DialogTitle>
+                  <p class="truncate text-xs text-zinc-500">Deterministic ZPL II 2025 preview</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <a
+                  href="https://docs.zebra.com/us/en/printers/software/zpl-pg/c-zpl-zpl-commands.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="hidden rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 sm:block dark:hover:bg-white/5 dark:hover:text-white"
                 >
-                  <div class="px-4 py-4 sm:px-6 border-b border-gray-200 dark:border-gray-700">
-                    <div class="flex items-start justify-between">
-                      <DialogTitle
-                        class="font-semibold text-base text-gray-900 dark:text-white"
-                      >
-                        Live Editor
-                      </DialogTitle>
-                      <div class="flex h-7 ml-3 items-center">
-                        <button
-                          type="button"
-                          class="rounded-md text-gray-400 relative hover:text-gray-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 dark:hover:text-white dark:focus-visible:outline-indigo-500"
-                          @click="editorOpen = false"
-                        >
-                          <span class="-inset-2.5 absolute" />
-                          <span class="sr-only">Close editor</span>
-                          <IconClose class="size-6" aria-hidden="true" />
-                        </button>
-                      </div>
-                    </div>
+                  Command reference ↗
+                </a>
+                <button
+                  type="button"
+                  class="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 dark:hover:bg-white/10 dark:hover:text-white"
+                  @click="editorOpen = false"
+                >
+                  <span class="sr-only">Close playground</span>
+                  <IconClose class="size-6" aria-hidden="true" />
+                </button>
+              </div>
+            </header>
+
+            <div class="shrink-0 border-b border-zinc-200 bg-zinc-50 px-4 py-3 sm:px-6 dark:border-white/10 dark:bg-zinc-900/60">
+              <div class="flex flex-wrap items-end gap-3">
+                <label class="control min-w-48 grow sm:grow-0">
+                  <span>Sample label</span>
+                  <select
+                    v-model="selectedSample"
+                    data-testid="sample-select"
+                    @change="loadSample"
+                  >
+                    <option v-for="sample in samples" :key="sample.id" :value="sample.id">
+                      {{ sample.name }}
+                    </option>
+                  </select>
+                </label>
+                <label class="control">
+                  <span>Print density</span>
+                  <select v-model.number="printDensity">
+                    <option :value="6">6 dots/mm · 150 dpi</option>
+                    <option :value="8">8 dots/mm · 203 dpi</option>
+                    <option :value="12">12 dots/mm · 300 dpi</option>
+                    <option :value="24">24 dots/mm · 600 dpi</option>
+                  </select>
+                </label>
+                <label class="control">
+                  <span>Label dimensions</span>
+                  <select v-model="sizeMode">
+                    <option value="source">Use ^PW / ^LL</option>
+                    <option value="override">Override in dots</option>
+                  </select>
+                </label>
+                <template v-if="sizeMode === 'override'">
+                  <label class="control min-w-24">
+                    <span>Width</span>
+                    <input v-model.number="overrideWidth" min="1" max="32768" type="number" />
+                  </label>
+                  <label class="control min-w-24">
+                    <span>Height</span>
+                    <input v-model.number="overrideHeight" min="1" max="32768" type="number" />
+                  </label>
+                </template>
+              </div>
+            </div>
+
+            <div class="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[minmax(0,1.15fr)_minmax(380px,.85fr)] lg:overflow-hidden">
+              <section class="flex min-h-[680px] min-w-0 flex-col border-zinc-200 lg:min-h-0 lg:border-r dark:border-white/10">
+                <div class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-white/10">
+                  <div>
+                    <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">ZPL source</h2>
+                    <p class="mt-0.5 text-xs text-zinc-500">Click a preview field or diagnostic to find its command.</p>
                   </div>
-                  <div class="flex-1 flex overflow-hidden">
-                    <!-- Left side: Code Editor -->
-                    <div class="flex-1 flex flex-col overflow-hidden">
-                      <MonacoEditor
-                        v-model="baseExample"
-                        :cursor-position="editorCursorPosition"
-                        :highlight-range="highlightRange"
-                        @update:cursor-position="handleEditorCursorChange"
-                        class="h-full w-full"
-                      />
-                    </div>
-                    <!-- Right side: Canvas Preview -->
-                    <div class="flex-1 flex flex-col px-4 py-4 overflow-auto sm:px-6 bg-gray-50 dark:bg-gray-900">
-                      <div class="flex items-center justify-center h-full">
-                        <img
-                          :src="renderedExampleBase64"
-                          alt="ZPL Preview"
-                          @click="handleCanvasClick"
-                          @mousemove="handleCanvasMouseMove"
-                          @mouseleave="handleCanvasMouseLeave"
-                          :style="{ cursor: canvasCursor }"
-                          class="max-w-full max-h-full object-contain bg-white rounded-lg shadow-lg"
-                        />
-                      </div>
-                    </div>
+                  <span class="rounded-full bg-zinc-100 px-2.5 py-1 font-mono text-[10px] font-semibold text-zinc-500 dark:bg-white/5 dark:text-zinc-400">
+                    .ZPL
+                  </span>
+                </div>
+                <div class="min-h-[420px] flex-1">
+                  <MonacoEditor
+                    v-model="source"
+                    :cursor-position="editorCursor"
+                    :highlight-range="highlightRange"
+                    @update:cursor-position="editorCursor = $event"
+                  />
+                </div>
+
+                <div class="max-h-[36%] min-h-40 shrink-0 overflow-hidden border-t border-zinc-200 dark:border-white/10">
+                  <button
+                    class="flex w-full items-center justify-between px-4 py-3 text-left"
+                    type="button"
+                    @click="diagnosticsOpen = !diagnosticsOpen"
+                  >
+                    <span class="text-sm font-semibold text-zinc-950 dark:text-white">Diagnostics</span>
+                    <span class="flex items-center gap-2 text-xs text-zinc-500">
+                      <span v-if="errorCount" class="text-rose-600 dark:text-rose-300">{{ errorCount }} errors</span>
+                      <span v-if="warningCount" class="text-amber-600 dark:text-amber-300">{{ warningCount }} warnings</span>
+                      <span v-if="!errorCount && !warningCount && infoCount" class="text-sky-600 dark:text-sky-300">{{ infoCount }} notes</span>
+                      <span v-if="!errorCount && !warningCount && !infoCount" class="text-emerald-600 dark:text-emerald-300">No problems</span>
+                      {{ diagnosticsOpen ? "▴" : "▾" }}
+                    </span>
+                  </button>
+                  <div v-if="diagnosticsOpen" class="max-h-56 overflow-auto border-t border-zinc-200 dark:border-white/10">
+                    <p v-if="!diagnostics.length" class="px-4 py-6 text-sm text-zinc-500">
+                      This job has no diagnostics.
+                    </p>
+                    <button
+                      v-for="(diagnostic, index) in diagnostics"
+                      :key="diagnosticKey(diagnostic, index)"
+                      class="flex w-full gap-3 border-b border-zinc-100 px-4 py-3 text-left transition last:border-0 hover:bg-zinc-50 dark:border-white/5 dark:hover:bg-white/5"
+                      type="button"
+                      @click="focusSpan(diagnostic.span)"
+                    >
+                      <span :class="severityClass(diagnostic.severity)" class="mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase">
+                        {{ diagnostic.severity }}
+                      </span>
+                      <span class="min-w-0">
+                        <span class="block font-mono text-xs text-zinc-500">
+                          {{ diagnostic.code }}<template v-if="diagnostic.command"> · {{ diagnostic.command }}</template>
+                        </span>
+                        <span class="mt-0.5 block text-sm text-zinc-700 dark:text-zinc-200">{{ diagnostic.message }}</span>
+                      </span>
+                    </button>
                   </div>
                 </div>
-              </DialogPanel>
-            </TransitionChild>
-          </div>
-        </div>
+              </section>
+
+              <aside class="min-w-0 overflow-y-auto bg-zinc-50 p-4 sm:p-5 dark:bg-zinc-900/50">
+                <section class="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-white/10 dark:bg-zinc-900">
+                  <div class="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-white/10">
+                    <div>
+                      <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">Label preview</h2>
+                      <p v-if="activeLabel" class="mt-0.5 text-xs text-zinc-500">
+                        {{ activeLabel.width }} × {{ activeLabel.height }} dots ·
+                        {{ activeLabel.printDensity }} dots/mm ·
+                        {{ activeLabel.raster.data.byteLength.toLocaleString() }} bytes
+                      </p>
+                      <p v-else class="mt-0.5 text-xs text-zinc-500">No renderable label</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
+                      :disabled="!activeLabel"
+                      @click="downloadPng"
+                    >
+                      Download PNG
+                    </button>
+                  </div>
+
+                  <div v-if="labels.length > 1" class="flex gap-1 overflow-auto border-b border-zinc-200 px-3 py-2 dark:border-white/10">
+                    <button
+                      v-for="(_, index) in labels"
+                      :key="index"
+                      type="button"
+                      class="rounded-md px-3 py-1.5 text-xs transition"
+                      :class="activeLabelIndex === index ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-950' : 'text-zinc-500 hover:bg-zinc-100 dark:hover:bg-white/5'"
+                      @click="activeLabelIndex = index"
+                    >
+                      Label {{ index + 1 }}
+                    </button>
+                  </div>
+
+                  <div class="landing-preview-grid flex min-h-[460px] items-center justify-center overflow-auto p-6">
+                    <span v-if="rendering" class="text-sm text-zinc-400">Rendering packed dots…</span>
+                    <div v-else-if="renderFailure" class="max-w-sm rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200">
+                      {{ renderFailure }}
+                    </div>
+                    <img
+                      v-else-if="previewUrl"
+                      :src="previewUrl"
+                      alt="Rendered ZPL label"
+                      class="max-h-[600px] max-w-full cursor-crosshair bg-white shadow-xl shadow-zinc-900/15 ring-1 ring-zinc-900/10"
+                      @click="selectRenderedField"
+                    />
+                    <p v-else class="text-sm text-zinc-500">Enter a complete label to preview it.</p>
+                  </div>
+                </section>
+
+                <section class="mt-4 rounded-2xl border border-zinc-200 bg-white p-4 dark:border-white/10 dark:bg-zinc-900">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">Command capabilities</h2>
+                      <p class="mt-1 text-xs text-zinc-500">
+                        {{ capabilityCounts.supported }} supported · {{ capabilityCounts.partial }} partial ·
+                        {{ capabilityCounts.nonRendering }} non-rendering
+                      </p>
+                    </div>
+                    <input
+                      v-model.trim="capabilityQuery"
+                      aria-label="Filter command capabilities"
+                      class="w-28 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-sm text-zinc-800 outline-none placeholder:text-zinc-400 focus:border-zinc-500 dark:border-white/10 dark:bg-zinc-950 dark:text-zinc-200"
+                      placeholder="^BC"
+                    />
+                  </div>
+                  <div class="mt-3 max-h-56 space-y-2 overflow-auto pr-1">
+                    <a
+                      v-for="capability in visibleCapabilities"
+                      :key="capability.canonical"
+                      :href="capability.reference"
+                      target="_blank"
+                      rel="noreferrer"
+                      class="block rounded-lg border border-zinc-100 bg-zinc-50 p-3 transition hover:border-zinc-300 dark:border-white/5 dark:bg-zinc-950/70 dark:hover:border-white/15"
+                    >
+                      <div class="flex items-center justify-between gap-3">
+                        <span class="font-mono text-sm font-semibold text-zinc-950 dark:text-white">{{ capability.canonical }}</span>
+                        <span :class="capabilityClass(capability.status)" class="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase">
+                          {{ capability.status }}
+                        </span>
+                      </div>
+                      <p class="mt-1 text-xs text-zinc-700 dark:text-zinc-300">{{ capability.name }}</p>
+                      <p v-if="capability.limitations?.length" class="mt-1 text-xs leading-5 text-zinc-500">
+                        {{ capability.limitations.join(" ") }}
+                      </p>
+                    </a>
+                  </div>
+                </section>
+              </aside>
+            </div>
+          </DialogPanel>
+        </TransitionChild>
       </div>
     </Dialog>
   </TransitionRoot>
 </template>
+
 <script setup lang="ts">
 import {
   Dialog,
@@ -229,310 +420,290 @@ import {
   TransitionChild,
   TransitionRoot,
 } from "@headlessui/vue";
-import { IconClose, IconTextBoxEdit } from "@iconify-prerendered/vue-mdi";
-import { ref, watch } from "vue";
-import packageJSON from "../package.json";
 import {
-  parseAndRender,
-  findCommandAtPosition,
-  findCommandAtCoordinate,
-  parse,
-  type HighlightRegion,
-  parseAndRenderAdvanced
+  IconChevronRight,
+  IconClose,
+  IconTextBoxEdit,
+} from "@iconify-prerendered/vue-mdi";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import packageJson from "../package.json";
+import shippingSample from "../fixtures/zplr.zpl?raw";
+import retailSample from "../fixtures/retail-upc-ean.zpl?raw";
+import assetSample from "../fixtures/asset-matrix-pdf417.zpl?raw";
+import storedSample from "../fixtures/stored-resources.zpl?raw";
+import {
+  commandCapabilities,
+  renderZpl,
+  type CommandCapabilityStatus,
+  type PrintDensity,
+  type RenderedLabel,
+  type SourceSpan,
+  type ZplDiagnostic,
 } from "../src/index.web";
-import { IconChevronRight } from "@iconify-prerendered/vue-mdi";
+import type { HighlightRegion } from "../src/types/RenderContext";
 import MonacoEditor from "./components/MonacoEditor.vue";
 
-// Helper function to draw highlights on a canvas
-function drawHighlights(
-  ctx: CanvasRenderingContext2D,
-  regions: HighlightRegion[],
-  highlightedCommandIndex: number | undefined
-) {
-  if (highlightedCommandIndex === undefined) return;
+const samples = [
+  { id: "shipping", name: "UTF-8 shipping label", source: shippingSample },
+  { id: "retail", name: "Retail UPC / EAN", source: retailSample },
+  { id: "asset", name: "Data Matrix / PDF417 asset", source: assetSample },
+  { id: "stored", name: "Stored format and graphic", source: storedSample },
+] as const;
 
-  for (const region of regions) {
-    if (region.commandIndex === highlightedCommandIndex) {
-      ctx.save();
-      ctx.fillStyle = "rgba(255, 165, 0, 0.3)";
-      ctx.strokeStyle = "rgba(255, 165, 0, 0.8)";
-      ctx.lineWidth = 2;
-
-      switch (region.type) {
-        case "box":
-          if (region.width && region.height) {
-            ctx.fillRect(region.x, region.y, region.width, region.height);
-            ctx.strokeRect(region.x, region.y, region.width, region.height);
-          }
-          break;
-        case "circle":
-          if (region.radius) {
-            ctx.beginPath();
-            ctx.arc(region.x, region.y, region.radius, 0, 2 * Math.PI);
-            ctx.fill();
-            ctx.stroke();
-          }
-          break;
-        case "barcode":
-        case "text":
-          if (region.width && region.height) {
-            ctx.fillRect(region.x, region.y, region.width, region.height);
-            ctx.strokeRect(region.x, region.y, region.width, region.height);
-          }
-          break;
-        case "origin":
-          // Draw crosshair at origin
-          const size = 20;
-          ctx.beginPath();
-          ctx.moveTo(region.x - size, region.y);
-          ctx.lineTo(region.x + size, region.y);
-          ctx.moveTo(region.x, region.y - size);
-          ctx.lineTo(region.x, region.y + size);
-          ctx.stroke();
-
-          // Draw circle at origin point
-          ctx.fillStyle = "rgba(255, 165, 0, 0.5)";
-          ctx.beginPath();
-          ctx.arc(region.x, region.y, 5, 0, 2 * Math.PI);
-          ctx.fill();
-          ctx.stroke();
-          break;
-      }
-      ctx.restore();
-    }
-  }
-}
-
-const baseExample = ref(`^XA
-
-^FX Change Encoding
-^CI28
-
-^FX Borders
-^FO20,20^GB570,770,8,,1^FS
-^FO20,270^GB570,,8^FS
-^FO20,470^GB570,,8^FS
-^FO220,270^GB,200,8^FS
-^FO20,570^GB570,,8^FS
-^FO25,470^GB100,100,50^FS
-^FO20,670^GB570,,8^FS
-
-^FX Weight and page number
-^CF0,30
-^FO0,50^FB609,1,0,C^FD6,4 kg^FS
-^CF0,20
-^FO40,60^FB529,1,0,R^FD1 von 1^FS
-
-^FX From Address
-^CFA,20
-^FO60,80^FDACME Inc.^FS
-^FO60,100^FDCompany Street 5^FS
-^FO60,120^FD32584 Löhne^FS
-
-^FX To Address
-^CF0,20
-^FO60,165^FDSHIP TO:^FS
-^CFA,20
-^FO80,195^FDMax Mustermann^FS
-^FO80,215^FDTeststraße 6^FS
-^FO80,235^FD86152 Augsburg^FS
-
-^FX Fragile
-^FO365,180^GB200,70,8,,1^FS
-^CF0,50
-^FO380,195^FDFRAGILE^FS
-
-^FX QR-Code
-^FO40,280
-^BQN,2,8
-^FDMM,ALENNART KOEBE^FS
-
-^FX Barcode Code 39
-^FO260,350^BY3^B3,N,80,Y,Y^FD1234^FS
-
-^FX Shipping Company Logo
-^FO40,490^GB70,10,10,W,4^FS
-^FO40,505^GB50,10,10,W,4^FS
-^FO95,505^GB15,10,10,W,4^FS
-^FO40,520^GB30,10,10,W,4^FS
-^FO75,520^GB35,10,10,W,4^FS
-^FO40,535^GB15,10,10,W,4^FS
-^FO60,535^GB50,10,10,W,4^FS
-^FO40,550^GB70,10,10,W,4^FS
-
-^FX Shipping Company Details
-^CF0,30
-^FO150,500^FDZPLr^FS
-^CFA,20
-^FO150,535^FDThe open source ZPL renderer^FS
-
-^FX Barcode Code 128
-^FO40,590^BY3^BCN,70,N,N,N^FD0123456789ABC^FS
-
-^FX Bottom infos
-^CF0,20
-^FO60,700^FB489,1,0,L^FDReferences:^FS
-^CFA,20
-^FO60,740^FB489,1,0,L^FDInvoice nr.^FS
-^FO60,740^FB489,1,0,C^FD54321^FS
-^FO60,740^FB489,1,0,R^FD02/01/2019^FS
-
-^XZ`);
-
-const renderedExampleBase64 = ref<string>();
-const renderedExampleCanvas = ref<HTMLCanvasElement | null>(null);
-const baseCanvas = ref<HTMLCanvasElement | null>(null); // Cache base rendering
-const highlightRegions = ref<HighlightRegion[]>([]);
-const editorCursorPosition = ref<number>(0);
-const highlightRange = ref<{ start: number; end: number } | undefined>(undefined);
-const highlightedCommandIndex = ref<number | undefined>(undefined);
-const hoveredCommandIndex = ref<number | undefined>(undefined);
-const canvasCursor = ref<string>("default");
+const packageVersion = packageJson.version;
+const selectedSample = ref<(typeof samples)[number]["id"]>("shipping");
+const source = ref(shippingSample);
+const printDensity = ref<PrintDensity>(8);
+const sizeMode = ref<"source" | "override">("source");
+const overrideWidth = ref(812);
+const overrideHeight = ref(1218);
+const labels = ref<RenderedLabel<HTMLCanvasElement>[]>([]);
+const diagnostics = ref<ZplDiagnostic[]>([]);
+const activeLabelIndex = ref(0);
+const previewUrl = ref<string>();
+const rendering = ref(false);
+const renderFailure = ref<string>();
 const editorOpen = ref(false);
+const diagnosticsOpen = ref(true);
+const editorCursor = ref(0);
+const highlightRange = ref<SourceSpan>();
+const capabilityQuery = ref("");
+let renderTimer: number | undefined;
+let renderSequence = 0;
 
-// Update cursor position and find highlighted command (from editor)
-function handleEditorCursorChange(position: number) {
-  editorCursorPosition.value = position;
-  const commandIndex = findCommandAtPosition(baseExample.value, position);
-  highlightedCommandIndex.value = commandIndex;
-  hoveredCommandIndex.value = undefined; // Clear hover when editing
-  
-  // Update highlight range based on command
-  updateHighlightRange(commandIndex);
-}
-
-// Update highlight range for the Monaco Editor decoration
-function updateHighlightRange(commandIndex: number | undefined) {
-  if (commandIndex !== undefined) {
-    const commands = parse(baseExample.value)[0];
-    if (commands && commands[commandIndex]) {
-      const cmd = commands[commandIndex];
-      if (cmd.sourceStart !== undefined && cmd.sourceEnd !== undefined) {
-        highlightRange.value = { start: cmd.sourceStart, end: cmd.sourceEnd };
-        return;
-      }
-    }
-  }
-  highlightRange.value = undefined;
-}
-
-// Handle canvas mouse move (hover highlighting)
-function handleCanvasMouseMove(event: MouseEvent) {
-  if (!renderedExampleCanvas.value) return;
-  
-  const rect = (event.target as HTMLImageElement).getBoundingClientRect();
-  const scaleX = renderedExampleCanvas.value.width / rect.width;
-  const scaleY = renderedExampleCanvas.value.height / rect.height;
-  const x = (event.clientX - rect.left) * scaleX;
-  const y = (event.clientY - rect.top) * scaleY;
-  
-  const commandIndex = findCommandAtCoordinate(highlightRegions.value, x, y);
-  hoveredCommandIndex.value = commandIndex;
-  canvasCursor.value = commandIndex !== undefined ? "pointer" : "default";
-  
-  // Update highlight range when hovering
-  if (editorOpen.value) {
-    updateHighlightRange(commandIndex);
-  }
-}
-
-// Handle canvas mouse leave (clear hover)
-function handleCanvasMouseLeave() {
-  hoveredCommandIndex.value = undefined;
-  canvasCursor.value = "default";
-  
-  // Restore highlight to current cursor position when leaving canvas
-  if (editorOpen.value) {
-    updateHighlightRange(highlightedCommandIndex.value);
-  }
-}
-
-// Handle canvas click (select code in editor)
-function handleCanvasClick(event: MouseEvent) {
-  if (!renderedExampleCanvas.value) {
-    // If canvas not ready, just open the editor
-    editorOpen.value = true;
-    return;
-  }
-  
-  if (!editorOpen.value) {
-    // If editor closed, open it
-    editorOpen.value = true;
-    return;
-  }
-  
-  const rect = (event.target as HTMLImageElement).getBoundingClientRect();
-  const scaleX = renderedExampleCanvas.value.width / rect.width;
-  const scaleY = renderedExampleCanvas.value.height / rect.height;
-  const x = (event.clientX - rect.left) * scaleX;
-  const y = (event.clientY - rect.top) * scaleY;
-  
-  const commandIndex = findCommandAtCoordinate(highlightRegions.value, x, y);
-  
-  if (commandIndex !== undefined) {
-    const commands = parse(baseExample.value)[0];
-    if (commands && commands[commandIndex]) {
-      const cmd = commands[commandIndex];
-      if (cmd.sourceStart !== undefined) {
-        // Move cursor to the command position in the editor
-        editorCursorPosition.value = cmd.sourceStart;
-        highlightedCommandIndex.value = commandIndex;
-        hoveredCommandIndex.value = undefined;
-        
-        // Update highlight range
-        updateHighlightRange(commandIndex);
-      }
-    }
-  }
-}
-
-// Render base ZPL (without highlights) - only when code changes
-watch(
-  baseExample,
-  async () => {
-    const result = (await parseAndRenderAdvanced(baseExample.value, 610, 810))[0];
-    
-    if (result) {
-      baseCanvas.value = result.canvas;
-      highlightRegions.value = result.highlightRegions;
-      
-      // Trigger initial composite with current highlight
-      updateDisplayCanvas();
-    }
-  },
-  { immediate: true }
+const activeLabel = computed(() => labels.value[activeLabelIndex.value]);
+const errorCount = computed(
+  () => diagnostics.value.filter(({ severity }) => severity === "error").length
 );
-
-// Update display canvas with highlights - called when highlight changes
-function updateDisplayCanvas() {
-  if (!baseCanvas.value) return;
-  
-  // Create or reuse display canvas
-  if (!renderedExampleCanvas.value) {
-    renderedExampleCanvas.value = document.createElement('canvas');
-    renderedExampleCanvas.value.width = baseCanvas.value.width;
-    renderedExampleCanvas.value.height = baseCanvas.value.height;
-  }
-  
-  const ctx = renderedExampleCanvas.value.getContext('2d');
-  if (!ctx) return;
-  
-  // Clear and draw base canvas
-  ctx.clearRect(0, 0, renderedExampleCanvas.value.width, renderedExampleCanvas.value.height);
-  ctx.drawImage(baseCanvas.value, 0, 0);
-  
-  // Draw highlights on top
-  const activeHighlight = hoveredCommandIndex.value ?? highlightedCommandIndex.value;
-  drawHighlights(ctx, highlightRegions.value, activeHighlight);
-  
-  // Update data URL for display
-  renderedExampleBase64.value = renderedExampleCanvas.value.toDataURL("image/png");
-}
-
-// Watch for highlight changes and update display
-watch([hoveredCommandIndex, highlightedCommandIndex], () => {
-  updateDisplayCanvas();
+const warningCount = computed(
+  () => diagnostics.value.filter(({ severity }) => severity === "warning").length
+);
+const infoCount = computed(
+  () => diagnostics.value.filter(({ severity }) => severity === "info").length
+);
+const capabilityCounts = computed(() => ({
+  supported: commandCapabilities.filter(({ status }) => status === "supported").length,
+  partial: commandCapabilities.filter(({ status }) => status === "partial").length,
+  nonRendering: commandCapabilities.filter(({ status }) => status === "non-rendering").length,
+  unsupported: commandCapabilities.filter(({ status }) => status === "unsupported").length,
+}));
+const visibleCapabilities = computed(() => {
+  const query = capabilityQuery.value.toUpperCase();
+  const matches = query
+    ? commandCapabilities.filter(
+        (capability) =>
+          capability.canonical.includes(query) ||
+          capability.name.toUpperCase().includes(query)
+      )
+    : commandCapabilities.filter(({ status }) => status !== "unsupported");
+  return matches.slice(0, 60);
 });
 
-const currentPackageVersion = packageJSON.version;
+function loadSample(): void {
+  const sample = samples.find(({ id }) => id === selectedSample.value);
+  if (sample) source.value = sample.source;
+}
+
+function focusSpan(span?: SourceSpan): void {
+  if (!span) return;
+  editorCursor.value = span.start;
+  highlightRange.value = { ...span };
+}
+
+function diagnosticKey(diagnostic: ZplDiagnostic, index: number): string {
+  return `${diagnostic.code}:${diagnostic.span?.start ?? ""}:${index}`;
+}
+
+function severityClass(severity: ZplDiagnostic["severity"]): string {
+  if (severity === "error") {
+    return "bg-rose-100 text-rose-700 dark:bg-rose-400/15 dark:text-rose-300";
+  }
+  if (severity === "warning") {
+    return "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300";
+  }
+  return "bg-sky-100 text-sky-700 dark:bg-sky-400/15 dark:text-sky-300";
+}
+
+function capabilityClass(status: CommandCapabilityStatus): string {
+  if (status === "supported") {
+    return "bg-emerald-100 text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300";
+  }
+  if (status === "partial") {
+    return "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300";
+  }
+  if (status === "non-rendering") {
+    return "bg-sky-100 text-sky-700 dark:bg-sky-400/15 dark:text-sky-300";
+  }
+  return "bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400";
+}
+
+function contains(region: HighlightRegion, x: number, y: number): boolean {
+  if (region.type === "circle" && region.radius !== undefined) {
+    return (x - region.x) ** 2 + (y - region.y) ** 2 <= region.radius ** 2;
+  }
+  if (region.width !== undefined && region.height !== undefined) {
+    if (region.type === "ellipse") {
+      const rx = region.width / 2;
+      const ry = region.height / 2;
+      return (
+        ((x - region.x - rx) / rx) ** 2 +
+          ((y - region.y - ry) / ry) ** 2 <=
+        1
+      );
+    }
+    return (
+      x >= region.x &&
+      x <= region.x + region.width &&
+      y >= region.y &&
+      y <= region.y + region.height
+    );
+  }
+  return Math.hypot(x - region.x, y - region.y) <= 16;
+}
+
+function selectRenderedField(event: MouseEvent): void {
+  const label = activeLabel.value;
+  const image = event.currentTarget as HTMLImageElement;
+  if (!label || !image) return;
+  const bounds = image.getBoundingClientRect();
+  const x = ((event.clientX - bounds.left) / bounds.width) * label.width;
+  const y = ((event.clientY - bounds.top) / bounds.height) * label.height;
+  const region = [...label.highlightRegions]
+    .reverse()
+    .find((candidate) => candidate.sourceSpan && contains(candidate, x, y));
+  focusSpan(region?.sourceSpan);
+}
+
+async function updatePreview(): Promise<void> {
+  const sequence = ++renderSequence;
+  rendering.value = true;
+  renderFailure.value = undefined;
+  try {
+    const options =
+      sizeMode.value === "override"
+        ? {
+            printDensity: printDensity.value,
+            width: Math.max(1, Math.trunc(overrideWidth.value)),
+            height: Math.max(1, Math.trunc(overrideHeight.value)),
+          }
+        : { printDensity: printDensity.value };
+    const result = await renderZpl(source.value, options);
+    if (sequence !== renderSequence) return;
+    labels.value = result.labels;
+    diagnostics.value = result.diagnostics;
+    activeLabelIndex.value = Math.min(
+      activeLabelIndex.value,
+      Math.max(0, result.labels.length - 1)
+    );
+    previewUrl.value = activeLabel.value?.canvas?.toDataURL("image/png");
+  } catch (error) {
+    if (sequence !== renderSequence) return;
+    labels.value = [];
+    diagnostics.value = [];
+    previewUrl.value = undefined;
+    renderFailure.value =
+      error instanceof Error ? error.message : "The platform adapter failed.";
+  } finally {
+    if (sequence === renderSequence) rendering.value = false;
+  }
+}
+
+function schedulePreview(): void {
+  if (renderTimer !== undefined) window.clearTimeout(renderTimer);
+  renderTimer = window.setTimeout(() => void updatePreview(), 120);
+}
+
+async function downloadPng(): Promise<void> {
+  const canvas = activeLabel.value?.canvas;
+  if (!canvas) return;
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/png")
+  );
+  if (!blob) return;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `zplr-label-${activeLabelIndex.value + 1}.png`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+watch(
+  [source, printDensity, sizeMode, overrideWidth, overrideHeight],
+  schedulePreview,
+  { immediate: true }
+);
+watch(activeLabelIndex, () => {
+  previewUrl.value = activeLabel.value?.canvas?.toDataURL("image/png");
+});
+onBeforeUnmount(() => {
+  if (renderTimer !== undefined) window.clearTimeout(renderTimer);
+});
 </script>
+
+<style scoped>
+.control {
+  display: flex;
+  min-width: 9rem;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: rgb(113 113 122);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.control select,
+.control input {
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.5rem;
+  background: white;
+  color: rgb(39 39 42);
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  outline: none;
+  padding: 0.55rem 0.7rem;
+  text-transform: none;
+}
+
+.control select:focus,
+.control input:focus {
+  border-color: rgb(113 113 122);
+  box-shadow: 0 0 0 3px rgb(161 161 170 / 0.15);
+}
+
+.landing-preview-grid {
+  background-color: rgb(244 244 245);
+  background-image:
+    linear-gradient(rgb(24 24 27 / 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(24 24 27 / 0.045) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .control {
+    color: rgb(161 161 170);
+  }
+
+  .control select,
+  .control input {
+    border-color: rgb(255 255 255 / 0.1);
+    background: rgb(9 9 11);
+    color: rgb(228 228 231);
+  }
+
+  .control select:focus,
+  .control input:focus {
+    border-color: rgb(161 161 170);
+  }
+
+  .landing-preview-grid {
+    background-color: rgb(24 24 27);
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px);
+  }
+}
+</style>

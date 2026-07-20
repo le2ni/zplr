@@ -1,6 +1,8 @@
 # ZPLr Web Demo
 
-The demo is a Vue 3 and Vite editor for the browser build of ZPLr. It renders labels while editing, exposes command highlight regions, provides example labels, and can download rendered canvases as PNG files.
+The demo is a Vue 3 and Vite editor for the browser build of ZPLr. It uses
+`renderZpl()` directly, resolves each label's own dimensions, and downloads
+the canonical raster expansion as PNG.
 
 ## Run it
 
@@ -30,6 +32,14 @@ web/
   assets/logo.svg
 ```
 
-The demo imports the browser entry point and uses native `HTMLCanvasElement` instances. Shared parsing, semantic layout, rendering geometry, and diagnostics live under `src/core`; the web-specific code only creates canvases and transfers canvas images.
+The playground offers dots/mm and explicit-size controls, source-linked
+diagnostics, clickable resolved field geometry, representative release
+fixtures, and explanations generated from the runtime command catalog. It
+does not maintain a second highlight renderer.
+
+The demo imports the browser entry point and uses native `HTMLCanvasElement`
+instances. Shared parsing, state, raster geometry, fonts, barcodes, graphics,
+and diagnostics live under `src/core`; the web-specific adapter only expands
+the completed one-bit raster to RGBA.
 
 When adding an example, use commands whose capability status is declared in `src/core/capabilities.ts`. Partial or unsupported examples should surface their diagnostics rather than imply full support.

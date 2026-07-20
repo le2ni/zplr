@@ -1,6 +1,5 @@
 import { Command } from "@/commands";
-import { interpretLabel } from "@/core/interpreter";
-import { renderLayout } from "@/core/layoutRenderer";
+import { renderDocumentWithPlatform } from "@/core/renderDocument";
 import { FieldBlock } from "@/commands/FieldBlock";
 import { FieldSeparator } from "@/commands/FieldSeparator";
 import { RenderContext, HighlightRegion } from "@/types/RenderContext";
@@ -34,11 +33,17 @@ export async function render(
 ): Promise<RenderResult> {
   const parsedLabel = getParsedLabelNode(commands);
   if (parsedLabel) {
-    const layout = interpretLabel(parsedLabel);
-    const rendered = await renderLayout<HTMLCanvasElement>(
-      layout,
-      width,
-      height,
+    const [rendered] = await renderDocumentWithPlatform<HTMLCanvasElement>(
+      {
+        kind: "document",
+        source: "",
+        profile: "zpl-ii-2025",
+        items: [parsedLabel],
+        labels: [parsedLabel],
+        syntax: { formatPrefix: "^", controlPrefix: "~", delimiter: "," },
+        diagnostics: [],
+      },
+      { width, height },
       { createCanvas, drawCanvasToCanvas } as any
     );
     const metadata = getParsedLabelMetadata(commands);
@@ -129,6 +134,7 @@ export async function render(
 
       switch (region.type) {
         case "box":
+        case "ellipse":
           if (region.width && region.height) {
             ctx.fillRect(region.x, region.y, region.width, region.height);
             ctx.strokeRect(region.x, region.y, region.width, region.height);
@@ -197,6 +203,7 @@ function drawHighlights(
     ctx.lineWidth = 2;
     if (
       (region.type === "box" ||
+        region.type === "ellipse" ||
         region.type === "barcode" ||
         region.type === "text") &&
       region.width !== undefined &&

@@ -32,7 +32,7 @@ describe("Node and browser adapters", () => {
     }
   });
 
-  it("returns identical geometry and highlight regions", async () => {
+  it("returns bit-identical rasters, RGBA pixels, diagnostics, and geometry", async () => {
     const document = parseDocument(
       "^XA^CF0,12,6^FO5,5^FB60,2,2,C^FDNode and web^FS" +
         "^FO5,40^GB30,20,2,B,2^FS" +
@@ -50,5 +50,20 @@ describe("Node and browser adapters", () => {
 
     expect(webResult.diagnostics).toEqual(nodeResult.diagnostics);
     expect(webResult.highlightRegions).toEqual(nodeResult.highlightRegions);
+    expect(webResult.raster).toEqual(nodeResult.raster);
+
+    const nodePixels = nodeResult.canvas
+      .getContext("2d")!
+      .getImageData(0, 0, nodeResult.width, nodeResult.height).data;
+    const webPixels = webResult.canvas
+      .getContext("2d")!
+      .getImageData(0, 0, webResult.width, webResult.height).data;
+    expect(webPixels).toEqual(nodePixels);
+    for (let index = 0; index < nodePixels.length; index += 4) {
+      expect([0, 255]).toContain(nodePixels[index]);
+      expect(nodePixels[index + 1]).toBe(nodePixels[index]);
+      expect(nodePixels[index + 2]).toBe(nodePixels[index]);
+      expect(nodePixels[index + 3]).toBe(255);
+    }
   });
 });

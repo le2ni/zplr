@@ -1,4 +1,3 @@
-import QRCode, { QRCodeErrorCorrectionLevel } from "qrcode";
 import {
   BarcodeLayoutField,
   BoxLayoutField,
@@ -11,6 +10,8 @@ import { Orientation } from "@/types/Orientation";
 import { HighlightRegion } from "@/types/RenderContext";
 import { ZplDiagnostic } from "@/types/ZplDocument";
 import { CanvasFactory, CanvasLike } from "@/helper/rendering/canvas";
+import { encodeLegacyQrModel1 } from "@/core/legacyQrModel1";
+import { encodeQrModel2 } from "@/core/qrModel2";
 
 export interface CanvasPlatform<TCanvas extends CanvasLike = CanvasLike> {
   createCanvas: CanvasFactory;
@@ -493,7 +494,7 @@ function renderCircle(
   });
 }
 
-function code39CheckDigit(data: string): string {
+export function code39CheckDigit(data: string): string {
   const sum = [...data].reduce(
     (total, character) => total + CODE39_CHARACTERS.indexOf(character as never),
     0
@@ -506,7 +507,9 @@ function code39Bits(character: string): string {
   return index < 0 ? "" : CODE39_ENCODINGS[index].toString(2);
 }
 
-function code39Runs(data: string): Array<{ black: boolean; units: number }> {
+export function code39Runs(
+  data: string
+): Array<{ black: boolean; units: number }> {
   const bits =
     code39Bits("*") +
     [...data].map((character) => `${code39Bits(character)}0`).join("") +
@@ -892,6 +895,30 @@ function createCode128AutomaticModeCanvas(
   );
 }
 
+export function encodeCode128Raster(
+  data: string,
+  mode: "N" | "A",
+  uccCheckDigit = false
+): { bits: string; display: string } {
+  const encodedData = uccCheckDigit ? data + mod10CheckDigit(data) : data;
+  let encoded: { values: number[]; display: string };
+  if (mode === "N") {
+    encoded = encodeCode128NoSelectedMode(encodedData);
+  } else {
+    const normalized = normalizeCode128LiteralGreater(encodedData);
+    encoded =
+      normalized === undefined
+        ? encodeCode128NoSelectedMode(encodedData)
+        : encodeCode128AutomaticMode(normalized);
+  }
+  return {
+    bits: encoded.values
+      .map((value) => CODE128_ENCODINGS[value]?.toString() ?? "")
+      .join(""),
+    display: encoded.display,
+  };
+}
+
 async function createBarcodeCanvas(
   field: BarcodeLayoutField,
   platform: CanvasPlatform
@@ -908,13 +935,31 @@ async function createBarcodeCanvas(
     return createCode128AutomaticModeCanvas(encoded, field, platform);
   }
 
-  const canvas = platform.createCanvas();
-  await QRCode.toCanvas(canvas as any, field.data, {
-    errorCorrectionLevel: field.reliability as QRCodeErrorCorrectionLevel,
-    scale: field.magnification,
-    margin: 0,
-    maskPattern: field.mask as 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7,
-  });
+  if (field.symbology !== "BQ") {
+    throw new Error(`${field.symbology} is rendered by the deterministic raster pipeline.`);
+  }
+  const symbol =
+    field.model === "1"
+      ? encodeLegacyQrModel1(field)
+      : encodeQrModel2(field);
+  const canvas = platform.createCanvas(
+    symbol.size * field.magnification,
+    symbol.size * field.magnification
+  );
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not create a QR code canvas context.");
+  context.fillStyle = "black";
+  for (let y = 0; y < symbol.size; y++) {
+    for (let x = 0; x < symbol.size; x++) {
+      if (symbol.modules[y * symbol.size + x] === 0) continue;
+      context.fillRect(
+        x * field.magnification,
+        y * field.magnification,
+        field.magnification,
+        field.magnification
+      );
+    }
+  }
   return canvas;
 }
 
@@ -1010,7 +1055,7 @@ export async function renderLayout<TCanvas extends CanvasLike>(
     if (field.kind === "text") renderText(ctx, field, highlightRegions);
     else if (field.kind === "box") renderBox(ctx, field, highlightRegions);
     else if (field.kind === "circle") renderCircle(ctx, field, highlightRegions);
-    else {
+    else if (field.kind === "barcode") {
       await renderBarcode(
         ctx,
         field,

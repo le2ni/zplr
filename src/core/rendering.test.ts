@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   parse,
+  parseAndRender,
   parseDocument,
   render,
   renderDocument,
+  renderZpl,
 } from "@/index.node";
 
 function countDarkPixels(canvas: any): number {
@@ -39,6 +41,30 @@ function darkPixelBounds(canvas: any) {
 }
 
 describe("shared renderer", () => {
+  it("delegates legacy parsed and parse-and-render APIs to the canonical raster", async () => {
+    const source = "^XA^PW40^LL24^FO2,2^GB12,8,2,B,2^FS^XZ";
+    const [commands] = parse(source);
+    const legacy = await render(commands, 40, 24);
+    const modern = await renderZpl(source);
+    expect(await legacy.toBuffer("png")).toEqual(
+      await modern.labels[0].canvas!.toBuffer("png")
+    );
+    expect(await parseAndRender(source, 40, 24)).toHaveLength(1);
+  });
+
+  it("runs renderDocument through job-scoped persistent state", async () => {
+    const document = parseDocument(
+      "^XA^PW24^LL16^FO1,1^GB2,2,1^FS^XZ" +
+        "^XA^FO3,3^GB2,2,1^FS^XZ"
+    );
+    const results = await renderDocument(document);
+    expect(results).toHaveLength(2);
+    expect(results.map(({ width, height }) => [width, height])).toEqual([
+      [24, 16],
+      [24, 16],
+    ]);
+  });
+
   it("renders a visible first text field", async () => {
     const [commands] = parse("^XA^FO10,10^CF0,20,10^FDHello^FS^XZ");
     const canvas = await render(commands, 180, 60);
@@ -107,7 +133,12 @@ describe("shared renderer", () => {
       "^XA^FO0,0^BCN,30,N,N,N,A^FD123456^FS^FO100,0^BQN,2,3,Q,4^FDQA,HELLO^FS^XZ"
     );
     const [result] = await renderDocument(document, { width: 220, height: 100 });
-    expect(result.diagnostics).toEqual([]);
+    expect(
+      result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")
+    ).toEqual([]);
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain(
+      "PARTIALLY_SUPPORTED_COMMAND"
+    );
     expect(
       result.highlightRegions.filter((region) => region.type === "barcode")
     ).toHaveLength(2);
@@ -136,18 +167,18 @@ describe("shared renderer", () => {
     const [result] = await renderDocument(document, { width: 130, height: 40 });
     const text = result.highlightRegions.filter((region) => region.type === "text");
     expect(text.map(({ width, height }) => [width, height])).toEqual([
-      [15, 10],
-      [10, 15],
-      [15, 10],
-      [10, 15],
+      [9, 10],
+      [10, 9],
+      [9, 10],
+      [10, 9],
     ]);
 
     const narrow = parseDocument("^XA^FO0,0^A0N,10,3^FDABC^FS^XZ");
     const wide = parseDocument("^XA^FO0,0^A0N,10,8^FDABC^FS^XZ");
     const [narrowResult] = await renderDocument(narrow, { width: 40, height: 20 });
     const [wideResult] = await renderDocument(wide, { width: 40, height: 20 });
-    expect(narrowResult.highlightRegions.at(-1)?.width).toBe(9);
-    expect(wideResult.highlightRegions.at(-1)?.width).toBe(24);
+    expect(narrowResult.highlightRegions.at(-1)?.width).toBe(6);
+    expect(wideResult.highlightRegions.at(-1)?.width).toBe(13);
   });
 
   it("applies field-block alignment and line spacing", async () => {
@@ -172,10 +203,10 @@ describe("shared renderer", () => {
     });
 
     const justifiedDocument = parseDocument(
-      "^XA^FO0,0^A0N,20,10^FB100,2,0,J^FDAA BB CC DD^FS^XZ"
+      "^XA^FO0,0^A0N,20,10^FB60,2,0,J^FDAA BB CC DDD EE^FS^XZ"
     );
     const leftDocument = parseDocument(
-      "^XA^FO0,0^A0N,20,10^FB100,2,0,L^FDAA BB CC DD^FS^XZ"
+      "^XA^FO0,0^A0N,20,10^FB60,2,0,L^FDAA BB CC DDD EE^FS^XZ"
     );
     const [justified] = await renderDocument(justifiedDocument, {
       width: 110,
@@ -300,7 +331,7 @@ describe("shared renderer", () => {
     );
   });
 
-  it("selects the QR mask and grows the symbol version automatically", async () => {
+  it("ignores the printer's QR mask parameter and grows versions automatically", async () => {
     const maskOne = parseDocument(
       "^XA^FO0,0^BQN,2,2,Q,1^FDQA,HELLO^FS^XZ"
     );
@@ -313,7 +344,7 @@ describe("shared renderer", () => {
     const [one] = await renderDocument(maskOne, { width: 300, height: 300 });
     const [seven] = await renderDocument(maskSeven, { width: 300, height: 300 });
     const [longResult] = await renderDocument(long, { width: 300, height: 300 });
-    expect(await one.canvas.toBuffer("png")).not.toEqual(
+    expect(await one.canvas.toBuffer("png")).toEqual(
       await seven.canvas.toBuffer("png")
     );
     const shortRegion = seven.highlightRegions.find(

@@ -1,112 +1,141 @@
-# ZPLr Usage Guide
+# ZPLr usage
 
-ZPLr exposes explicit Node.js and browser entry points. There is intentionally no ambiguous root export.
+ZPLr exposes explicit `zplr/node` and `zplr/web` entry points. New code
+should use the job API.
 
-## Node.js
+## Fresh render
 
-```typescript
+```ts
+import { renderZpl, type RenderJobOptions } from "zplr/node";
+
+const options: RenderJobOptions = {
+  printDensity: 8,
+  // width: 812,  // optional dot override
+  // height: 1218,
+  limits: {
+    maxPixels: 40_000_000,
+  },
+};
+
+const job = await renderZpl(source, options);
+
+for (const diagnostic of job.diagnostics) {
+  console.log(
+    diagnostic.severity,
+    diagnostic.code,
+    diagnostic.span,
+    diagnostic.message
+  );
+}
+
+for (const label of job.labels) {
+  console.log(label.width, label.height, label.raster.stride);
+  await label.canvas.toFile("label.png");
+}
+```
+
+The packed raster uses MSB-first rows, a stride of `ceil(width / 8)`, and a
+set bit for a black dot. Unused tail bits are zero.
+
+In the browser, import from `zplr/web`; each label's `canvas` is an
+`HTMLCanvasElement`. `renderZplPNG()` returns PNG buffers in Node and PNG
+`Blob` objects in the browser.
+
+## Stateful render session
+
+```ts
+import { createRenderSession } from "zplr/node";
+
+const session = createRenderSession({ printDensity: 12 });
+
+await session.render("^CC!");                 // changed syntax persists
+await session.render("!XA!PW600!LL400!XZ");   // settings persist
+
+const parsedElsewhere = parseDocument("!XA!FO20,20!FDHi!FS!XZ", {
+  initialSyntax: { formatPrefix: "!" },
+});
+await session.renderDocument(parsedElsewhere);
+
+await session.reset();
+```
+
+Calls made concurrently are executed in FIFO order, including `reset()`.
+Downloaded graphics, stored formats, font aliases, syntax characters, and
+session-scoped settings are private to that session.
+
+## Custom fonts
+
+Font 0 and Font A are bundled. Resolve `^A@` and `^CW` names without
+granting filesystem access to the renderer. When `source` is present, it is a
+font downloaded by `~DS`; convert its Intellifont bytes and return
+OpenType-compatible bytes:
+
+```ts
+const job = await renderZpl(source, {
+  fontProvider: {
+    async resolveFont(name, source) {
+      if (source?.format === "intellifont") {
+        return convertIntellifontToOpenType(source.data);
+      }
+      if (name !== "R:BRAND.TTF") return undefined;
+      return fetch("/fonts/brand.ttf").then((response) => response.arrayBuffer());
+    },
+  },
+});
+```
+
+The provider is asynchronous and cached per render operation. Missing or
+invalid fonts fall back to deterministic Font 0 with `FONT_SUBSTITUTED`.
+
+## Graphics and stored formats
+
+The session recognizes normalized ZPL resource names such as
+`R:LOGO.GRF` and `R:PACKING.ZPL`. Resources never map to host paths.
+
+```zpl
+~DGR:DOT.GRF,1,1,80
+^XA
+^DFR:CARD.ZPL
+^FO20,20^XGR:DOT.GRF,4,4^FS
+^FO40,40^FN1^FS
+^XZ
+^XA
+^PW400
+^LL240
+^XFR:CARD.ZPL
+^FN1^FDOrder 42^FS
+^XZ
+```
+
+Recursive recalls, missing resources, corrupt CRCs, invalid lengths, and
+resource limits are diagnostics. `^GF` supports ASCII, compressed ASCII, raw
+binary, compressed binary, B64, and Z64 payloads.
+
+## Capability lookup
+
+```ts
 import {
-  parse,
-  render,
-  parseDocument,
-  renderDocument,
+  commandCapabilities,
+  getCommandCapability,
 } from "zplr/node";
+
+getCommandCapability("^JB"); // distinct from ~JB
+getCommandCapability("FO");  // compatibility lookup, only if unambiguous
 ```
 
-### Compatibility API
+New code should always pass the full command identity. The generated
+[command support table](./docs/COMMAND_SUPPORT.md) comes from the same runtime
+catalog.
 
-The command-object interfaces used by this API are deprecated, retained through 0.2, and planned for removal no earlier than 0.3. The function signatures remain compatible during that window.
+## Legacy compatibility
 
-```typescript
-const labels = parse("^XA^FO20,20^FDCompatibility API^FS^XZ");
-const canvas = await render(labels[0], 400, 300);
-await canvas.toFile("label.png");
+```ts
+import { parse, render } from "zplr/node";
+
+const labels = parse(source);
+const canvas = await render(labels[0], 812, 1218);
 ```
 
-### Diagnostic document API
-
-```typescript
-const document = parseDocument("^XA^FO20,20^FDDocument API^FS^XZ");
-const [result] = await renderDocument(document, {
-  width: 400,
-  height: 300,
-  dpi: 300,
-});
-
-for (const diagnostic of result.diagnostics) {
-  console.log(diagnostic.severity, diagnostic.code, diagnostic.message);
-}
-
-await result.canvas.toFile("label.png");
-```
-
-Node rendering requires `skia-canvas`. It is optional at package-install time so browser-only consumers do not load a native dependency.
-
-## Browser
-
-```typescript
-import {
-  parse,
-  render,
-  parseDocument,
-  renderDocument,
-} from "zplr/web";
-
-const document = parseDocument("^XA^FO20,20^FDWeb label^FS^XZ");
-const [result] = await renderDocument(document, {
-  width: 400,
-  height: 300,
-});
-
-document.body.appendChild(result.canvas);
-```
-
-`renderAdvanced` and `parseAndRenderAdvanced` return highlight regions for editor integrations. `findCommandAtPosition` maps source offsets to legacy parsed commands, and `findCommandAtCoordinate` maps canvas coordinates to rendered regions.
-
-## Multiple labels
-
-```typescript
-const document = parseDocument(`
-^XA^FO20,20^FDLabel 1^FS^XZ
-^XA^FO20,20^FDLabel 2^FS^XZ
-`);
-
-const results = await renderDocument(document, {
-  width: 400,
-  height: 300,
-});
-```
-
-One render result is returned per explicit or tolerated implicit label.
-
-## Diagnostics
-
-Parsing retains malformed, unknown, and unsupported commands. Typical diagnostic codes include:
-
-- `UNKNOWN_COMMAND`
-- `UNSUPPORTED_COMMAND`
-- `IMPLICIT_LABEL`
-- `UNTERMINATED_FORMAT`
-- `UNTERMINATED_FIELD`
-- `INVALID_BARCODE_DATA`
-- `FONT_SUBSTITUTED`
-
-Parser diagnostics never throw for user-supplied ZPL. Canvas initialization and other platform failures can still throw.
-
-## Profiles and DPI
-
-The only current profile is `zpl-ii-2006`, based on the guide bundled with the repository. Later extensions such as `^CI28` are retained and diagnosed as unsupported.
-
-The default render DPI is 300. Pass 150, 200, 300, or 600 when command defaults such as QR magnification need another print-head resolution.
-
-## Capability discovery
-
-```typescript
-import { commandCapabilities } from "zplr/node";
-
-for (const capability of commandCapabilities) {
-  console.log(capability.code, capability.status, capability.limitations);
-}
-```
-
-Only commands marked `supported` have complete behavior for the documented subset. `partial` entries list their unsupported modes explicitly.
+These compatibility signatures remain operational and parsed labels use the
+canonical raster renderer. New code should use `renderZpl()` or
+`createRenderSession()`.

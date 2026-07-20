@@ -1,6 +1,5 @@
 import { Command } from "@/commands";
-import { interpretLabel } from "@/core/interpreter";
-import { renderLayout } from "@/core/layoutRenderer";
+import { renderDocumentWithPlatform } from "@/core/renderDocument";
 import { FieldBlock } from "@/commands/FieldBlock";
 import { FieldSeparator } from "@/commands/FieldSeparator";
 import { getParsedLabelNode } from "@/helper/labelParsing/parse";
@@ -23,11 +22,17 @@ export async function render(
 ): Promise<Canvas> {
   const parsedLabel = getParsedLabelNode(commands);
   if (parsedLabel) {
-    const layout = interpretLabel(parsedLabel);
-    const result = await renderLayout<any>(
-      layout,
-      width,
-      height,
+    const [result] = await renderDocumentWithPlatform<any>(
+      {
+        kind: "document",
+        source: "",
+        profile: "zpl-ii-2025",
+        items: [parsedLabel],
+        labels: [parsedLabel],
+        syntax: { formatPrefix: "^", controlPrefix: "~", delimiter: "," },
+        diagnostics: [],
+      },
+      { width, height },
       { createCanvas, drawCanvasToCanvas } as any
     );
     return result.canvas as Canvas;

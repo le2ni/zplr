@@ -22,6 +22,12 @@ const editorContainer = ref<HTMLElement | null>(null);
 let editor: Monaco.editor.IStandaloneCodeEditor | null = null;
 let monaco: typeof Monaco | null = null;
 let decorationIds: string[] = [];
+let darkModeQuery: MediaQueryList | null = null;
+const handleDarkModeChange = (event: MediaQueryListEvent) => {
+  if (editor && monaco) {
+    monaco.editor.setTheme(event.matches ? "zpl-dark" : "zpl-light");
+  }
+};
 
 onMounted(async () => {
   if (!editorContainer.value) return;
@@ -160,18 +166,8 @@ onMounted(async () => {
   });
 
   // Listen for dark mode changes
-  const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
-  const handleDarkModeChange = (e: MediaQueryListEvent) => {
-    if (editor && monaco) {
-      monaco.editor.setTheme(e.matches ? "zpl-dark" : "zpl-light");
-    }
-  };
+  darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
   darkModeQuery.addEventListener("change", handleDarkModeChange);
-
-  // Store cleanup
-  onBeforeUnmount(() => {
-    darkModeQuery.removeEventListener("change", handleDarkModeChange);
-  });
 });
 
 // Watch for cursor position updates from parent
@@ -246,6 +242,7 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  darkModeQuery?.removeEventListener("change", handleDarkModeChange);
   if (editor) {
     editor.dispose();
   }
