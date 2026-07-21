@@ -148,27 +148,86 @@
         </div>
 
         <div v-else class="flex min-h-0 flex-1 flex-col">
-          <div class="shrink-0 border-b border-zinc-200 p-2 dark:border-white/10">
-            <label class="relative block">
-              <span class="sr-only">Search all ZPL commands</span>
-              <IconMagnify class="pointer-events-none absolute top-2 left-2 size-4 text-zinc-500" aria-hidden="true" />
-              <input v-model.trim="commandQuery" class="h-8 w-full rounded-md border border-zinc-200 bg-white pr-2 pl-8 text-xs outline-none placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-white/10 dark:bg-zinc-950 dark:focus:ring-white/10" :placeholder="`Search ${commandCapabilities.length} commands…`" />
-            </label>
-            <p class="mt-2 px-1 text-[10px] text-zinc-500">Select a command to insert its parameter-aware snippet.</p>
-          </div>
-          <div class="min-h-0 flex-1 overflow-y-auto py-1">
-            <button v-for="capability in visibleCapabilities" :key="capability.canonical" class="command-row" type="button" @click="insertCommand(capability.canonical)">
-              <span class="w-9 shrink-0 font-mono text-xs font-bold" :class="categoryTextClass(capability.category)">{{ capability.canonical }}</span>
-              <span class="min-w-0 flex-1">
-                <span class="block truncate text-xs font-medium text-zinc-700 dark:text-zinc-200">{{ capability.name }}</span>
-                <span class="mt-0.5 block text-[10px] text-zinc-500">{{ capability.category }} · {{ capability.scope }}</span>
-              </span>
-              <span class="size-1.5 shrink-0 rounded-full" :class="statusDotClass(capability.status)" :title="capability.status"></span>
-            </button>
-          </div>
+          <template v-if="selectedCommandInfo">
+            <div class="shrink-0 border-b border-zinc-200 p-3 dark:border-white/10">
+              <button class="command-back" type="button" @click="selectedCommand = undefined">
+                <span aria-hidden="true">←</span> All commands
+              </button>
+              <div class="mt-2 flex items-start gap-2">
+                <code class="rounded bg-white px-1.5 py-1 text-sm font-bold shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-950 dark:ring-white/10" :class="categoryTextClass(selectedCommandInfo.capability.category)">{{ selectedCommandInfo.capability.canonical }}</code>
+                <div class="min-w-0">
+                  <h2 class="text-xs font-semibold leading-5 text-zinc-800 dark:text-zinc-100">{{ selectedCommandInfo.definition.title }}</h2>
+                  <p class="text-[10px] text-zinc-500">{{ selectedCommandInfo.capability.category }} · {{ selectedCommandInfo.capability.scope }} · {{ selectedCommandInfo.capability.status }}</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+              <p class="text-[11px] leading-5 text-zinc-600 dark:text-zinc-400">{{ selectedCommandInfo.definition.summary }}</p>
+
+              <section v-for="(signature, signatureIndex) in selectedCommandInfo.definition.signatures" :key="signature.syntax" class="command-doc-section">
+                <h3 class="command-doc-heading">Syntax<span v-if="selectedCommandInfo.definition.signatures.length > 1"> {{ signatureIndex + 1 }}</span></h3>
+                <code class="command-syntax">{{ signature.syntax }}</code>
+                <p v-if="signature.label" class="mt-1 text-[10px] leading-4 text-zinc-500">{{ signature.label }}</p>
+
+                <div v-if="signature.parameters.length" class="mt-3 space-y-3">
+                  <article v-for="parameter in signature.parameters" :key="`${signature.syntax}-${parameter.slot}-${parameter.component}-${parameter.key}`">
+                    <div class="flex items-baseline gap-1.5">
+                      <code class="rounded bg-zinc-100 px-1 py-0.5 text-[10px] font-bold text-zinc-700 dark:bg-white/10 dark:text-zinc-200">{{ parameter.key }}</code>
+                      <h4 class="text-[10px] font-semibold text-zinc-700 dark:text-zinc-200">{{ parameter.name }}</h4>
+                      <span v-if="parameter.required" class="text-[9px] text-rose-600 dark:text-rose-300">required</span>
+                    </div>
+                    <p class="mt-1 text-[10px] leading-4 text-zinc-500">{{ parameter.documentation }}</p>
+                    <div v-if="parameter.choices.length" class="mt-1.5 flex flex-wrap gap-1" aria-label="Suggested values">
+                      <code v-for="choice in parameter.choices.slice(0, 12)" :key="choice" class="command-choice">{{ choice }}</code>
+                    </div>
+                  </article>
+                </div>
+                <p v-else class="mt-2 text-[10px] text-zinc-500">No parameters.</p>
+              </section>
+
+              <a :href="selectedCommandInfo.definition.reference" target="_blank" rel="noreferrer" class="mt-4 flex items-center gap-2 rounded-md py-1 text-[10px] font-medium text-zinc-500 transition hover:text-zinc-900 dark:hover:text-white">
+                <IconBookOpenVariant class="size-3.5" aria-hidden="true" /> Official command reference
+                <IconOpenInNew class="ml-auto size-3" aria-hidden="true" />
+              </a>
+            </div>
+
+            <div class="shrink-0 border-t border-zinc-200 p-2 dark:border-white/10">
+              <button class="command-insert-primary" type="button" @click="insertCommand(selectedCommandInfo.capability.canonical)">
+                <IconPlus class="size-3.5" aria-hidden="true" /> Insert parameter snippet
+              </button>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="shrink-0 border-b border-zinc-200 p-2 dark:border-white/10">
+              <label class="relative block">
+                <span class="sr-only">Search all ZPL commands and parameters</span>
+                <IconMagnify class="pointer-events-none absolute top-2 left-2 size-4 text-zinc-500" aria-hidden="true" />
+                <input v-model.trim="commandQuery" class="h-8 w-full rounded-md border border-zinc-200 bg-white pr-2 pl-8 text-xs outline-none placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200 dark:border-white/10 dark:bg-zinc-950 dark:focus:ring-white/10" :placeholder="`Search ${zplLanguageCoverage.commands} commands…`" />
+              </label>
+              <p class="mt-2 px-1 text-[10px] text-zinc-500">Inspect docs or insert a parameter-aware snippet.</p>
+            </div>
+            <div class="min-h-0 flex-1 overflow-y-auto py-1">
+              <div v-for="capability in visibleCapabilities" :key="capability.canonical" class="command-entry">
+                <button class="command-row" type="button" :title="`Open ${capability.canonical} documentation`" @click="selectedCommand = capability.canonical">
+                  <span class="w-9 shrink-0 font-mono text-xs font-bold" :class="categoryTextClass(capability.category)">{{ capability.canonical }}</span>
+                  <span class="min-w-0 flex-1">
+                    <span class="block truncate text-xs font-medium text-zinc-700 dark:text-zinc-200">{{ getZplCommandDefinition(capability.canonical)?.title ?? capability.name }}</span>
+                    <span class="mt-0.5 block text-[10px] text-zinc-500">{{ capability.category }} · {{ capability.scope }}</span>
+                  </span>
+                  <span class="size-1.5 shrink-0 rounded-full" :class="statusDotClass(capability.status)" :title="capability.status"></span>
+                </button>
+                <button class="command-insert" type="button" :title="`Insert ${capability.canonical} snippet`" @click="insertCommand(capability.canonical)">
+                  <IconPlus class="size-3.5" aria-hidden="true" /><span class="sr-only">Insert {{ capability.canonical }}</span>
+                </button>
+              </div>
+              <p v-if="!visibleCapabilities.length" class="px-3 py-6 text-center text-xs text-zinc-500">No matching command or parameter.</p>
+            </div>
+          </template>
         </div>
 
-        <div class="shrink-0 border-t border-zinc-200 px-3 py-2 dark:border-white/10">
+        <div v-if="sidebarMode === 'files' || !selectedCommandInfo" class="shrink-0 border-t border-zinc-200 px-3 py-2 dark:border-white/10">
           <a href="https://docs.zebra.com/us/en/printers/software/zpl-pg/c-zpl-zpl-commands.html" target="_blank" rel="noreferrer" class="flex items-center gap-2 rounded-md py-1 text-xs text-zinc-500 transition hover:text-zinc-900 dark:hover:text-white">
             <IconBookOpenVariant class="size-4" aria-hidden="true" /> Official ZPL reference
             <IconOpenInNew class="ml-auto size-3" aria-hidden="true" />
@@ -443,8 +502,8 @@
       <span class="ml-auto">Ln {{ cursorState.line }}, Col {{ cursorState.column }}</span>
       <span v-if="cursorState.selectionLength" class="ml-3 hidden sm:inline">{{ cursorState.selectionLength }} selected</span>
       <span class="ml-3 hidden sm:inline">UTF-8</span>
-      <button class="status-button ml-3" type="button" @click="sidebarMode = 'commands'">ZPL II 2025</button>
-      <span class="ml-3 hidden md:inline">{{ commandCapabilities.length }} commands</span>
+      <button class="status-button ml-3" type="button" @click="sidebarMode = 'commands'">ZPL II</button>
+      <span class="ml-3 hidden md:inline">{{ zplLanguageCoverage.commands }} commands · {{ zplLanguageCoverage.parameters }} parameters</span>
       <span class="ml-3 flex items-center gap-1 text-emerald-300 dark:text-emerald-700"><span class="size-1.5 rounded-full bg-current"></span> Local-only</span>
     </footer>
 
@@ -503,6 +562,11 @@ import {
 } from "../../src/index.web";
 import type MonacoEditorComponent from "./MonacoEditor.vue";
 import type { EditorCursorState, EditorPreferences } from "./MonacoEditor.vue";
+import {
+  getZplCommandDefinition,
+  validateZplParameters,
+  zplLanguageCoverage,
+} from "../zplLanguage";
 
 const MonacoEditor = defineAsyncComponent(() => import("./MonacoEditor.vue"));
 type MonacoEditorApi = InstanceType<typeof MonacoEditorComponent>;
@@ -589,7 +653,7 @@ const sizeMode = ref<"zpl" | "custom">(initialPreviewPreferences.sizeMode);
 const overrideWidth = ref(initialPreviewPreferences.width);
 const overrideHeight = ref(initialPreviewPreferences.height);
 const labels = shallowRef<readonly RenderedLabel<HTMLCanvasElement>[]>([]);
-const diagnostics = shallowRef<readonly ZplDiagnostic[]>([]);
+const renderDiagnostics = shallowRef<readonly ZplDiagnostic[]>([]);
 const activeLabelIndex = ref(0);
 const previewUrl = ref<string>();
 const rendering = ref(false);
@@ -603,6 +667,7 @@ const highlightRange = ref<SourceSpan>();
 const problemsOpen = ref(true);
 const sidebarMode = ref<"files" | "commands">("files");
 const commandQuery = ref("");
+const selectedCommand = ref<string>();
 const mobilePane = ref<"code" | "preview">("code");
 const splitPercent = ref(56);
 const zoom = ref(75);
@@ -632,12 +697,37 @@ const isDirty = computed(() => source.value !== activeDocument.value.savedSource
 const dirtyDocumentCount = computed(() => documents.value.filter((document) => document.source !== document.savedSource).length);
 const activeLabel = computed(() => labels.value[activeLabelIndex.value]);
 const dpi = computed(() => ({ 6: 150, 8: 203, 12: 300, 24: 600 })[printDensity.value]);
+const languageDiagnostics = computed<readonly ZplDiagnostic[]>(() =>
+  validateZplParameters(source.value).map((diagnostic) => ({
+    code: diagnostic.code,
+    severity: diagnostic.severity,
+    phase: "semantic",
+    message: diagnostic.message,
+    span: diagnostic.span,
+    command: diagnostic.command,
+  }))
+);
+const diagnostics = computed<readonly ZplDiagnostic[]>(() => {
+  const combined = [...renderDiagnostics.value, ...languageDiagnostics.value];
+  return combined.filter((diagnostic, index) => combined.findIndex((candidate) =>
+    candidate.code === diagnostic.code &&
+    candidate.message === diagnostic.message &&
+    candidate.span?.start === diagnostic.span?.start &&
+    candidate.span?.end === diagnostic.span?.end
+  ) === index);
+});
 const errorCount = computed(() => diagnostics.value.filter(({ severity }) => severity === "error").length);
 const warningCount = computed(() => diagnostics.value.filter(({ severity }) => severity === "warning").length);
 const parsedDocument = computed(() => parseDocument(source.value));
 const parsedCommands = computed(() => parsedDocument.value.items.flatMap((item) => item.kind === "label" ? item.commands : [item]));
 const parsedCommandCount = computed(() => parsedCommands.value.length);
 const capabilityMap = new Map(commandCapabilities.map((capability) => [capability.canonical, capability]));
+const selectedCommandInfo = computed(() => {
+  if (!selectedCommand.value) return undefined;
+  const capability = capabilityMap.get(selectedCommand.value);
+  const definition = getZplCommandDefinition(selectedCommand.value);
+  return capability && definition ? { capability, definition } : undefined;
+});
 const documentOutline = computed(() => parsedCommands.value.map((command) => {
   const capability = capabilityMap.get(command.canonical);
   return {
@@ -650,11 +740,22 @@ const documentOutline = computed(() => parsedCommands.value.map((command) => {
 }));
 const visibleCapabilities = computed(() => {
   const query = commandQuery.value.toUpperCase();
-  return commandCapabilities.filter((capability) => !query ||
-    capability.canonical.includes(query) ||
-    capability.name.toUpperCase().includes(query) ||
-    capability.category.toUpperCase().includes(query)
-  );
+  return commandCapabilities.filter((capability) => {
+    if (!query) return true;
+    const definition = getZplCommandDefinition(capability.canonical);
+    return [
+      capability.canonical,
+      capability.name,
+      capability.category,
+      definition?.title,
+      definition?.summary,
+      ...definition?.signatures.flatMap((signature) => [
+        signature.syntax,
+        signature.label,
+        ...signature.parameters.flatMap((parameter) => [parameter.key, parameter.name, parameter.documentation]),
+      ]) ?? [],
+    ].some((value) => value?.toUpperCase().includes(query));
+  });
 });
 const previewImageStyle = computed(() => fitPreview.value || !activeLabel.value
   ? undefined
@@ -954,13 +1055,13 @@ async function updatePreview(sequence: number): Promise<void> {
     });
     if (sequence !== renderSequence) return;
     labels.value = result.labels;
-    diagnostics.value = result.diagnostics;
+    renderDiagnostics.value = result.diagnostics;
     activeLabelIndex.value = Math.min(activeLabelIndex.value, Math.max(0, result.labels.length - 1));
     previewUrl.value = activeLabel.value?.canvas?.toDataURL("image/png");
   } catch (error) {
     if (sequence !== renderSequence) return;
     labels.value = [];
-    diagnostics.value = parsedDocument.value.diagnostics;
+    renderDiagnostics.value = parsedDocument.value.diagnostics;
     previewUrl.value = undefined;
     renderFailure.value = error instanceof Error ? error.message : "The local renderer failed.";
   } finally {
@@ -991,7 +1092,7 @@ function renderNow(): void {
 function requestPreview(delay = 120): void {
   if (autoRender.value) schedulePreview(delay);
   else {
-    diagnostics.value = parsedDocument.value.diagnostics;
+    renderDiagnostics.value = parsedDocument.value.diagnostics;
     previewStale.value = true;
   }
 }
@@ -1172,7 +1273,7 @@ watch(activeDocumentId, () => {
   if (autoRender.value) schedulePreview(0);
   else {
     labels.value = [];
-    diagnostics.value = parsedDocument.value.diagnostics;
+    renderDiagnostics.value = parsedDocument.value.diagnostics;
     previewUrl.value = undefined;
     previewStale.value = true;
   }
@@ -1240,6 +1341,9 @@ onBeforeUnmount(() => {
 .editor-tab button:focus-visible,
 .outline-row:focus-visible,
 .command-row:focus-visible,
+.command-insert:focus-visible,
+.command-insert-primary:focus-visible,
+.command-back:focus-visible,
 .diagnostic-row:focus-visible,
 .zoom-button:focus-visible,
 .status-button:focus-visible {
@@ -1399,6 +1503,99 @@ onBeforeUnmount(() => {
 .command-row { min-height: 2.8rem; padding-block: 0.4rem; }
 .outline-row:hover, .command-row:hover { background: rgb(228 228 231 / 0.6); }
 
+.command-entry {
+  display: flex;
+  align-items: stretch;
+}
+
+.command-entry .command-row {
+  min-width: 0;
+  width: auto;
+  flex: 1 1 0%;
+}
+
+.command-insert {
+  display: inline-flex;
+  width: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: rgb(113 113 122);
+  opacity: 0;
+}
+
+.command-entry:hover .command-insert,
+.command-entry:focus-within .command-insert { opacity: 1; }
+.command-insert:hover { background: rgb(228 228 231 / 0.8); color: rgb(24 24 27); }
+
+.command-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.35rem;
+  color: rgb(113 113 122);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.command-back:hover { color: rgb(24 24 27); }
+
+.command-doc-section {
+  margin-top: 1rem;
+  border-top: 1px solid rgb(228 228 231);
+  padding-top: 0.75rem;
+}
+
+.command-doc-heading {
+  margin-bottom: 0.4rem;
+  color: rgb(113 113 122);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.command-syntax {
+  display: block;
+  overflow-x: auto;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.4rem;
+  background: white;
+  padding: 0.45rem 0.55rem;
+  color: rgb(39 39 42);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.command-choice {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.3rem;
+  background: white;
+  padding: 0.1rem 0.3rem;
+  color: rgb(82 82 91);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-choice:hover { border-color: rgb(161 161 170); color: rgb(24 24 27); }
+
+.command-insert-primary {
+  display: inline-flex;
+  width: 100%;
+  height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 0.45rem;
+  background: rgb(24 24 27);
+  color: white;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.command-insert-primary:hover { background: rgb(63 63 70); }
+
 .diagnostic-row {
   display: flex;
   width: 100%;
@@ -1509,6 +1706,13 @@ kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radiu
   .sidebar-heading { color: rgb(161 161 170); }
   .file-row { color: rgb(161 161 170); }
   .file-row:hover, .file-row.selected, .file-row.active, .open-editor-row:hover, .open-editor-row.active, .outline-row:hover, .command-row:hover { background: rgb(255 255 255 / 0.06); color: white; }
+  .command-insert:hover { background: rgb(255 255 255 / 0.08); color: white; }
+  .command-back:hover { color: white; }
+  .command-doc-section { border-top-color: rgb(255 255 255 / 0.1); }
+  .command-syntax, .command-choice { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(212 212 216); }
+  .command-choice:hover { border-color: rgb(113 113 122); color: white; }
+  .command-insert-primary { background: white; color: rgb(9 9 11); }
+  .command-insert-primary:hover { background: rgb(228 228 231); }
   .open-editor-action:hover, .tab-close-button:hover { background: rgb(255 255 255 / 0.08); color: white; }
   .editor-tab.active { border-color: rgb(255 255 255 / 0.1); border-bottom-color: rgb(9 9 11); background: rgb(9 9 11); color: white; }
   .diagnostic-row { border-bottom-color: rgb(255 255 255 / 0.05); }

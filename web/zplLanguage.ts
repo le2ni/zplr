@@ -7,134 +7,17 @@ import {
   type ZplCommandNode,
   type ZplSyntaxState,
 } from "../src/index.web";
+import {
+  zplCommandDefinitions,
+  zplLanguageCoverage,
+  type ZplCommandDefinition,
+  type ZplCommandSignature,
+  type ZplParameterDefinition,
+} from "./zplCommandMetadata.generated";
 
-export interface ZplCommandDefinition {
-  syntax: string;
-  parameters: readonly string[];
-  snippet?: string;
-  example?: string;
-}
+export { zplCommandDefinitions, zplLanguageCoverage };
 
-// Parameter metadata for the commands people use while composing labels. The
-// capability catalog still supplies completion and hover support for every ZPL
-// II command, including printer, network, and RFID commands.
-const commandDefinitions: Readonly<Record<string, ZplCommandDefinition>> = {
-  "^A": definition("^Afont,orientation,height,width", ["font", "orientation", "height", "width"], "^A${1:0}${2:N},${3:30},${4:30}"),
-  "^A@": definition("^A@orientation,height,width,font", ["orientation", "height", "width", "font name"], "^A@${1:N},${2:30},${3:30},${4:R:FONT.TTF}"),
-  "^B0": definition("^B0orientation,magnification,error-control,menu-symbol,structured-append", ["orientation", "magnification", "error control", "menu symbol", "structured append"], "^B0${1:N},${2:2},${3:Y},${4:N},${5:1}"),
-  "^B1": barcode("^B1orientation,check-digit,height,interpretation-line,above", "^B1${1:N},${2:N},${3:100},${4:Y},${5:N}"),
-  "^B2": barcode("^B2orientation,height,interpretation-line,above,check-digit", "^B2${1:N},${2:100},${3:Y},${4:N},${5:N}"),
-  "^B3": barcode("^B3orientation,check-digit,height,interpretation-line,above", "^B3${1:N},${2:N},${3:100},${4:Y},${5:N}"),
-  "^B4": barcode("^B4orientation,height,interpretation-line,mode", "^B4${1:N},${2:100},${3:Y},${4:0}"),
-  "^B7": definition("^B7orientation,height,security,columns,rows,truncate", ["orientation", "row height", "security level", "columns", "rows", "truncate"], "^B7${1:N},${2:5},${3:5},${4:8},${5:0},${6:N}"),
-  "^B8": barcode("^B8orientation,height,interpretation-line,above", "^B8${1:N},${2:100},${3:Y},${4:N}"),
-  "^B9": barcode("^B9orientation,height,interpretation-line,above,check-digit", "^B9${1:N},${2:100},${3:Y},${4:N},${5:Y}"),
-  "^BA": barcode("^BAorientation,height,interpretation-line,above,check-digit", "^BA${1:N},${2:100},${3:Y},${4:N},${5:N}"),
-  "^BB": definition("^BBorientation,height,security,characters-per-row,rows,mode", ["orientation", "height", "security", "characters per row", "rows", "mode"], "^BB${1:N},${2:40},${3:1},${4:0},${5:0},${6:F}"),
-  "^BC": definition("^BCorientation,height,interpretation-line,above,check-digit,mode", ["orientation", "height", "interpretation line", "line above", "check digit", "mode"], "^BC${1:N},${2:100},${3:Y},${4:N},${5:N},${6:A}", "^BCN,100,Y,N,N,A"),
-  "^BD": definition("^BDmode,symbol-number,total-symbols", ["mode", "symbol number", "total symbols"], "^BD${1:2},${2:1},${3:1}"),
-  "^BE": barcode("^BEorientation,height,interpretation-line,above", "^BE${1:N},${2:100},${3:Y},${4:N}"),
-  "^BF": definition("^BForientation,height,mode", ["orientation", "height", "mode"], "^BF${1:N},${2:5},${3:0}"),
-  "^BI": barcode("^BIorientation,height,interpretation-line,above", "^BI${1:N},${2:100},${3:Y},${4:N}"),
-  "^BJ": barcode("^BJorientation,height,interpretation-line,above", "^BJ${1:N},${2:100},${3:Y},${4:N}"),
-  "^BK": definition("^BKorientation,check-digit,height,interpretation-line,above,start-stop", ["orientation", "check digit", "height", "interpretation line", "line above", "start/stop"], "^BK${1:N},${2:N},${3:100},${4:Y},${5:N},${6:A}"),
-  "^BL": barcode("^BLorientation,height,interpretation-line,above", "^BL${1:N},${2:100},${3:Y},${4:N}"),
-  "^BM": definition("^BMorientation,check-digit,height,interpretation-line,above,check-digit-scheme", ["orientation", "check digit", "height", "interpretation line", "line above", "check digit scheme"], "^BM${1:N},${2:N},${3:100},${4:Y},${5:N},${6:B}"),
-  "^BO": definition("^BOorientation,magnification,error-control,menu-symbol,structured-append", ["orientation", "magnification", "error control", "menu symbol", "structured append"], "^BO${1:N},${2:2},${3:Y},${4:N},${5:1}"),
-  "^BP": barcode("^BPorientation,check-digit,height,interpretation-line,above", "^BP${1:N},${2:Y},${3:100},${4:Y},${5:N}"),
-  "^BQ": definition("^BQorientation,model,magnification,error-correction,mask", ["orientation", "model", "magnification", "error correction", "mask"], "^BQ${1:N},${2:2},${3:5},${4:Q},${5:7}", "^BQN,2,5\n^FDQA,HELLO^FS"),
-  "^BR": definition("^BRorientation,symbology,magnification,separators,height,interpretation-line", ["orientation", "symbology", "magnification", "separator height", "height", "interpretation line"], "^BR${1:N},${2:6},${3:2},${4:1},${5:100},${6:Y}"),
-  "^BS": barcode("^BSorientation,height,interpretation-line,above", "^BS${1:N},${2:50},${3:Y},${4:N}"),
-  "^BT": definition("^BTorientation,width-ratio,height,interpretation-line,above", ["orientation", "width ratio", "height", "interpretation line", "line above"], "^BT${1:N},${2:2},${3:100},${4:Y},${5:N}"),
-  "^BU": barcode("^BUorientation,height,interpretation-line,above,check-digit", "^BU${1:N},${2:100},${3:Y},${4:N},${5:Y}"),
-  "^BX": definition("^BXorientation,height,quality,columns,rows,format,escape,aspect", ["orientation", "module height", "quality", "columns", "rows", "format ID", "escape character", "aspect ratio"], "^BX${1:N},${2:6},${3:200},${4:0},${5:0},${6:0},${7:_},${8:1}"),
-  "^BY": definition("^BYmodule-width,wide-to-narrow,height", ["module width", "wide-to-narrow ratio", "height"], "^BY${1:2},${2:3},${3:100}", "^BY2,3,100"),
-  "^CC": definition("^CCcaret", ["new format prefix"], "^CC${1:!}"),
-  "~CC": definition("~CCcaret", ["new format prefix"], "~CC${1:!}"),
-  "^CD": definition("^CDdelimiter", ["new parameter delimiter"], "^CD${1:;}"),
-  "~CD": definition("~CDdelimiter", ["new parameter delimiter"], "~CD${1:;}"),
-  "^CF": definition("^CFfont,height,width", ["font", "height", "width"], "^CF${1:0},${2:30},${3:30}"),
-  "^CI": definition("^CIcharacter-set,source-1,destination-1,...", ["character set", "source code", "destination code"], "^CI${1:28}", "^CI28"),
-  "^CM": definition("^CMalias-b,alias-e,alias-r,alias-a", ["B: alias", "E: alias", "R: alias", "A: alias"], "^CM${1:R},${2:E},${3:B},${4:A}"),
-  "^CT": definition("^CTtilde", ["new control prefix"], "^CT${1:!}"),
-  "~CT": definition("~CTtilde", ["new control prefix"], "~CT${1:!}"),
-  "^CV": definition("^CVvalidation", ["enable validation: Y/N"], "^CV${1|Y,N|}"),
-  "^CW": definition("^CWidentifier,font", ["font identifier", "font name"], "^CW${1:E},${2:R:FONT.TTF}"),
-  "^DF": definition("^DFformat-name", ["stored format name"], "^DF${1:R:FORMAT.ZPL}"),
-  "~DG": definition("~DGname,total-bytes,bytes-per-row,data", ["graphic name", "total bytes", "bytes per row", "ASCII hex data"], "~DG${1:R:IMAGE.GRF},${2:0},${3:0},${4:data}"),
-  "^FB": definition("^FBwidth,max-lines,line-spacing,justification,hanging-indent", ["block width", "maximum lines", "line spacing", "justification", "hanging indent"], "^FB${1:500},${2:3},${3:0},${4:L},${5:0}"),
-  "^FC": definition("^FCprimary,secondary,tertiary", ["primary indicator", "secondary indicator", "tertiary indicator"], "^FC${1:%},${2:#},${3:@}"),
-  "^FD": definition("^FDdata", ["field data"], "^FD${1:text}^FS", "^FDHello ZPL^FS"),
-  "^FH": definition("^FHindicator", ["hexadecimal indicator"], "^FH${1:_}"),
-  "^FL": definition("^FLbase-font,link-font,link-font-2", ["base font", "linked font", "second linked font"], "^FL${1:0},${2:E},${3:F}"),
-  "^FM": definition("^FMx1,y1,x2,y2,...", ["x coordinate", "y coordinate"], "^FM${1:20},${2:20},${3:200},${4:20}"),
-  "^FN": definition("^FNfield-number,prompt", ["field number", "prompt"], "^FN${1:1},${2:Name}"),
-  "^FO": definition("^FOx,y,justification", ["x position", "y position", "justification"], "^FO${1:40},${2:40},${3:0}", "^FO40,40"),
-  "^FP": definition("^FPdirection,additional-spacing", ["direction", "additional spacing"], "^FP${1:H},${2:0}"),
-  "^FR": definition("^FR", [], "^FR"),
-  "^FS": definition("^FS", [], "^FS"),
-  "^FT": definition("^FTx,y,justification", ["x position", "y baseline", "justification"], "^FT${1:40},${2:80},${3:0}"),
-  "^FV": definition("^FVvariable-data", ["variable field data"], "^FV${1:data}^FS"),
-  "^FW": definition("^FWorientation,justification", ["default orientation", "justification"], "^FW${1:N},${2:0}"),
-  "^FX": definition("^FXcomment", ["comment text"], "^FX ${1:comment}"),
-  "^GB": definition("^GBwidth,height,thickness,color,rounding", ["width", "height", "border thickness", "color", "corner rounding"], "^GB${1:300},${2:150},${3:3},${4:B},${5:0}^FS"),
-  "^GC": definition("^GCdiameter,thickness,color", ["diameter", "border thickness", "color"], "^GC${1:100},${2:3},${3:B}^FS"),
-  "^GD": definition("^GDwidth,height,thickness,color,orientation", ["width", "height", "thickness", "color", "orientation"], "^GD${1:200},${2:100},${3:3},${4:B},${5:R}^FS"),
-  "^GE": definition("^GEwidth,height,thickness,color", ["width", "height", "thickness", "color"], "^GE${1:200},${2:100},${3:3},${4:B}^FS"),
-  "^GF": definition("^GFformat,total-bytes,bytes-used,bytes-per-row,data", ["compression format", "total bytes", "bytes used", "bytes per row", "image data"], "^GF${1:A},${2:0},${3:0},${4:0},${5:data}"),
-  "^GS": definition("^GSorientation,height,width", ["orientation", "height", "width"], "^GS${1:N},${2:40},${3:40}"),
-  "^ID": definition("^IDobject-name", ["object name"], "^ID${1:R:OBJECT.*}"),
-  "^IL": definition("^ILimage-name", ["stored image name"], "^IL${1:R:IMAGE.GRF}"),
-  "^IM": definition("^IMimage-name", ["stored image name"], "^IM${1:R:IMAGE.GRF}"),
-  "^IS": definition("^ISimage-name,print-after-storing", ["image name", "print after storing"], "^IS${1:R:IMAGE.GRF},${2:N}"),
-  "^LH": definition("^LHx,y", ["label home x", "label home y"], "^LH${1:0},${2:0}"),
-  "^LL": definition("^LLheight", ["label length in dots"], "^LL${1:1218}", "^LL1218"),
-  "^LR": definition("^LRreverse", ["reverse entire label: Y/N"], "^LR${1|Y,N|}"),
-  "^LS": definition("^LSshift", ["horizontal shift"], "^LS${1:0}"),
-  "^LT": definition("^LToffset", ["label top offset"], "^LT${1:0}"),
-  "^MC": definition("^MCmap-clear", ["clear bitmap after printing: Y/N"], "^MC${1|Y,N|}"),
-  "^ML": definition("^MLmaximum-length", ["maximum label length"], "^ML${1:1218}"),
-  "^MN": definition("^MNmedia-type,black-mark-offset", ["media tracking mode", "black mark offset"], "^MN${1:N},${2:0}"),
-  "^MU": definition("^MUunits,dpi,base-dpi", ["units", "desired dots per inch", "base dots per inch"], "^MU${1:D},${2:203},${3:203}"),
-  "^PA": definition("^PAbidi,character-shaping,open-type,default-glyph", ["bidirectional", "character shaping", "OpenType", "default glyph"], "^PA${1:0},${2:0},${3:0},${4:0}"),
-  "^PM": definition("^PMmirror", ["mirror image: Y/N"], "^PM${1|Y,N|}"),
-  "^PO": definition("^POorientation", ["print orientation: N/I"], "^PO${1|N,I|}"),
-  "^PQ": definition("^PQquantity,pause,replicates,override,cut", ["quantity", "pause/cut interval", "replicates", "override pause count", "cut on error"], "^PQ${1:1},${2:0},${3:1},${4:N},${5:Y}"),
-  "^PW": definition("^PWwidth", ["print width in dots"], "^PW${1:812}", "^PW812"),
-  "^SE": definition("^SEencoding-table", ["encoding table name"], "^SE${1:R:ENCODING.DAT}"),
-  "^SF": definition("^SFmask,increment", ["serialization mask", "increment"], "^SF${1:%%%%0000},${2:1}"),
-  "^SL": definition("^SLmode,language", ["clock mode", "language"], "^SL${1:S},${2:1}"),
-  "^SN": definition("^SNstarting-value,increment,pad", ["starting value", "increment", "zero pad"], "^SN${1:1},${2:1},${3:Y}"),
-  "^SO": definition("^SOfont,offset-1,offset-2,...", ["font", "character offset"], "^SO${1:0},${2:0}"),
-  "^ST": definition("^STmonth,day,year,hour,minute,second,format", ["month", "day", "year", "hour", "minute", "second", "date format"], "^ST${1:01},${2:01},${3:2026},${4:12},${5:00},${6:00},${7:0}"),
-  "^TB": definition("^TBorientation,width,height", ["orientation", "block width", "block height"], "^TB${1:N},${2:500},${3:200}"),
-  "^TO": definition("^TOsource,destination", ["source object", "destination object"], "^TO${1:R:SOURCE.GRF},${2:E:DEST.GRF}"),
-  "^XA": definition("^XA", [], "^XA", "^XA"),
-  "^XF": definition("^XFformat-name", ["stored format name"], "^XF${1:R:FORMAT.ZPL}^FS"),
-  "^XG": definition("^XGgraphic-name,x-magnification,y-magnification", ["stored graphic name", "x magnification", "y magnification"], "^XG${1:R:IMAGE.GRF},${2:1},${3:1}^FS"),
-  "^XZ": definition("^XZ", [], "^XZ", "^XZ"),
-};
-
-function definition(
-  syntax: string,
-  parameters: readonly string[],
-  snippet?: string,
-  example?: string
-): ZplCommandDefinition {
-  return { syntax, parameters, snippet, example };
-}
-
-function barcode(syntax: string, snippet: string): ZplCommandDefinition {
-  return definition(
-    syntax,
-    syntax
-      .slice(3)
-      .split(",")
-      .filter(Boolean)
-      .map((parameter) => parameter.replaceAll("-", " ")),
-    snippet
-  );
-}
+const commandDefinitionMap: Readonly<Record<string, ZplCommandDefinition>> = zplCommandDefinitions;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -380,6 +263,261 @@ export function formatZpl(source: string): string {
   return `${formatted.replace(/[\r\n]+$/g, "")}\n`;
 }
 
+export function getZplCommandDefinition(command: string): ZplCommandDefinition | undefined {
+  const normalized = command.trim().toUpperCase();
+  return commandDefinitionMap[normalized];
+}
+
+function signatureDiscriminator(command: string, signature: ZplCommandSignature): string {
+  const firstParameterStart = signature.parameters
+    .map(({ syntaxStart }) => syntaxStart)
+    .filter((offset): offset is number => typeof offset === "number")
+    .sort((left, right) => left - right)[0] ?? signature.syntax.length;
+  return signature.syntax.slice(command.length, firstParameterStart);
+}
+
+function signatureForCommand(command: ZplCommandNode): ZplCommandSignature | undefined {
+  const definition = getZplCommandDefinition(command.canonical);
+  if (!definition) return undefined;
+  if (definition.signatures.length === 1) return definition.signatures[0];
+  const normalizedParameters = command.rawParameters.replaceAll(command.delimiter, ",");
+  return definition.signatures.find((signature) =>
+    normalizedParameters.startsWith(signatureDiscriminator(command.canonical, signature))
+  ) ?? definition.signatures[0];
+}
+
+function commandDisplayLabel(command: string, signature: ZplCommandSignature): string {
+  const firstParameterStart = signature.parameters
+    .map(({ syntaxStart }) => syntaxStart)
+    .filter((offset): offset is number => typeof offset === "number")
+    .sort((left, right) => left - right)[0] ?? signature.syntax.length;
+  return signature.syntax.slice(0, firstParameterStart).replace(/[,.:"']+$/g, "") || command;
+}
+
+function slotBounds(rawParameters: string, delimiter: string, slot: number): { start: number; end: number } {
+  let currentSlot = 0;
+  let start = 0;
+  for (let index = 0; index < rawParameters.length; index++) {
+    if (rawParameters[index] !== delimiter) continue;
+    if (currentSlot === slot) return { start, end: index };
+    currentSlot += 1;
+    start = index + delimiter.length;
+  }
+  return currentSlot === slot
+    ? { start, end: rawParameters.length }
+    : { start: rawParameters.length, end: rawParameters.length };
+}
+
+function parametersInSlot(signature: ZplCommandSignature, slot: number): ZplParameterDefinition[] {
+  return signature.parameters
+    .filter((parameter) => parameter.slot === slot)
+    .sort((left, right) => left.component - right.component);
+}
+
+function editableRawParameters(command: ZplCommandNode): string {
+  return command.rawParameters.replace(/(?:\r?\n[\t ]*)+$/g, "");
+}
+
+function componentBounds(
+  command: ZplCommandNode,
+  signature: ZplCommandSignature,
+  parameter: ZplParameterDefinition,
+): { start: number; end: number } {
+  const rawParameters = editableRawParameters(command);
+  const bounds = slotBounds(rawParameters, command.delimiter, parameter.slot);
+  const segment = rawParameters.slice(bounds.start, bounds.end);
+  const parameters = parametersInSlot(signature, parameter.slot);
+  const targetIndex = Math.max(0, parameters.findIndex((candidate) => candidate === parameter));
+  let start = 0;
+
+  for (let index = 1; index <= targetIndex; index++) {
+    const previous = parameters[index - 1]!;
+    const current = parameters[index]!;
+    const separator = typeof previous.syntaxEnd === "number" && typeof current.syntaxStart === "number"
+      ? signature.syntax.slice(previous.syntaxEnd, current.syntaxStart)
+      : "";
+    if (separator) {
+      const separatorIndex = segment.indexOf(separator, start);
+      start = separatorIndex >= 0 ? separatorIndex + separator.length : segment.length;
+    } else {
+      // Adjacent formal parameters (notably ^A font + orientation) are
+      // single-character selectors before the first delimiter.
+      start = Math.min(segment.length, start + 1);
+    }
+  }
+
+  let end = segment.length;
+  const next = parameters[targetIndex + 1];
+  if (next) {
+    const separator = typeof parameter.syntaxEnd === "number" && typeof next.syntaxStart === "number"
+      ? signature.syntax.slice(parameter.syntaxEnd, next.syntaxStart)
+      : "";
+    if (separator) {
+      const separatorIndex = segment.indexOf(separator, start);
+      if (separatorIndex >= 0) end = separatorIndex;
+    } else {
+      end = Math.min(segment.length, start + 1);
+    }
+  } else if (typeof parameter.syntaxEnd === "number") {
+    const commaIndex = signature.syntax.indexOf(",", parameter.syntaxEnd);
+    const slotSyntaxEnd = commaIndex >= 0 ? commaIndex : signature.syntax.length;
+    const trailingLiteral = signature.syntax.slice(parameter.syntaxEnd, slotSyntaxEnd);
+    if (trailingLiteral) {
+      const trailingIndex = segment.indexOf(trailingLiteral, start);
+      if (trailingIndex >= 0) end = trailingIndex;
+    }
+  }
+  return { start: bounds.start + start, end: bounds.start + Math.max(start, end) };
+}
+
+export interface ZplParameterContext {
+  command: ZplCommandNode;
+  definition: ZplCommandDefinition;
+  signature: ZplCommandSignature;
+  parameter: ZplParameterDefinition;
+  parameterIndex: number;
+  value: string;
+  span: SourceSpan;
+}
+
+export function findZplParameterContext(source: string, offset: number): ZplParameterContext | undefined {
+  if (!source) return undefined;
+  const boundedOffset = Math.max(0, Math.min(offset, source.length));
+  const lookupOffset = Math.max(0, Math.min(source.length - 1, boundedOffset === source.length ? boundedOffset - 1 : boundedOffset));
+  const document = parseDocument(source);
+  const command = findCommandAtOffset(document, lookupOffset)
+    ?? (boundedOffset > 0 ? findCommandAtOffset(document, boundedOffset - 1) : undefined);
+  if (!command) return undefined;
+  const definition = getZplCommandDefinition(command.canonical);
+  const signature = signatureForCommand(command);
+  if (!definition || !signature || signature.parameters.length === 0) return undefined;
+  const rawStart = command.span.end - command.rawParameters.length;
+  if (boundedOffset < rawStart || boundedOffset > command.span.end) return undefined;
+
+  const beforeCursor = source.slice(rawStart, boundedOffset);
+  const activeSlot = [...beforeCursor].filter((character) => character === command.delimiter).length;
+  const candidates = parametersInSlot(signature, activeSlot);
+  if (candidates.length === 0) return undefined;
+  const slot = slotBounds(editableRawParameters(command), command.delimiter, activeSlot);
+  const cursorInSegment = Math.max(0, Math.min(slot.end - slot.start, boundedOffset - rawStart - slot.start));
+  const candidateBounds = candidates.map((candidate) => ({
+    candidate,
+    bounds: componentBounds(command, signature, candidate),
+  }));
+  const exact = candidateBounds.find(({ bounds }) => {
+    const start = bounds.start - slot.start;
+    const end = bounds.end - slot.start;
+    return start === end ? cursorInSegment === start : cursorInSegment >= start && cursorInSegment < end;
+  });
+  const parameter = exact?.candidate ?? [...candidateBounds]
+    .reverse()
+    .find(({ bounds }) => bounds.end - slot.start <= cursorInSegment)?.candidate ?? candidates[0]!;
+  const relativeSpan = componentBounds(command, signature, parameter);
+  const span = { start: rawStart + relativeSpan.start, end: rawStart + relativeSpan.end };
+  return {
+    command,
+    definition,
+    signature,
+    parameter,
+    parameterIndex: signature.parameters.indexOf(parameter),
+    value: source.slice(span.start, span.end),
+    span,
+  };
+}
+
+export type ZplLanguageDiagnosticCode =
+  | "INVALID_PARAMETER_VALUE"
+  | "PARAMETER_OUT_OF_RANGE"
+  | "MISSING_REQUIRED_PARAMETER"
+  | "EXTRA_PARAMETER";
+
+export interface ZplLanguageDiagnostic {
+  code: ZplLanguageDiagnosticCode;
+  severity: "warning" | "error";
+  message: string;
+  command: string;
+  parameter?: string;
+  choices?: readonly string[];
+  span: SourceSpan;
+}
+
+const payloadParameterCommands = new Set([
+  "^FD", "^FV", "^FX", "^GF",
+  "~DB", "~DE", "~DG", "~DS", "~DT", "~DU", "~DY",
+]);
+
+export function validateZplParameters(source: string): ZplLanguageDiagnostic[] {
+  const diagnostics: ZplLanguageDiagnostic[] = [];
+  for (const command of flattenCommands(source)) {
+    const signature = signatureForCommand(command);
+    if (!signature || signature.parameters.length === 0 || payloadParameterCommands.has(command.canonical)) continue;
+    const rawStart = command.span.end - command.rawParameters.length;
+    const maxSlot = Math.max(...signature.parameters.map(({ slot }) => slot));
+    const repeatable = signature.parameters.some(({ repeatable: value }) => value);
+    if (!repeatable && command.parameters.length > maxSlot + 1) {
+      const extra = parameterSpan(command, maxSlot + 1) ?? { start: command.span.end, end: command.span.end };
+      diagnostics.push({
+        code: "EXTRA_PARAMETER",
+        severity: "warning",
+        command: command.canonical,
+        message: `${command.canonical} accepts ${maxSlot + 1} delimited parameter slot${maxSlot === 0 ? "" : "s"}.`,
+        span: extra,
+      });
+    }
+
+    for (const parameter of signature.parameters) {
+      const relative = componentBounds(command, signature, parameter);
+      const span = { start: rawStart + relative.start, end: rawStart + relative.end };
+      const value = source.slice(span.start, span.end).trim();
+      if (!value) {
+        if (parameter.required && parameter.slot >= command.parameters.length) {
+          diagnostics.push({
+            code: "MISSING_REQUIRED_PARAMETER",
+            severity: "warning",
+            command: command.canonical,
+            parameter: parameter.name,
+            choices: parameter.choices,
+            message: `${command.canonical} requires ${parameter.name}.`,
+            span: { start: command.span.end, end: command.span.end },
+          });
+        }
+        continue;
+      }
+      if (parameter.enumValues?.length && !parameter.enumValues.some((candidate) => candidate.toUpperCase() === value.toUpperCase())) {
+        diagnostics.push({
+          code: "INVALID_PARAMETER_VALUE",
+          severity: "warning",
+          command: command.canonical,
+          parameter: parameter.name,
+          choices: parameter.enumValues,
+          message: `${value} is not a documented value for ${command.canonical} ${parameter.name}. Expected ${parameter.enumValues.join(", ")}.`,
+          span,
+        });
+        continue;
+      }
+      if (
+        parameter.range &&
+        /^[-+]?\d+(?:\.\d+)?$/.test(value) &&
+        !parameter.choices.some((choice) => choice.toUpperCase() === value.toUpperCase())
+      ) {
+        const numericValue = Number(value);
+        if (numericValue < parameter.range.min || numericValue > parameter.range.max) {
+          diagnostics.push({
+            code: "PARAMETER_OUT_OF_RANGE",
+            severity: "warning",
+            command: command.canonical,
+            parameter: parameter.name,
+            choices: parameter.choices,
+            message: `${command.canonical} ${parameter.name} must be between ${parameter.range.min} and ${parameter.range.max}.`,
+            span,
+          });
+        }
+      }
+    }
+  }
+  return diagnostics;
+}
+
 export function configureZplLanguage(
   monaco: typeof Monaco,
   capabilities: readonly CommandCapability[]
@@ -429,10 +567,29 @@ export function configureZplLanguage(
 
   disposables.push(
     monaco.languages.registerCompletionItemProvider("zpl", {
-      triggerCharacters: ["^", "~", "!", "#", "$", "%", "@", ","],
+      triggerCharacters: ["^", "~", "!", "#", "$", "%", "@", ",", ":", "."],
       provideCompletionItems(model, position) {
         const offset = model.getOffsetAt(position);
         const syntax = syntaxAtOffset(model, offset);
+        const parameterContext = findZplParameterContext(model.getValue(), offset);
+        if (parameterContext) {
+          const range = rangeForSpan(monaco, model, parameterContext.span);
+          return {
+            suggestions: parameterContext.parameter.choices.map((choice, index) => ({
+              label: choice,
+              kind: monaco.languages.CompletionItemKind.Value,
+              detail: `${parameterContext.command.canonical} · ${parameterContext.parameter.name}`,
+              documentation: {
+                value: parameterContext.parameter.documentation,
+                isTrusted: false,
+              },
+              insertText: choice,
+              filterText: `${choice} ${parameterContext.parameter.name}`,
+              sortText: String(index).padStart(3, "0"),
+              range,
+            })),
+          };
+        }
         const before = model.getValueInRange({
           startLineNumber: position.lineNumber,
           startColumn: 1,
@@ -447,41 +604,57 @@ export function configureZplLanguage(
         const wordStart = Math.max(1, position.column - fragment.length);
         const range = new monaco.Range(position.lineNumber, wordStart, position.lineNumber, position.column);
         return {
-          suggestions: capabilities.map((capability) => {
-            const metadata = commandDefinitions[capability.canonical];
+          suggestions: capabilities.flatMap((capability) => {
+            const metadata = getZplCommandDefinition(capability.canonical);
             const limitations = capability.limitations?.join(" ");
-            const localizedCanonical = localizeZpl(capability.canonical, syntax);
-            const localizedSyntax = localizeZpl(metadata?.syntax ?? capability.canonical, syntax);
-            return {
-              label: localizedCanonical === capability.canonical
-                ? capability.canonical
-                : { label: localizedCanonical, description: capability.canonical },
-              kind:
-                capability.category === "barcode"
-                  ? monaco.languages.CompletionItemKind.Struct
-                  : capability.category === "graphic"
-                    ? monaco.languages.CompletionItemKind.Color
-                    : monaco.languages.CompletionItemKind.Keyword,
-              detail: `${capability.name} · ${capability.status}`,
-              documentation: {
-                value: [
-                  `**${localizedSyntax}**`,
-                  capability.name,
-                  limitations,
-                ].filter(Boolean).join("\n\n"),
-                isTrusted: false,
-              },
-              insertText: localizeZpl(metadata?.snippet ?? capability.canonical, syntax),
-              insertTextRules: metadata?.snippet
-                ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-                : undefined,
-              filterText: `${capability.canonical} ${capability.name}`,
-              sortText: `${capability.status === "supported" ? "0" : capability.status === "partial" ? "1" : "2"}-${capability.canonical}`,
-              range,
-              tags: capability.status === "unsupported"
-                ? [monaco.languages.CompletionItemTag.Deprecated]
-                : undefined,
-            };
+            const signatures = metadata?.signatures ?? [{
+              syntax: capability.canonical,
+              snippet: capability.canonical,
+              parameters: [],
+            } satisfies ZplCommandSignature];
+            return signatures.map((signature, signatureIndex) => {
+              const displayLabel = commandDisplayLabel(capability.canonical, signature);
+              const localizedLabel = localizeZpl(displayLabel, syntax);
+              const localizedSyntax = localizeZpl(signature.syntax, syntax);
+              const title = metadata?.title ?? capability.name;
+              return {
+                label: localizedLabel === displayLabel
+                  ? displayLabel
+                  : { label: localizedLabel, description: displayLabel },
+                kind:
+                  capability.category === "barcode"
+                    ? monaco.languages.CompletionItemKind.Struct
+                    : capability.category === "graphic"
+                      ? monaco.languages.CompletionItemKind.Color
+                      : monaco.languages.CompletionItemKind.Keyword,
+                detail: `${title}${signature.label ? ` · ${signature.label}` : ""} · ${capability.status}`,
+                documentation: {
+                  value: [
+                    `**${localizedSyntax}**`,
+                    metadata?.summary ?? capability.name,
+                    signature.parameters.length
+                      ? signature.parameters.map(({ key, name }) => `- \`${key}\` — ${name}`).join("\n")
+                      : "No parameters.",
+                    limitations,
+                  ].filter(Boolean).join("\n\n"),
+                  isTrusted: false,
+                },
+                insertText: localizeZpl(signature.snippet, syntax),
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                filterText: [
+                  capability.canonical,
+                  displayLabel,
+                  title,
+                  metadata?.summary,
+                  ...signature.parameters.map(({ name }) => name),
+                ].filter(Boolean).join(" "),
+                sortText: `${capability.status === "supported" ? "0" : capability.status === "partial" ? "1" : "2"}-${capability.canonical}-${signatureIndex}`,
+                range,
+                tags: capability.status === "unsupported"
+                  ? [monaco.languages.CompletionItemTag.Deprecated]
+                  : undefined,
+              };
+            });
           }),
         };
       },
@@ -496,24 +669,50 @@ export function configureZplLanguage(
         if (!command) return null;
         const capability = capabilityMap.get(command.canonical);
         if (!capability) return null;
-        const metadata = commandDefinitions[capability.canonical];
+        const metadata = getZplCommandDefinition(capability.canonical);
+        const signature = signatureForCommand(command);
+        if (!metadata || !signature) return null;
+        const parameterContext = findZplParameterContext(model.getValue(), model.getOffsetAt(position));
         const commandSyntax: ZplSyntaxState = {
           formatPrefix: command.prefixKind === "format" ? command.prefix : "^",
           controlPrefix: command.prefixKind === "control" ? command.prefix : "~",
           delimiter: command.delimiter,
         };
         const contents: Monaco.IMarkdownString[] = [
-          { value: `\`${localizeZpl(metadata?.syntax ?? capability.canonical, commandSyntax)}\`` },
-          { value: `**${capability.name}**  \n${capability.category} · ${capability.scope} scope · **${capability.status}**` },
+          { value: `\`${localizeZpl(signature.syntax, commandSyntax)}\`` },
+          { value: `**${metadata.title}**  \n${metadata.summary}` },
+          { value: `${capability.category} · ${capability.scope} scope · **${capability.status}**` },
         ];
-        if (metadata?.parameters.length) {
-          contents.push({ value: metadata.parameters.map((parameter, index) => `${index + 1}. ${parameter}`).join("  \n") });
+        if (parameterContext?.command.span.start === command.span.start) {
+          contents.push({
+            value: [
+              `**Parameter ${parameterContext.parameterIndex + 1}: ${parameterContext.parameter.name}** (\`${parameterContext.parameter.key}\`)`,
+              parameterContext.parameter.documentation,
+              `Suggestions: ${parameterContext.parameter.choices.map((choice) => `\`${choice}\``).join(", ")}`,
+            ].join("  \n\n"),
+          });
+        } else if (signature.parameters.length) {
+          contents.push({
+            value: signature.parameters.map((parameter, index) =>
+              `${index + 1}. \`${parameter.key}\` — **${parameter.name}**${parameter.required ? " *(required)*" : ""}`
+            ).join("  \n"),
+          });
+        } else {
+          contents.push({ value: "No parameters." });
+        }
+        if (metadata.signatures.length > 1) {
+          contents.push({
+            value: `Available forms: ${metadata.signatures.map((candidate) => `\`${localizeZpl(candidate.syntax, commandSyntax)}\``).join(", ")}`,
+          });
         }
         if (capability.limitations?.length) {
           contents.push({ value: `$(warning) ${capability.limitations.join(" ")}` });
         }
-        contents.push({ value: `[Open the official ZPL command reference](${capability.reference})`, isTrusted: true });
-        return { range: rangeForSpan(monaco, model, command.span), contents };
+        contents.push({ value: `[Open the official ZPL command reference](${metadata.reference})`, isTrusted: true });
+        const hoverSpan = parameterContext?.command.span.start === command.span.start && parameterContext.span.end > parameterContext.span.start
+          ? parameterContext.span
+          : { start: command.span.start, end: command.span.start + command.prefix.length + command.code.length };
+        return { range: rangeForSpan(monaco, model, hoverSpan), contents };
       },
     })
   );
@@ -587,39 +786,81 @@ export function configureZplLanguage(
 
   disposables.push(
     monaco.languages.registerSignatureHelpProvider("zpl", {
-      signatureHelpTriggerCharacters: [","],
-      signatureHelpRetriggerCharacters: [","],
+      signatureHelpTriggerCharacters: [",", ";", "|", ":", "."],
+      signatureHelpRetriggerCharacters: [",", ";", "|", ":", "."],
       provideSignatureHelp(model, position) {
         const command = commandAt(model, position);
-        const metadata = command && commandDefinitions[command.canonical];
-        if (!command || !metadata || metadata.parameters.length === 0) return null;
-        const commandStart = model.getPositionAt(command.span.start);
-        const currentText = model.getValueInRange({
-          startLineNumber: commandStart.lineNumber,
-          startColumn: commandStart.column,
-          endLineNumber: position.lineNumber,
-          endColumn: position.column,
-        });
-        const activeParameter = Math.min(
-          metadata.parameters.length - 1,
-          Math.max(0, currentText.split(command.delimiter).length - 1)
-        );
+        const metadata = command && getZplCommandDefinition(command.canonical);
+        const selectedSignature = command && signatureForCommand(command);
+        if (!command || !metadata || !selectedSignature || selectedSignature.parameters.length === 0) return null;
+        const parameterContext = findZplParameterContext(model.getValue(), model.getOffsetAt(position));
+        const activeSignature = Math.max(0, metadata.signatures.indexOf(selectedSignature));
+        const commandSyntax: ZplSyntaxState = {
+          formatPrefix: command.prefixKind === "format" ? command.prefix : "^",
+          controlPrefix: command.prefixKind === "control" ? command.prefix : "~",
+          delimiter: command.delimiter,
+        };
         return {
           value: {
-            activeParameter,
-            activeSignature: 0,
-            signatures: [{
-              label: localizeZpl(metadata.syntax, {
-                formatPrefix: command.prefixKind === "format" ? command.prefix : "^",
-                controlPrefix: command.prefixKind === "control" ? command.prefix : "~",
-                delimiter: command.delimiter,
-              }),
-              documentation: capabilityMap.get(command.canonical)?.name,
-              parameters: metadata.parameters.map((parameter) => ({ label: parameter })),
-            }],
+            activeParameter: parameterContext?.parameterIndex ?? 0,
+            activeSignature,
+            signatures: metadata.signatures.map((signature) => ({
+              label: localizeZpl(signature.syntax, commandSyntax),
+              documentation: {
+                value: [
+                  `**${metadata.title}**`,
+                  signature.label,
+                  metadata.summary,
+                ].filter(Boolean).join(" — "),
+                isTrusted: false,
+              },
+              parameters: signature.parameters.map((parameter) => ({
+                label: typeof parameter.syntaxStart === "number" && typeof parameter.syntaxEnd === "number"
+                  ? [parameter.syntaxStart, parameter.syntaxEnd] as [number, number]
+                  : parameter.key,
+                documentation: {
+                  value: parameter.documentation,
+                  isTrusted: false,
+                },
+              })),
+            })),
           },
           dispose() {},
         };
+      },
+    })
+  );
+
+  disposables.push(
+    monaco.languages.registerInlayHintsProvider("zpl", {
+      displayName: "ZPL parameter names",
+      provideInlayHints(model, requestedRange) {
+        const source = model.getValue();
+        const requestedStart = model.getOffsetAt(requestedRange.getStartPosition());
+        const requestedEnd = model.getOffsetAt(requestedRange.getEndPosition());
+        const hints: Monaco.languages.InlayHint[] = [];
+        for (const command of flattenCommands(source)) {
+          if (command.span.end < requestedStart || command.span.start > requestedEnd) continue;
+          const signature = signatureForCommand(command);
+          if (!signature || payloadParameterCommands.has(command.canonical)) continue;
+          const rawStart = command.span.end - command.rawParameters.length;
+          for (const parameter of signature.parameters) {
+            const relative = componentBounds(command, signature, parameter);
+            const span = { start: rawStart + relative.start, end: rawStart + relative.end };
+            if (span.start === span.end || !source.slice(span.start, span.end).trim()) continue;
+            hints.push({
+              kind: monaco.languages.InlayHintKind.Parameter,
+              position: model.getPositionAt(span.start),
+              label: `${parameter.key}:`,
+              tooltip: {
+                value: `**${parameter.name}**  \n${parameter.documentation}`,
+                isTrusted: false,
+              },
+              paddingRight: true,
+            });
+          }
+        }
+        return { hints, dispose() {} };
       },
     })
   );
@@ -701,7 +942,7 @@ export function configureZplLanguage(
               const commandRange = rangeForSpan(monaco, model, command.span);
               return {
                 name: command.canonical,
-                detail: capabilityMap.get(command.canonical)?.name ?? "ZPL command",
+                detail: getZplCommandDefinition(command.canonical)?.title ?? capabilityMap.get(command.canonical)?.name ?? "ZPL command",
                 kind: monaco.languages.SymbolKind.Function,
                 tags: [],
                 range: commandRange,
@@ -761,8 +1002,49 @@ export function configureZplLanguage(
           const code = typeof marker.code === "string" ? marker.code : marker.code?.value;
           const markerStart = model.getOffsetAt({ lineNumber: marker.startLineNumber, column: marker.startColumn });
           const command = findCommandAtOffset(parsed, Math.min(markerStart, Math.max(0, source.length - 1)));
+          const languageDiagnostic = validateZplParameters(source).find((diagnostic) =>
+            diagnostic.code === code && diagnostic.span.start === markerStart
+          );
 
-          if ((code === "UNKNOWN_COMMAND" || code === "INVALID_COMMAND_PREFIX") && command && command.prefixKind !== "control-character") {
+          if ((code === "INVALID_PARAMETER_VALUE" || code === "PARAMETER_OUT_OF_RANGE") && languageDiagnostic) {
+            const editRange = rangeForSpan(monaco, model, languageDiagnostic.span);
+            languageDiagnostic.choices?.forEach((choice, index) => {
+              addEdit(
+                `Change ${languageDiagnostic.parameter ?? "parameter"} to ${choice}`,
+                editRange,
+                choice,
+                marker,
+                index === 0,
+              );
+            });
+          } else if (code === "EXTRA_PARAMETER" && languageDiagnostic && command) {
+            const removeStart = languageDiagnostic.span.start > command.span.start && source[languageDiagnostic.span.start - 1] === command.delimiter
+              ? languageDiagnostic.span.start - 1
+              : languageDiagnostic.span.start;
+            addEdit(
+              `Remove extra ${command.canonical} parameter`,
+              rangeForSpan(monaco, model, { start: removeStart, end: languageDiagnostic.span.end }),
+              "",
+              marker,
+              true,
+            );
+          } else if (code === "MISSING_REQUIRED_PARAMETER" && languageDiagnostic && command) {
+            const signature = signatureForCommand(command);
+            const missing = signature?.parameters.find(({ name }) => name === languageDiagnostic.parameter);
+            if (missing) {
+              const suppliedSlots = command.rawParameters.length === 0 ? 0 : command.parameters.length;
+              const separators = Math.max(0, missing.slot - suppliedSlots + (suppliedSlots > 0 ? 1 : 0));
+              const insertion = `${command.delimiter.repeat(separators)}${missing.choices[0] ?? ""}`;
+              const position = model.getPositionAt(command.span.end);
+              addEdit(
+                `Insert required ${missing.name}`,
+                new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+                insertion,
+                marker,
+                true,
+              );
+            }
+          } else if ((code === "UNKNOWN_COMMAND" || code === "INVALID_COMMAND_PREFIX") && command && command.prefixKind !== "control-character") {
             const syntax = syntaxAtOffset(model, command.span.start);
             const tokenRange = rangeForSpan(monaco, model, {
               start: command.span.start,
@@ -844,7 +1126,18 @@ export function zplSnippetFor(
   command: string,
   syntax: ZplSyntaxState = { formatPrefix: "^", controlPrefix: "~", delimiter: "," }
 ): string {
-  return localizeZpl(commandDefinitions[command]?.snippet ?? command, syntax);
+  const normalized = command.trim().toUpperCase();
+  const signature = getZplCommandDefinition(normalized)?.signatures[0];
+  return localizeZpl(signature?.snippet ?? command, syntax);
+}
+
+export function zplSnippetsFor(
+  command: string,
+  syntax: ZplSyntaxState = { formatPrefix: "^", controlPrefix: "~", delimiter: "," }
+): readonly string[] {
+  const normalized = command.trim().toUpperCase();
+  return getZplCommandDefinition(normalized)?.signatures.map(({ snippet }) => localizeZpl(snippet, syntax))
+    ?? [localizeZpl(command, syntax)];
 }
 
 export function zplSnippetForSource(command: string, source: string, offset: number): string {

@@ -29,8 +29,8 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByLabel("ZPL source editor")).toBeAttached();
   await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
-  await expect(page.getByText("ZPL II 2025", { exact: true })).toBeVisible();
-  await expect(page.getByText("223 commands", { exact: true })).toBeVisible();
+  await expect(page.getByText("ZPL II", { exact: true })).toBeVisible();
+  await expect(page.getByText("223 commands · 630 parameters", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Retail UPC / EAN", exact: true }).click();
   await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
@@ -42,6 +42,7 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
   await page.keyboard.press("Control+A");
   await page.keyboard.press("Meta+A");
   await page.keyboard.type("^XA^PW64^LL32^QZbad^XZ");
+  await page.keyboard.press("Escape");
   const diagnostic = page.getByRole("button", { name: /UNKNOWN_COMMAND/i });
   await expect(diagnostic).toBeVisible();
   await diagnostic.click();
@@ -81,6 +82,7 @@ test("offers quick fixes and configurable live preview", async ({ page }) => {
   await page.keyboard.press("Control+A");
   await page.keyboard.press("Meta+A");
   await page.keyboard.type("^XA^F010,20^FDQuick fix^FS^XZ");
+  await page.keyboard.press("Escape");
   const diagnostic = page.getByRole("button", { name: /UNKNOWN_COMMAND/i });
   await expect(diagnostic).toBeVisible();
   await diagnostic.click();
@@ -105,6 +107,7 @@ test("offers quick fixes and configurable live preview", async ({ page }) => {
 test("offers command-aware completion, snippets, and formatting", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "New", exact: true }).click();
 
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await editorSurface.click({ position: { x: 100, y: 100 } });
@@ -115,13 +118,48 @@ test("offers command-aware completion, snippets, and formatting", async ({ page 
   await page.keyboard.press("Escape");
 
   await page.getByRole("button", { name: "Commands", exact: true }).click();
-  const commandSearch = page.getByLabel("Search all ZPL commands");
+  const commandSearch = page.getByLabel("Search all ZPL commands and parameters");
   await commandSearch.fill("code 128");
-  await expect(page.getByRole("button", { name: /\^BC.*Code 128 Bar Code/ })).toBeVisible();
-  await page.getByRole("button", { name: /\^BC.*Code 128 Bar Code/ }).click();
+  await expect(page.getByRole("button", { name: /\^BC.*Code 128 Barcode/ })).toBeVisible();
+  await page.getByRole("button", { name: /\^BC.*Code 128 Barcode/ }).click();
+  await expect(page.getByRole("heading", { name: "Code 128 Barcode (Subsets A, B, and C)" })).toBeVisible();
+  await expect(page.getByText("^BCo,h,f,g,e,m", { exact: true })).toBeVisible();
+  await expect(page.getByText("orientation", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Insert parameter snippet", exact: true }).click();
+  await page.getByRole("button", { name: "Files", exact: true }).click();
+  await expect(page.getByRole("button", { name: /\^BC Code 128 Bar Code/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Format", exact: true }).click();
   await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
+});
+
+test("completes parameter values and offers parameter quick fixes", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "New", exact: true }).click();
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 100, y: 12 } });
+  await page.keyboard.press("End");
+  await page.keyboard.type("\n^FW");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Show ZPL completions" }).click();
+  const parameterSuggestions = page.locator(".suggest-widget .monaco-list-row").filter({ hasText: "^FW · rotate field" });
+  await expect(parameterSuggestions).toHaveCount(4);
+  const parameterSuggestion = parameterSuggestions.first();
+  await expect(parameterSuggestion).toBeVisible();
+  await expect(parameterSuggestion).toContainText("N");
+  await expect(parameterSuggestion).toContainText("^FW · rotate field");
+  await page.keyboard.press("Escape");
+
+  await page.keyboard.type("X\n^XZ");
+  await page.keyboard.press("Escape");
+  const diagnostic = page.getByRole("button", { name: /INVALID_PARAMETER_VALUE/i });
+  await expect(diagnostic).toContainText("Expected N, R, I, B");
+  await diagnostic.click();
+  await page.keyboard.press("Alt+Enter");
+  await expect(page.locator(".actionList")).toBeVisible();
+  await expect(page.locator(".actionList")).toContainText("Change rotate field to N");
 });
 
 test("has no serious automated accessibility violations", async ({ page }) => {

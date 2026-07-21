@@ -94,6 +94,10 @@ let darkModeQuery: MediaQueryList | null = null;
 let languageService: Monaco.IDisposable | null = null;
 let disposed = false;
 
+interface SnippetControllerContribution extends Monaco.editor.IEditorContribution {
+  insert(template: string, options?: { adjustWhitespace?: boolean }): void;
+}
+
 const handleDarkModeChange = (event: MediaQueryListEvent) => {
   if (editor && monaco && props.preferences.theme === "system") {
     monaco.editor.setTheme(event.matches ? "zpl-dark" : "zpl-light");
@@ -228,6 +232,17 @@ function applyDiagnostics(diagnostics: readonly ZplDiagnostic[]): void {
     };
   });
   monaco.editor.setModelMarkers(model, "zplr", markers);
+}
+
+function insertSnippet(snippet: string): void {
+  if (!editor) return;
+  editor.focus();
+  const snippetController = editor.getContribution<SnippetControllerContribution>("snippetController2");
+  if (snippetController) {
+    snippetController.insert(snippet, { adjustWhitespace: false });
+    return;
+  }
+  editor.trigger("zplr", "editor.action.insertSnippet", { snippet });
 }
 
 function emitCursorState(): void {
@@ -376,6 +391,7 @@ onMounted(async () => {
     },
     quickSuggestions: { comments: false, strings: false, other: true },
     parameterHints: { enabled: true, cycle: true },
+    inlayHints: { enabled: "onUnlessPressed", padding: true, maximumLength: 24 },
     hover: { enabled: true, delay: 250 },
     fixedOverflowWidgets: true,
     tabSize: 2,
@@ -390,9 +406,7 @@ onMounted(async () => {
   editor.addAction({
     id: "zplr.insert-label",
     label: "ZPL: Insert Label Template",
-    run: () => editor?.trigger("zplr", "editor.action.insertSnippet", {
-      snippet: "^XA\n^PW${1:812}\n^LL${2:1218}\n^FO${3:40},${4:40}^A0N,${5:40},${5:40}^FD${6:Label text}^FS\n^XZ",
-    }),
+    run: () => insertSnippet("^XA\n^PW${1:812}\n^LL${2:1218}\n^FO${3:40},${4:40}^A0N,${5:40},${5:40}^FD${6:Label text}^FS\n^XZ"),
   });
   editor.addAction({
     id: "zplr.quick-fix",
@@ -491,12 +505,9 @@ defineExpose({
   undo: () => editor?.trigger("toolbar", "undo", null),
   redo: () => editor?.trigger("toolbar", "redo", null),
   insertCommand: (command: string) => {
-    editor?.focus();
     const position = editor?.getPosition();
     const offset = position && model ? model.getOffsetAt(position) : 0;
-    editor?.trigger("zplr", "editor.action.insertSnippet", {
-      snippet: zplSnippetForSource(command, model?.getValue() ?? "", offset),
-    });
+    insertSnippet(zplSnippetForSource(command, model?.getValue() ?? "", offset));
   },
 });
 </script>
