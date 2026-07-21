@@ -43,7 +43,7 @@
 
         <div class="mt-10 flex flex-wrap items-center gap-3 lg:mt-8 xl:mt-10">
           <a
-            href="https://github.com/lennartkoebe/zplr"
+            href="https://github.com/le2ni/zplr"
             target="_blank"
             rel="noreferrer"
             class="inline-flex items-center rounded-full bg-zinc-50 px-3 py-1 text-sm/6 font-semibold text-zinc-600 ring-1 ring-zinc-600/20 ring-inset transition hover:bg-zinc-100 dark:bg-white/5 dark:text-zinc-300 dark:ring-white/10 dark:hover:bg-white/10"
@@ -84,7 +84,7 @@
             Open live playground
           </button>
           <a
-            href="https://github.com/lennartkoebe/zplr#readme"
+            href="https://github.com/le2ni/zplr#readme"
             target="_blank"
             rel="noreferrer"
             class="inline-flex items-center rounded-lg px-3 py-2.5 text-sm font-semibold text-zinc-900 transition hover:bg-black/5 dark:text-white dark:hover:bg-white/5"
