@@ -168,7 +168,11 @@
     </main>
   </div>
 
-  <TransitionRoot as="template" :show="editorOpen">
+  <TransitionRoot
+    as="template"
+    :show="editorOpen"
+    @after-leave="restoreEditorTrigger"
+  >
     <Dialog class="relative z-50" @close="closeEditor">
       <TransitionChild
         as="template"
@@ -504,7 +508,7 @@ let renderTimer: number | undefined;
 let renderSequence = 0;
 let rendererModule: Promise<typeof import("../src/index.web")> | undefined;
 let editorTrigger: HTMLElement | undefined;
-let focusRestoreTimer: number | undefined;
+let focusRestoreFrame: number | undefined;
 
 const playgroundLimits = {
   maxDimension: 8_192,
@@ -517,9 +521,9 @@ const playgroundLimits = {
 } as const;
 
 function openEditor(event: MouseEvent): void {
-  if (focusRestoreTimer !== undefined) {
-    window.clearTimeout(focusRestoreTimer);
-    focusRestoreTimer = undefined;
+  if (focusRestoreFrame !== undefined) {
+    window.cancelAnimationFrame(focusRestoreFrame);
+    focusRestoreFrame = undefined;
   }
   if (event.currentTarget instanceof HTMLElement) {
     editorTrigger = event.currentTarget;
@@ -529,17 +533,15 @@ function openEditor(event: MouseEvent): void {
 
 function closeEditor(): void {
   editorOpen.value = false;
-  if (focusRestoreTimer !== undefined) window.clearTimeout(focusRestoreTimer);
-  // Run after the 150 ms leave transition and Headless UI's own focus cleanup.
-  focusRestoreTimer = window.setTimeout(restoreEditorTrigger, 300);
 }
 
 function restoreEditorTrigger(): void {
-  if (editorTrigger?.isConnected) {
-    editorTrigger.focus({ preventScroll: true });
-  }
+  const trigger = editorTrigger;
   editorTrigger = undefined;
-  focusRestoreTimer = undefined;
+  focusRestoreFrame = window.requestAnimationFrame(() => {
+    focusRestoreFrame = undefined;
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+  });
 }
 
 function loadRenderer(): Promise<typeof import("../src/index.web")> {
@@ -713,7 +715,9 @@ watch(activeLabelIndex, () => {
 onBeforeUnmount(() => {
   renderSequence++;
   if (renderTimer !== undefined) window.clearTimeout(renderTimer);
-  if (focusRestoreTimer !== undefined) window.clearTimeout(focusRestoreTimer);
+  if (focusRestoreFrame !== undefined) {
+    window.cancelAnimationFrame(focusRestoreFrame);
+  }
 });
 </script>
 

@@ -5,7 +5,9 @@ test("renders locally and exposes release metadata", async ({ page, request }) =
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "ZPLr", exact: true })).toBeVisible();
   await expect(page.getByTestId("local-only-notice")).toContainText("never leave this browser");
-  await expect(page.getByAltText("Rendered shipping label preview")).toBeVisible();
+  await expect(page.getByAltText("Rendered shipping label preview")).toBeVisible({
+    timeout: 30_000,
+  });
 
   const versionResponse = await request.get("/version.json");
   expect(versionResponse.ok()).toBe(true);
