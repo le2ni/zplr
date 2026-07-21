@@ -1,8 +1,8 @@
 # Cloudflare Pages deployment
 
-The Pages project is `zplr`, with production branch `main`, custom domain `zplr.de`, build command `pnpm run build:web`, and output directory `dist-playground`. `wrangler.jsonc` records the project and output directory.
+The Pages project is `zplr`, with production branch `main`, custom domain `zplr.de`, build command `pnpm run build:web`, and output directory `dist-playground`. `wrangler.jsonc` records the project and output directory. The full-screen IDE is served at `https://zplr.de/editor`; Cloudflare Pages' SPA fallback must return the application shell for a direct request to that path.
 
-Pull requests from the repository deploy to `pr-<number>.zplr.pages.dev` through `.github/workflows/preview.yml`, using Cloudflare's [preview-deployment model](https://developers.cloudflare.com/pages/configuration/preview-deployments/). Fork previews do not receive deployment secrets. The workflow verifies `version.json`, security headers, a Chromium playground pass, responsive behavior, and accessibility after deployment; normal CI independently covers Chromium, Firefox, and WebKit.
+Pull requests from the repository deploy to `pr-<number>.zplr.pages.dev` through `.github/workflows/preview.yml`, using Cloudflare's [preview-deployment model](https://developers.cloudflare.com/pages/configuration/preview-deployments/). Fork previews do not receive deployment secrets. The workflow verifies `version.json`, security headers, the direct `/editor` route, a Chromium IDE pass, responsive behavior, and accessibility after deployment; normal CI independently covers Chromium, Firefox, and WebKit.
 
 Release tags are deployed only after the exact npm publish and post-publish verification succeed. `.github/workflows/publish.yml` checks out the immutable tag again and builds with `pnpm run build:web`. Prereleases published under `next` deploy to a versioned `release-<semver>.zplr.pages.dev` preview. Stable releases published under `latest` deploy to zplr.de. Both paths deploy with the tag commit SHA and verify that `version.json` contains the same version and commit; a prerelease can never enter the production deployment job.
 

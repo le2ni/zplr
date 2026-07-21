@@ -19,6 +19,13 @@ for (let attempt = 1; attempt <= 12; attempt++) {
     assert.match(page.headers.get("content-security-policy") ?? "", /default-src 'self'/);
     assert.equal(page.headers.get("x-content-type-options"), "nosniff");
     assert.match(await page.text(), /ZPLr/);
+
+    // A direct request must resolve through the Pages SPA fallback. This
+    // protects the public, bookmarkable editor URL from deployment regressions.
+    const editorPage = await fetch(new URL("/editor", baseUrl), { cache: "no-store" });
+    assert.equal(editorPage.ok, true, `/editor returned ${editorPage.status}`);
+    assert.match(editorPage.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+    assert.match(await editorPage.text(), /ZPLr/);
     console.log(`Verified deployed version ${expectedVersion} at ${baseUrl}.`);
     process.exit(0);
   } catch (error) {
