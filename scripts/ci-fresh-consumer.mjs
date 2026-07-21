@@ -28,7 +28,16 @@ function run(command, args, cwd = process.cwd()) {
 
 try {
   const packed = JSON.parse(run("pnpm", ["pack", "--json", "--pack-destination", temporary]));
-  writeFileSync(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
+  writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({ private: true, type: "module" })
+  );
+  if (manager === "pnpm") {
+    writeFileSync(
+      join(consumer, "pnpm-workspace.yaml"),
+      "allowBuilds:\n  skia-canvas: true\n"
+    );
+  }
   const installArgs = manager === "npm"
     ? ["install", packed.filename, "skia-canvas", "typescript", "@types/node"]
     : ["add", packed.filename, "skia-canvas", "typescript", "@types/node"];
