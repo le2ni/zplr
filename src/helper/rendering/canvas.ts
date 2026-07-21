@@ -13,14 +13,12 @@ export interface CanvasLike {
 /**
  * A function that creates a new canvas instance
  */
-export type CanvasFactory = (width?: number, height?: number) => CanvasLike;
+export type CanvasFactory<TCanvas extends CanvasLike = CanvasLike> = (
+  width?: number,
+  height?: number
+) => TCanvas;
 
-/**
- * Platform-specific context interface that extends standard CanvasRenderingContext2D
- * with methods that may differ between platforms (like drawCanvas for skia-canvas)
- */
-export interface ExtendedCanvasRenderingContext2D
-  extends CanvasRenderingContext2D {
-  // skia-canvas specific method for drawing another canvas
-  drawCanvas?(canvas: CanvasLike, x: number, y: number): void;
+/** Minimal host adapter used after the canonical packed raster is complete. */
+export interface CanvasPlatform<TCanvas extends CanvasLike = CanvasLike> {
+  createCanvas: CanvasFactory<TCanvas>;
 }

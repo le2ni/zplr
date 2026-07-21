@@ -1,7 +1,4 @@
-export type ZplProfile =
-  | "zpl-ii-2025"
-  /** @deprecated Use zpl-ii-2025. The 2006 name is a compatibility alias in 0.2. */
-  | "zpl-ii-2006";
+export type ZplProfile = "zpl-ii-2025";
 
 export interface SourceSpan {
   /** Inclusive UTF-16 offset in the original ZPL source. */
@@ -86,7 +83,7 @@ export interface ZplDocument {
   profile: ZplProfile;
   /** Ordered labels and commands that occur outside a label format. */
   items: ZplJobItem[];
-  /** Compatibility view containing only renderable and implicit formats. */
+  /** Convenience view containing only renderable and implicit formats. */
   labels: ZplLabelNode[];
   /** Lexical state after the final command, for explicit render sessions. */
   syntax: ZplSyntaxState;
@@ -106,23 +103,14 @@ export interface RenderDocumentOptions {
   height?: number;
   /** Print-head density in dots per millimetre. Defaults to 8 dpmm. */
   printDensity?: 6 | 8 | 12 | 24;
-  /** @deprecated Use printDensity. Retained through the 0.2 release line. */
-  dpi?: 150 | 200 | 300 | 600;
   fallbackSize?: {
     width: number;
     height: number;
     unit: "dots" | "mm" | "in";
   };
+  /** Promote unknown, mis-prefixed, and unsupported commands to errors. */
   strict?: boolean;
-  limits?: Partial<{
-    maxDimension: number;
-    maxPixels: number;
-    maxGraphicBytes: number;
-    maxSessionBytes: number;
-    maxTemplateDepth: number;
-    maxExpandedCommands: number;
-    maxLabels: number;
-  }>;
+  limits?: Partial<import("./RenderJob").RenderLimits>;
 }
 
 export interface CommandCapability {

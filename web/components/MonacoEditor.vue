@@ -1,14 +1,27 @@
 <template>
-  <div ref="editorContainer" class="h-full w-full monaco-editor-container"></div>
+  <div
+    ref="editorContainer"
+    class="h-full w-full monaco-editor-container"
+    data-testid="zpl-editor"
+  ></div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount, watch } from "vue";
 import loader from "@monaco-editor/loader";
+import * as MonacoRuntime from "monaco-editor/esm/vs/editor/editor.api";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import type * as Monaco from "monaco-editor";
+import type { CommandCapability } from "../../src/index.web";
+
+self.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
+loader.config({ monaco: MonacoRuntime });
 
 const props = defineProps<{
   modelValue: string;
+  capabilities: readonly CommandCapability[];
   cursorPosition?: number;
   highlightRange?: { start: number; end: number };
 }>();
@@ -23,72 +36,105 @@ let editor: Monaco.editor.IStandaloneCodeEditor | null = null;
 let monaco: typeof Monaco | null = null;
 let decorationIds: string[] = [];
 let darkModeQuery: MediaQueryList | null = null;
+let tokenProvider: Monaco.IDisposable | null = null;
+let disposed = false;
 const handleDarkModeChange = (event: MediaQueryListEvent) => {
   if (editor && monaco) {
     monaco.editor.setTheme(event.matches ? "zpl-dark" : "zpl-light");
   }
 };
 
-onMounted(async () => {
-  if (!editorContainer.value) return;
+function commandPattern(
+  capabilities: readonly CommandCapability[],
+  predicate: (capability: CommandCapability) => boolean
+): RegExp {
+  const alternatives = capabilities
+    .filter(predicate)
+    .map(({ canonical }) => canonical.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .sort((left, right) => right.length - left.length || left.localeCompare(right));
+  return alternatives.length > 0
+    ? new RegExp(`(?:${alternatives.join("|")})`)
+    : /(?!)/;
+}
 
-  // Load Monaco
-  monaco = await loader.init();
-
-  // Register ZPL language
-  monaco.languages.register({ id: "zpl" });
-
-  // Define ZPL language tokens
-  monaco.languages.setMonarchTokensProvider("zpl", {
+function configureTokens(): void {
+  if (!monaco || props.capabilities.length === 0) return;
+  tokenProvider?.dispose();
+  const category = (name: CommandCapability["category"]) =>
+    commandPattern(props.capabilities, (capability) => capability.category === name);
+  const other = commandPattern(
+    props.capabilities,
+    ({ category: name }) => !["barcode", "text", "graphic"].includes(name)
+  );
+  tokenProvider = monaco.languages.setMonarchTokensProvider("zpl", {
     defaultToken: "",
     tokenPostfix: ".zpl",
-
-    // ZPL command prefixes
-    commandStart: /[\^~]/,
-
     tokenizer: {
       root: [
-        // Comments (ZPL uses ^FX for comments)
-        [/\^FX.*$/, "comment"],
-
-        // Control commands (^XA, ^XZ, etc.)
-        [
-          /[\^~](XA|XZ|LL|PW|LH|LT|LS|CI|CC|CD|CT|CW|FT|PQ|PR)/,
-          "keyword.control",
-        ],
-
-        // Field commands
-        [
-          /[\^~](FO|FD|FS|FB|FN|FP|FV|FW|FM|FR|GB|GC|GD|GE|GF|GP)/,
-          "keyword.field",
-        ],
-
-        // Barcode commands
-        [
-          /[\^~](B[0-9A-Z]|BC|BD|BE|BF|BI|BJ|BK|BL|BM|BN|BO|BP|BQ|BR|BS|BT|BU|BX|BY|BZ)/,
-          "keyword.barcode",
-        ],
-
-        // Font and text commands
-        [/[\^~](A|CF|CFA|CV)/, "keyword.font"],
-
-        // Graphic commands
-        [/[\^~](G[A-Z])/, "keyword.graphic"],
-
-        // Parameters (numbers after commands)
-        [/[0-9]+/, "number"],
-
-        // Separators
-        [/[,]/, "delimiter"],
-
-        // Text data (between ^FD and ^FS)
-        [/(?<=\^FD)[^\^~]*(?=\^FS)/, "string"],
-
-        // Any other text
+        [/\^FX/, { token: "comment", next: "@comment" }],
+        [/\^FD/, { token: "keyword.field", next: "@fieldData" }],
+        [category("barcode"), "keyword.barcode"],
+        [category("text"), "keyword.font"],
+        [category("graphic"), "keyword.graphic"],
+        [other, "keyword.control"],
+        [/[+-]?\d+(?:\.\d+)?/, "number"],
+        [/,/, "delimiter"],
         [/[a-zA-Z_$][\w$]*/, "identifier"],
+      ],
+      comment: [
+        [/[^\^~]+/, "comment"],
+        [/[\^~]/, { token: "@rematch", next: "@pop" }],
+      ],
+      fieldData: [
+        [/[^\^~]+/, "string"],
+        [/[\^~]/, { token: "@rematch", next: "@pop" }],
       ],
     },
   });
+}
+
+function applyCursor(position: number | undefined): void {
+  const model = editor?.getModel();
+  if (!editor || !model || position === undefined) return;
+  const resolved = model.getPositionAt(position);
+  editor.setPosition(resolved);
+  editor.revealPositionInCenter(resolved);
+}
+
+function applyHighlight(range: { start: number; end: number } | undefined): void {
+  const model = editor?.getModel();
+  if (!editor || !monaco || !model) return;
+  decorationIds = editor.deltaDecorations(decorationIds, []);
+  if (!range) return;
+  const start = model.getPositionAt(range.start);
+  const end = model.getPositionAt(range.end);
+  decorationIds = editor.deltaDecorations([], [
+    {
+      range: new monaco.Range(
+        start.lineNumber,
+        start.column,
+        end.lineNumber,
+        end.column
+      ),
+      options: {
+        className: "highlighted-command",
+        inlineClassName: "highlighted-command-inline",
+      },
+    },
+  ]);
+}
+
+onMounted(async () => {
+  if (!editorContainer.value) return;
+
+  const runtime = await loader.init();
+  if (disposed || !editorContainer.value) return;
+  monaco = runtime;
+
+  if (!monaco.languages.getLanguages().some(({ id }) => id === "zpl")) {
+    monaco.languages.register({ id: "zpl" });
+  }
+  configureTokens();
 
   // Define ZPL theme
   monaco.editor.defineTheme("zpl-dark", {
@@ -145,6 +191,7 @@ onMounted(async () => {
     scrollBeyondLastLine: false,
     wordWrap: "on",
     wrappingIndent: "same",
+    ariaLabel: "ZPL source editor",
   });
 
   // Listen for content changes
@@ -168,61 +215,24 @@ onMounted(async () => {
   // Listen for dark mode changes
   darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
   darkModeQuery.addEventListener("change", handleDarkModeChange);
+  applyCursor(props.cursorPosition);
+  applyHighlight(props.highlightRange);
 });
 
 // Watch for cursor position updates from parent
 watch(
   () => props.cursorPosition,
-  (newPosition) => {
-    if (editor && newPosition !== undefined) {
-      const model = editor.getModel();
-      if (model) {
-        const position = model.getPositionAt(newPosition);
-        editor.setPosition(position);
-        editor.revealPositionInCenter(position);
-      }
-    }
-  }
+  applyCursor
 );
 
 // Watch for highlight range updates from parent
 watch(
   () => props.highlightRange,
-  (newRange) => {
-    if (editor && monaco) {
-      const model = editor.getModel();
-      if (model) {
-        // Clear previous decorations
-        decorationIds = editor.deltaDecorations(decorationIds, []);
-        
-        if (newRange) {
-          const startPos = model.getPositionAt(newRange.start);
-          const endPos = model.getPositionAt(newRange.end);
-          
-          // Add new decoration with highlight
-          decorationIds = editor.deltaDecorations(
-            [],
-            [
-              {
-                range: new monaco.Range(
-                  startPos.lineNumber,
-                  startPos.column,
-                  endPos.lineNumber,
-                  endPos.column
-                ),
-                options: {
-                  className: "highlighted-command",
-                  inlineClassName: "highlighted-command-inline",
-                },
-              },
-            ]
-          );
-        }
-      }
-    }
-  },
+  applyHighlight,
   { immediate: true }
 );
+
+watch(() => props.capabilities, configureTokens);
 
 // Watch for external value changes
 watch(
@@ -242,10 +252,12 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  disposed = true;
   darkModeQuery?.removeEventListener("change", handleDarkModeChange);
-  if (editor) {
-    editor.dispose();
-  }
+  tokenProvider?.dispose();
+  const model = editor?.getModel();
+  editor?.dispose();
+  model?.dispose();
 });
 
 // Expose editor for parent component if needed

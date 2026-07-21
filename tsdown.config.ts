@@ -15,7 +15,7 @@ export default [
     deps: {
       neverBundle: ["skia-canvas"],
     },
-    target: "node18",
+    target: "node22",
   }),
   // Web/Browser build
   defineConfig({
@@ -27,10 +27,11 @@ export default [
     hash: false,
     platform: "browser",
     target: "es2020",
-    // Bundle all dependencies for the browser
+    // Keep the package build within its documented budget while allowing the
+    // consumer's browser bundler to deduplicate declared dependencies.
     deps: {
-      alwaysBundle: ["qrcode", "jsbarcode"],
-      onlyBundle: ["qrcode", "jsbarcode", "dijkstrajs"],
+      alwaysBundle: ["qrcode", "dijkstrajs"],
+      onlyBundle: ["qrcode", "dijkstrajs"],
     },
   }),
 ];

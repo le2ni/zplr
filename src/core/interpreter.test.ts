@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseDocument } from "./documentParser";
 import { interpretLabel } from "./interpreter";
-import { layoutTextLines } from "./layoutRenderer";
+import { layoutTextLines } from "./rasterRenderer";
 import { TextLayoutField } from "@/types/LabelLayout";
 
 function layout(source: string) {
@@ -35,6 +35,32 @@ describe("semantic interpreter", () => {
     expect(result.fields[0]).toMatchObject({ x: 15, y: 27, orientation: "R" });
   });
 
+  it("applies ^MU units to explicit barcode dot dimensions", () => {
+    const result = layout(
+      "^XA^MUM" +
+        "^B3N,N,2,N,N^FD1^FS" +
+        "^BCN,2,N,N,N,N^FD12^FS" +
+        "^B7N,2^FDA^FS" +
+        "^BTN,1,2,2,1,2^FD123456ABC^FS^XZ"
+    );
+    expect(result.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ symbology: "B3", height: 24 }),
+        expect.objectContaining({ symbology: "BC", height: 24 }),
+        expect.objectContaining({ symbology: "B7", height: 24 }),
+        expect.objectContaining({
+          symbology: "BT",
+          moduleWidth: 10,
+          height: 24,
+          encoderOptions: expect.objectContaining({
+            zplMicroModule: 10,
+            zplMicroRowHeight: 24,
+          }),
+        }),
+      ])
+    );
+  });
+
   it("treats FR as field-wide and LR as persistent for following fields", () => {
     const result = layout(
       "^XA^FO0,0^FDnormal^FS^LRY^FO0,20^FDlabel^FS^LRN^FO0,40^FDfield^FR^FS^XZ"
@@ -44,11 +70,28 @@ describe("semantic interpreter", () => {
       true,
       true,
     ]);
+    expect(layout("^XA^LRY^XZ").settings?.reverse).toBe(true);
   });
 
   it("decodes every FH hexadecimal escape", () => {
     const result = layout("^XA^FO0,0^FH_^FDHello_20World_21^FS^XZ");
     expect(result.fields[0]).toMatchObject({ data: "Hello World!" });
+  });
+
+  it("normalizes valid field numbers and rejects numeric suffixes", () => {
+    const normalized = layout(
+      "^XA^FO0,0^FN001^FDValue^FS^FO0,10^FN1^FS^XZ"
+    );
+    expect(
+      normalized.fields.map((field) =>
+        field.kind === "text" ? field.data : undefined
+      )
+    ).toEqual(["Value", "Value"]);
+
+    const invalid = layout(
+      "^XA^FO0,0^FN1^FDValue^FS^FO0,10^FN1x^FS^XZ"
+    );
+    expect(invalid.fields).toHaveLength(1);
   });
 
   it("decodes FH byte sequences for CI0, CI27, and UTF-8 CI28", () => {
@@ -72,6 +115,16 @@ describe("semantic interpreter", () => {
     );
   });
 
+  it("does not retain an earlier graphic when a later selection fails", () => {
+    const result = layout(
+      "^XA^FO1,1^GB5,5,1^XGR:MISSING.GRF^FS^XZ"
+    );
+    expect(result.fields).toHaveLength(0);
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "MISSING_GRAPHIC_RESOURCE" })
+    );
+  });
+
   it("lays out repeated field-block line breaks and hanging indents", () => {
     const result = layout(
       "^XA^CF0,10,5^FO0,0^FB25,5,0,L,5^FDAA\\&BB\\&CC^FS^XZ"
@@ -83,10 +136,48 @@ describe("semantic interpreter", () => {
 
   it("hyphenates long words within a field block", () => {
     const result = layout(
-      "^XA^CF0,10,5^FO0,0^FB25,3,0,L^FDABCDEFGHI^FS^XZ"
+      "^XA^CF0,10,5^FO0,0^FB15,3,0,L^FDABCDEFGHI^FS^XZ"
     );
     const lines = layoutTextLines(result.fields[0] as TextLayoutField);
-    expect(lines.map((line) => line.text)).toEqual(["ABCD-", "EFGHI"]);
+    expect(lines.map((line) => line.text)).toEqual(["ABCDE-", "FGHI"]);
+  });
+
+  it("includes character spacing when hyphenating field-block words", () => {
+    const result = layout(
+      "^XA^CF0,10,5^FO0,0^FPH,4^FB15,10,0,L^FDABCDEFGHI^FS^XZ"
+    );
+    const lines = layoutTextLines(result.fields[0] as TextLayoutField);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.every((line) => line.width <= 15)).toBe(true);
+  });
+
+  it("does not render a leading discretionary break as a lone hyphen", () => {
+    const result = layout(
+      "^XA^CF0,10,5^FO0,0^FB15,10,0,L^FD\\xABCDEFGHI^FS^XZ"
+    );
+    const lines = layoutTextLines(result.fields[0] as TextLayoutField);
+    expect(lines[0].text).not.toBe("-");
+  });
+
+  it("prints literal ^FB soft hyphens and bounds field-block layout data", () => {
+    const literal = layout(
+      "^XA^CF0,10,5^FO0,0^FB100,2,0,L^FDAB\u00adCD^FS^XZ"
+    );
+    expect(
+      layoutTextLines(literal.fields[0] as TextLayoutField).map(({ text }) => text)
+    ).toEqual(["AB-CD"]);
+
+    const oversized = layout(
+      `^XA^CF0,10,5^FO0,0^FB32000,2,0,L^FD${"A".repeat(
+        3 * 1024 + 1
+      )}^FS^XZ`
+    );
+    expect(oversized.diagnostics.map(({ code }) => code)).toContain(
+      "TEXT_BLOCK_LIMIT_EXCEEDED"
+    );
+    expect(
+      layoutTextLines(oversized.fields[0] as TextLayoutField)[0].text
+    ).toHaveLength(3 * 1024);
   });
 
   it("finalizes a missing FS without mutating source commands", () => {
@@ -114,6 +205,30 @@ describe("semantic interpreter", () => {
     });
     expect(qr.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
       "UNSUPPORTED_QR_MODEL"
+    );
+  });
+
+  it("diagnoses unsupported Code 128 modes and QR model selections", () => {
+    const code128 = layout("^XA^BCN,40,Y,N,N,X^FD123^FS^XZ");
+    expect(code128.fields[0]).toMatchObject({ symbology: "BC", mode: "N" });
+    expect(code128.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNSUPPORTED_CODE128_MODE",
+          phase: "semantic",
+        }),
+      ])
+    );
+
+    const qr = layout("^XA^BQN,9,3,Q,7^FDQA,HELLO^FS^XZ");
+    expect(qr.fields[0]).toMatchObject({ symbology: "BQ", model: "2" });
+    expect(qr.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNSUPPORTED_QR_MODEL",
+          phase: "semantic",
+        }),
+      ])
     );
   });
 
@@ -150,12 +265,12 @@ describe("semantic interpreter", () => {
     });
   });
 
-  it("does not apply later label defaults retroactively to an open field", () => {
+  it("applies ^LR to the current field without changing its selected font", () => {
     const result = layout(
       "^XA^FO0,0^FDOne^CF0,20,10^LRY^FS^FO0,30^FDTwo^FS^XZ"
     );
     expect(result.fields[0]).toMatchObject({
-      reverse: false,
+      reverse: true,
       font: { key: "A", height: 9, width: 5 },
     });
     expect(result.fields[1]).toMatchObject({
@@ -199,6 +314,14 @@ describe("semantic interpreter", () => {
       "INVALID_QR_BYTE_LENGTH"
     );
 
+    const trailingSeparator = layout(
+      "^XA^FO0,0^BQN,2,3,Q,7^FDQM,N123,^FS^XZ"
+    );
+    expect(trailingSeparator.fields).toHaveLength(0);
+    expect(
+      trailingSeparator.diagnostics.map((diagnostic) => diagnostic.code)
+    ).toContain("INVALID_QR_FIELD_DATA");
+
     const mixed = layout(
       "^XA^FO0,0^BQN,2,3,Q,7^FDD03040C,QM," +
         "N0123456789,A12AABB,B0006qrcode^FS^XZ"
@@ -232,7 +355,7 @@ describe("semantic interpreter", () => {
 
   it("handles soft hyphens and maximum-line overflow without changing field data", () => {
     const result = layout(
-      "^XA^CF0,10,5^FO0,0^FB25,2,0,L^FDAB\\xCDEFG HIJKLM^FS^XZ"
+      "^XA^CF0,10,5^FO0,0^FB15,2,0,L^FDAB\\xCDEFG HIJKLM^FS^XZ"
     );
     const field = result.fields[0] as TextLayoutField;
     expect(field.data).toBe("AB\\xCDEFG HIJKLM");
@@ -240,10 +363,7 @@ describe("semantic interpreter", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0].text).toBe("AB-");
     expect(lines[1].text).toBe("CDEFG");
-    expect(lines[1].overprints?.map((line) => line.text)).toEqual([
-      "HIJK-",
-      "LM",
-    ]);
+    expect(lines[1].overprints?.map((line) => line.text)).toEqual(["HIJKLM"]);
   });
 
   it("resets every field-scoped selector while preserving label defaults", () => {
@@ -289,7 +409,10 @@ describe("semantic interpreter", () => {
       result.diagnostics.filter(
         (diagnostic) => diagnostic.code === "FONT_SUBSTITUTED"
       )
-    ).toHaveLength(2);
+    ).toEqual([
+      expect.objectContaining({ phase: "render" }),
+      expect.objectContaining({ phase: "render" }),
+    ]);
   });
 
   it("uses density-aware resident bitmap cells and integer magnification", () => {

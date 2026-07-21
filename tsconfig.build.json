@@ -6,13 +6,16 @@
     "rootDir": "./src",
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "src/index.node.ts",
     "src/index.web.ts",
     "src/types/**/*",
-    "src/commands/**/*",
     "src/helper/**/*"
   ],
   "exclude": [

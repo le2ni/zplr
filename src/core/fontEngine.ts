@@ -53,6 +53,7 @@ export class OpenTypeFontEngine {
     string,
     Promise<MonochromeRaster | undefined>
   >();
+  private cachedGlyphPixels = 0;
   private readonly builtIn = Promise.resolve().then(() => {
     try {
       return parseFont(notoSansCondensedTtf());
@@ -61,16 +62,59 @@ export class OpenTypeFontEngine {
     }
   });
 
-  constructor(private readonly provider?: FontProvider) {}
+  constructor(
+    private readonly provider?: FontProvider,
+    private readonly maxCachedGlyphPixels = Number.MAX_SAFE_INTEGER
+  ) {}
+
+  private cachedGlyph(
+    key: string,
+    width: number,
+    height: number,
+    create: () => Promise<MonochromeRaster | undefined>
+  ): Promise<MonochromeRaster | undefined> {
+    const existing = this.glyphs.get(key);
+    if (existing) return existing;
+
+    const normalizedWidth = Math.max(1, Math.trunc(width));
+    const normalizedHeight = Math.max(1, Math.trunc(height));
+    const pixels = normalizedWidth * normalizedHeight;
+    const canCache =
+      Number.isSafeInteger(pixels) &&
+      pixels <= this.maxCachedGlyphPixels - this.cachedGlyphPixels;
+    const raster = create();
+    if (!canCache) return raster;
+
+    this.cachedGlyphPixels += pixels;
+    let cached!: Promise<MonochromeRaster | undefined>;
+    const release = () => {
+      if (this.glyphs.get(key) !== cached) return;
+      this.glyphs.delete(key);
+      this.cachedGlyphPixels -= pixels;
+    };
+    cached = raster.then(
+      (value) => {
+        if (!value) release();
+        return value;
+      },
+      (error) => {
+        release();
+        throw error;
+      }
+    );
+    this.glyphs.set(key, cached);
+    return cached;
+  }
 
   private load(name: string): Promise<Font | undefined> {
     const key = name.trim().toUpperCase();
     const existing = this.fonts.get(key);
     if (existing) return existing;
     const loaded = (async () => {
+      const data = await this.provider?.resolveFont(name);
+      if (!data) return undefined;
       try {
-        const data = await this.provider?.resolveFont(name);
-        return data ? parseFont(data) : undefined;
+        return parseFont(data);
       } catch {
         return undefined;
       }
@@ -85,21 +129,19 @@ export class OpenTypeFontEngine {
     height: number
   ): Promise<MonochromeRaster | undefined> {
     const key = `0:${character}:${width}:${height}`;
-    const existing = this.glyphs.get(key);
-    if (existing) return existing;
-    const raster = this.builtIn.then((font) =>
-      font
-        ? rasterizeOutline(
-            font,
-            character,
-            width,
-            height,
-            NOTO_SANS_VARIATION
-          )
-        : undefined
+    return this.cachedGlyph(key, width, height, () =>
+      this.builtIn.then((font) =>
+        font
+          ? rasterizeOutline(
+              font,
+              character,
+              width,
+              height,
+              NOTO_SANS_VARIATION
+            )
+          : undefined
+      )
     );
-    this.glyphs.set(key, raster);
-    return raster;
   }
 
   rasterize(
@@ -109,13 +151,11 @@ export class OpenTypeFontEngine {
     height: number
   ): Promise<MonochromeRaster | undefined> {
     const key = `${name.trim().toUpperCase()}:${character}:${width}:${height}`;
-    const existing = this.glyphs.get(key);
-    if (existing) return existing;
-    const raster = this.load(name).then((font) =>
-      font ? rasterizeOutline(font, character, width, height) : undefined
+    return this.cachedGlyph(key, width, height, () =>
+      this.load(name).then((font) =>
+        font ? rasterizeOutline(font, character, width, height) : undefined
+      )
     );
-    this.glyphs.set(key, raster);
-    return raster;
   }
 }
 

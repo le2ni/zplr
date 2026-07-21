@@ -271,22 +271,50 @@ export function blitRaster(
   const scaleY = Math.max(1, Math.trunc(options.scaleY ?? 1));
   const logicalWidth = source.width * scaleX;
   const logicalHeight = source.height * scaleY;
-  for (let sy = 0; sy < source.height; sy++) {
-    for (let sx = 0; sx < source.width; sx++) {
-      if (!getDot(source, sx, sy)) continue;
-      for (let my = 0; my < scaleY; my++) {
-        for (let mx = 0; mx < scaleX; mx++) {
-          const lx = sx * scaleX + mx;
-          const ly = sy * scaleY + my;
-          const point = orientPoint(lx, ly, logicalWidth, logicalHeight, orientation);
-          setDot(target, x + point.x, y + point.y, options.operation);
-        }
+  const orientedWidth =
+    orientation === "R" || orientation === "B"
+      ? logicalHeight
+      : logicalWidth;
+  const orientedHeight =
+    orientation === "R" || orientation === "B"
+      ? logicalWidth
+      : logicalHeight;
+  const startX = Math.max(0, -Math.trunc(x));
+  const startY = Math.max(0, -Math.trunc(y));
+  const endX = Math.min(orientedWidth, target.width - Math.trunc(x));
+  const endY = Math.min(orientedHeight, target.height - Math.trunc(y));
+
+  // Iterate only the visible destination window. Besides avoiding work for
+  // clipped fields, inverse mapping prevents a large magnification factor from
+  // multiplying the loop count beyond the target raster's pixel budget.
+  for (let destinationY = startY; destinationY < endY; destinationY++) {
+    for (let destinationX = startX; destinationX < endX; destinationX++) {
+      let logicalX: number;
+      let logicalY: number;
+      if (orientation === "R") {
+        logicalX = destinationY;
+        logicalY = logicalHeight - 1 - destinationX;
+      } else if (orientation === "I") {
+        logicalX = logicalWidth - 1 - destinationX;
+        logicalY = logicalHeight - 1 - destinationY;
+      } else if (orientation === "B") {
+        logicalX = logicalWidth - 1 - destinationY;
+        logicalY = destinationX;
+      } else {
+        logicalX = destinationX;
+        logicalY = destinationY;
+      }
+      if (getDot(source, Math.floor(logicalX / scaleX), Math.floor(logicalY / scaleY))) {
+        setDot(
+          target,
+          Math.trunc(x) + destinationX,
+          Math.trunc(y) + destinationY,
+          options.operation
+        );
       }
     }
   }
-  return orientation === "R" || orientation === "B"
-    ? { width: logicalHeight, height: logicalWidth }
-    : { width: logicalWidth, height: logicalHeight };
+  return { width: orientedWidth, height: orientedHeight };
 }
 
 export function transformRaster(
@@ -320,17 +348,4 @@ export function rasterToRgba(raster: MonochromeRaster): Uint8ClampedArray {
     }
   }
   return rgba;
-}
-
-function orientPoint(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  orientation: Orientation
-): { x: number; y: number } {
-  if (orientation === "R") return { x: height - 1 - y, y: x };
-  if (orientation === "I") return { x: width - 1 - x, y: height - 1 - y };
-  if (orientation === "B") return { x: y, y: width - 1 - x };
-  return { x, y };
 }

@@ -1,81 +1,84 @@
-# ZPLr usage
+# ZPLr 0.3 usage
 
-ZPLr exposes explicit `zplr/node` and `zplr/web` entry points. New code
-should use the job API.
+## Node
 
-## Fresh render
+`zplr` and `zplr/node` expose the same Node API. Install the optional native peer before rendering.
+
+```bash
+pnpm add zplr skia-canvas
+```
 
 ```ts
-import { renderZpl, type RenderJobOptions } from "zplr/node";
+import { renderZpl, renderZplPNG, type RenderJobOptions } from "zplr";
 
 const options: RenderJobOptions = {
   printDensity: 8,
-  // width: 812,  // optional dot override
-  // height: 1218,
-  limits: {
-    maxPixels: 40_000_000,
-  },
+  // Virtual-printer clock components are interpreted in UTC.
+  clock: new Date("2025-10-10T12:00:00Z"),
+  limits: { maxPixels: 10_000_000, maxLabels: 10 },
 };
-
 const job = await renderZpl(source, options);
-
-for (const diagnostic of job.diagnostics) {
-  console.log(
-    diagnostic.severity,
-    diagnostic.code,
-    diagnostic.span,
-    diagnostic.message
-  );
-}
-
-for (const label of job.labels) {
-  console.log(label.width, label.height, label.raster.stride);
-  await label.canvas.toFile("label.png");
-}
+const pngs = await renderZplPNG(source, options);
+await job.labels[0].canvas.toFile("label.png");
+console.log(pngs[0].byteLength, job.labels[0].raster.stride);
 ```
 
-The packed raster uses MSB-first rows, a stride of `ceil(width / 8)`, and a
-set bit for a black dot. Unused tail bits are zero.
+The packed raster uses MSB-first rows, `ceil(width / 8)` stride, one bit per black dot, and zeroed tail bits.
 
-In the browser, import from `zplr/web`; each label's `canvas` is an
-`HTMLCanvasElement`. `renderZplPNG()` returns PNG buffers in Node and PNG
-`Blob` objects in the browser.
-
-## Stateful render session
+## Browser
 
 ```ts
-import { createRenderSession } from "zplr/node";
+import { renderZpl, renderZplPNG } from "zplr/web";
+
+const job = await renderZpl(source);
+const [png] = await renderZplPNG(source);
+document.querySelector("main")!.append(job.labels[0].canvas);
+const url = URL.createObjectURL(png);
+```
+
+The browser entry returns `HTMLCanvasElement` and `Blob` values and never references the Node Canvas peer.
+
+## Parsed documents and sessions
+
+```ts
+import { createRenderSession, parseDocument } from "zplr";
 
 const session = createRenderSession({ printDensity: 12 });
+await session.render("^CC!");
+await session.render("!XA!PW600!LL400!XZ");
 
-await session.render("^CC!");                 // changed syntax persists
-await session.render("!XA!PW600!LL400!XZ");   // settings persist
-
-const parsedElsewhere = parseDocument("!XA!FO20,20!FDHi!FS!XZ", {
+const document = parseDocument("!XA!FO20,20!FDHi!FS!XZ", {
   initialSyntax: { formatPrefix: "!" },
 });
-await session.renderDocument(parsedElsewhere);
-
+const job = await session.renderDocument(document);
 await session.reset();
 ```
 
-Calls made concurrently are executed in FIFO order, including `reset()`.
-Downloaded graphics, stored formats, font aliases, syntax characters, and
-session-scoped settings are private to that session.
+Concurrent `render`, `renderDocument`, and `reset` calls execute in FIFO order. A rejected host/provider operation does not poison the queue.
 
-## Custom fonts
+## Source-linked UI
 
-Font 0 and Font A are bundled. Resolve `^A@` and `^CW` names without
-granting filesystem access to the renderer. When `source` is present, it is a
-font downloaded by `~DS`; convert its Intellifont bytes and return
-OpenType-compatible bytes:
+```ts
+import { findCommandAtOffset, findHighlightRegionAtPoint, parseDocument } from "zplr/web";
+
+const document = parseDocument(source);
+const command = findCommandAtOffset(document, editorOffset);
+const region = findHighlightRegionAtPoint(job.labels[0].highlightRegions, labelX, labelY);
+if (region) selectEditorRange(region.sourceSpan.start, region.sourceSpan.end);
+```
+
+Offsets are UTF-16 and spans are end-exclusive. Point lookup evaluates regions from topmost to bottommost.
+
+## Fonts
+
+Font 0 and Font A are bundled deterministic open-font approximations. Resolve named or downloaded outline fonts without granting filesystem access:
 
 ```ts
 const job = await renderZpl(source, {
   fontProvider: {
-    async resolveFont(name, source) {
-      if (source?.format === "intellifont") {
-        return convertIntellifontToOpenType(source.data);
+    async resolveFont(name, downloaded) {
+      if (downloaded) {
+        return convertPrinterFontToOpenType(downloaded.format, downloaded.data);
       }
       if (name !== "R:BRAND.TTF") return undefined;
       return fetch("/fonts/brand.ttf").then((response) => response.arrayBuffer());
@@ -84,58 +87,54 @@ const job = await renderZpl(source, {
 });
 ```
 
-The provider is asynchronous and cached per render operation. Missing or
-invalid fonts fall back to deterministic Font 0 with `FONT_SUBSTITUTED`.
+Returning `undefined` produces deterministic `FONT_SUBSTITUTED`; throwing or rejecting is a user-provider failure and rejects rendering.
 
-## Graphics and stored formats
-
-The session recognizes normalized ZPL resource names such as
-`R:LOGO.GRF` and `R:PACKING.ZPL`. Resources never map to host paths.
-
-```zpl
-~DGR:DOT.GRF,1,1,80
-^XA
-^DFR:CARD.ZPL
-^FO20,20^XGR:DOT.GRF,4,4^FS
-^FO40,40^FN1^FS
-^XZ
-^XA
-^PW400
-^LL240
-^XFR:CARD.ZPL
-^FN1^FDOrder 42^FS
-^XZ
-```
-
-Recursive recalls, missing resources, corrupt CRCs, invalid lengths, and
-resource limits are diagnostics. `^GF` supports ASCII, compressed ASCII, raw
-binary, compressed binary, B64, and Z64 payloads.
-
-## Capability lookup
+## Diagnostics
 
 ```ts
-import {
-  commandCapabilities,
-  getCommandCapability,
-} from "zplr/node";
+const job = await renderZpl(maybeInvalidSource);
+for (const diagnostic of job.diagnostics) {
+  console.log(
+    diagnostic.code,
+    diagnostic.severity,
+    diagnostic.phase,
+    diagnostic.command,
+    diagnostic.span,
+    diagnostic.relatedSpans,
+  );
+}
+```
+
+Syntax and semantic failures plus configured safety limits do not reject. Documented parameter defaults and ignore rules can remain silent. Use the stable [code catalog](./docs/DIAGNOSTICS.md) for control flow.
+
+## Limits
+
+`maxPixels` applies to each label or temporary field raster and cumulatively across all output labels produced by one `render` or `renderDocument` call. This bounds oversized fields as well as preventing a large `^PQ` quantity from multiplying an otherwise acceptable label allocation.
+
+```ts
+const safePreview = await renderZpl(untrustedSource, {
+  width: 812,
+  height: 1218,
+  limits: {
+    maxDimension: 4096,
+    maxPixels: 5_000_000,
+    maxGraphicBytes: 1_000_000,
+    maxSessionBytes: 4_000_000,
+    maxTemplateDepth: 8,
+    maxExpandedCommands: 10_000,
+    maxLabels: 5,
+  },
+});
+```
+
+## Capabilities
+
+```ts
+import { commandCapabilities, getCommandCapability } from "zplr";
 
 getCommandCapability("^JB"); // distinct from ~JB
-getCommandCapability("FO");  // compatibility lookup, only if unambiguous
+getCommandCapability("~DG");
+getCommandCapability("FO");  // undefined: full identity required
 ```
 
-New code should always pass the full command identity. The generated
-[command support table](./docs/COMMAND_SUPPORT.md) comes from the same runtime
-catalog.
-
-## Legacy compatibility
-
-```ts
-import { parse, render } from "zplr/node";
-
-const labels = parse(source);
-const canvas = await render(labels[0], 812, 1218);
-```
-
-These compatibility signatures remain operational and parsed labels use the
-canonical raster renderer. New code should use `renderZpl()` or
-`createRenderSession()`.
+No 0.2 command-object or index-based helper remains. See [MIGRATION.md](./MIGRATION.md).

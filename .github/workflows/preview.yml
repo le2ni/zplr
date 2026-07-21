@@ -1,0 +1,43 @@
+name: Cloudflare Pages preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: https://pr-${{ github.event.pull_request.number }}.zplr.pages.dev
+    env:
+      CI: "true"
+      PREVIEW_URL: https://pr-${{ github.event.pull_request.number }}.zplr.pages.dev
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build:web
+      - name: Deploy PR preview
+        run: pnpm dlx wrangler@4.112.0 pages deploy dist-playground --project-name zplr --branch "pr-${{ github.event.pull_request.number }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - run: node scripts/verify-deployment.mjs "${PREVIEW_URL}" "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright test --project chromium
+        env:
+          E2E_BASE_URL: ${{ env.PREVIEW_URL }}

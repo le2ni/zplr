@@ -5,6 +5,7 @@ import type {
   ExtendedBarcodeLayoutField,
   LabelLayout,
   LayoutFont,
+  LayoutFontResources,
   TextLayoutField,
 } from "@/types/LabelLayout";
 import type {
@@ -12,7 +13,7 @@ import type {
   FontProvider,
   MonochromeRaster,
 } from "@/types/RenderJob";
-import type { HighlightRegion } from "@/types/RenderContext";
+import type { HighlightRegion } from "@/types/HighlightRegion";
 import type { Orientation } from "@/types/Orientation";
 import type { ZplDiagnostic } from "@/types/ZplDocument";
 import {
@@ -64,6 +65,12 @@ import {
   type DotOperation,
 } from "./raster";
 
+const MAX_FIELD_BLOCK_DATA = 3 * 1024;
+const snapshotFontEngines = new WeakMap<
+  LayoutFontResources,
+  OpenTypeFontEngine
+>();
+
 interface RawLinearBarcode {
   sbs: number[];
   bhs?: number[];
@@ -75,6 +82,35 @@ interface RawMatrixBarcode {
   pixs: number[];
   pixx: number;
   pixy: number;
+}
+
+interface RasterAllocator {
+  (width: number, height: number): MonochromeRaster;
+  assert(width: number, height: number): void;
+  readonly limit: number;
+}
+
+class RasterLimitError extends RangeError {}
+
+function limitedRasterAllocator(maxPixels: number): RasterAllocator {
+  const limit = Math.max(0, Math.trunc(maxPixels));
+  const assert = (width: number, height: number) => {
+    const normalizedWidth = Math.max(0, Math.trunc(width));
+    const normalizedHeight = Math.max(0, Math.trunc(height));
+    const pixels = normalizedWidth * normalizedHeight;
+    if (!Number.isSafeInteger(pixels) || pixels > limit) {
+      throw new RasterLimitError(
+        `Field raster ${normalizedWidth}x${normalizedHeight} exceeds the configured ${limit}-pixel render limit.`
+      );
+    }
+  };
+  return Object.assign(
+    (width: number, height: number) => {
+      assert(width, height);
+      return createMonochromeRaster(width, height);
+    },
+    { assert, limit }
+  );
 }
 
 export interface RasterRenderResult {
@@ -132,6 +168,22 @@ function diagnostic(
   };
 }
 
+function hasFieldDiagnostic(
+  diagnostics: readonly ZplDiagnostic[],
+  code: string,
+  field: { sourceSpan: { start: number; end: number } },
+  labelIndex: number
+): boolean {
+  return diagnostics.some(
+    (item) =>
+      item.code === code &&
+      item.labelIndex === labelIndex &&
+      item.span !== undefined &&
+      item.span.start >= field.sourceSpan.start &&
+      item.span.end <= field.sourceSpan.end
+  );
+}
+
 function operation(reverse: boolean, color: "B" | "W" = "B"): DotOperation {
   if (reverse) return "xor";
   return color === "W" ? "clear" : "set";
@@ -163,7 +215,7 @@ function measureFieldText(value: string, field: TextLayoutField): number {
   );
 }
 
-interface RasterTextLine {
+export interface RasterTextLine {
   text: string;
   width: number;
   indent: number;
@@ -305,7 +357,7 @@ function parseBlockEscapes(data: string): string {
   let result = "";
   for (let index = 0; index < data.length; index++) {
     if (data[index] !== "\\") {
-      result += data[index];
+      result += data[index] === "\u00ad" ? "-" : data[index];
       continue;
     }
     const next = data[index + 1];
@@ -351,14 +403,15 @@ function visibleText(value: string): string {
 function splitLongWord(
   word: string,
   availableWidth: number,
-  font: LayoutFont
+  field: TextLayoutField
 ): { head: string; tail: string } {
   const characters = [...word];
   let bestSoftHyphen = -1;
   for (let index = 0; index < characters.length; index++) {
     if (characters[index] !== "\u00ad") continue;
-    const candidate = visibleText(characters.slice(0, index).join("")) + "-";
-    if (candidate && measureText(candidate, font) <= availableWidth) {
+    const prefix = visibleText(characters.slice(0, index).join(""));
+    const candidate = prefix + "-";
+    if (prefix && measureFieldText(candidate, field) <= availableWidth) {
       bestSoftHyphen = index;
     }
   }
@@ -374,14 +427,21 @@ function splitLongWord(
   while (count < visible.length) {
     const suffix = count + 1 < visible.length ? "-" : "";
     const candidate = visible.slice(0, count + 1).join("") + suffix;
-    if (count > 0 && measureText(candidate, font) > availableWidth) break;
+    if (count > 0 && measureFieldText(candidate, field) > availableWidth) break;
     count++;
   }
   count = Math.max(1, Math.min(count, visible.length));
   if (count >= visible.length) return { head: visible.join(""), tail: "" };
+  let originalSplit = 0;
+  let remaining = count;
+  while (originalSplit < characters.length && remaining > 0) {
+    if (characters[originalSplit] !== "\u00ad") remaining--;
+    originalSplit++;
+  }
+  while (characters[originalSplit] === "\u00ad") originalSplit++;
   return {
     head: visible.slice(0, count).join("") + "-",
-    tail: visible.slice(count).join(""),
+    tail: characters.slice(originalSplit).join(""),
   };
 }
 
@@ -423,7 +483,7 @@ function wrapParagraph(
       current = "";
       continue;
     }
-    const split = splitLongWord(word, available, field.font);
+    const split = splitLongWord(word, available, field);
     lines.push({
       text: split.head,
       width: measureFieldText(split.head, field),
@@ -447,7 +507,7 @@ function wrapParagraph(
   return lines;
 }
 
-function blockLines(field: TextLayoutField): RasterTextLine[] {
+export function layoutTextLines(field: TextLayoutField): RasterTextLine[] {
   if (!field.block) {
     return [
       {
@@ -463,7 +523,7 @@ function blockLines(field: TextLayoutField): RasterTextLine[] {
   const normalized =
     field.block.mode === "TB"
       ? parseTextBlockEscapes(field.data)
-      : parseBlockEscapes(field.data);
+      : parseBlockEscapes(field.data.slice(0, MAX_FIELD_BLOCK_DATA));
   for (const paragraph of normalized.split(/\r?\n/)) {
     lines.push(...wrapParagraph(paragraph, field, lines.length));
   }
@@ -492,15 +552,40 @@ async function glyphFor(
   engine: OpenTypeFontEngine,
   character: string,
   font: LayoutFont,
+  allocate: RasterAllocator,
   bitmapFonts?: ReadonlyMap<string, DownloadedBitmapFont>,
   fontLinks?: ReadonlyMap<string, readonly string[]>
 ): Promise<{ raster: MonochromeRaster; substituted: boolean }> {
+  if (font.resources) {
+    bitmapFonts = font.resources.bitmapFonts;
+    fontLinks = font.resources.fontLinks;
+    let snapshotEngine = snapshotFontEngines.get(font.resources);
+    if (!snapshotEngine) {
+      snapshotEngine = new OpenTypeFontEngine(
+        font.resources.fontProvider,
+        allocate.limit
+      );
+      snapshotFontEngines.set(font.resources, snapshotEngine);
+    }
+    engine = snapshotEngine;
+  }
   const proportional = font.key === "0" || font.name !== undefined;
   const advance = glyphAdvance(character, font.width, proportional);
+  allocate.assert(advance, Math.max(1, font.height));
   if (font.name) {
-    const bitmap = findBitmapFont(bitmapFonts, font.name);
+    const lookupName = aliasedFontName(
+      font.name,
+      font.resources?.memoryAliases
+    );
+    const bitmap = findBitmapFont(bitmapFonts, lookupName);
     const bitmapGlyph = bitmap
-      ? rasterizeBitmapFontGlyph(bitmap, character, font.width, font.height)
+      ? rasterizeBitmapFontGlyph(
+          bitmap,
+          character,
+          font.width,
+          font.height,
+          allocate
+        )
       : undefined;
     if (bitmapGlyph) return { raster: bitmapGlyph, substituted: false };
     const custom = await engine.rasterize(
@@ -510,14 +595,15 @@ async function glyphFor(
       font.height
     );
     if (custom) return { raster: custom, substituted: false };
-    for (const linked of linkedFonts(fontLinks, font.name)) {
+    for (const linked of linkedFonts(fontLinks, lookupName)) {
       const linkedBitmap = findBitmapFont(bitmapFonts, linked);
       const linkedGlyph = linkedBitmap
         ? rasterizeBitmapFontGlyph(
             linkedBitmap,
             character,
             font.width,
-            font.height
+            font.height,
+            allocate
           )
         : undefined;
       if (linkedGlyph) return { raster: linkedGlyph, substituted: false };
@@ -545,7 +631,7 @@ async function glyphFor(
   } else if (isResidentFontKey(font.key)) {
     if (!residentAcceptsCharacter(font.key, character)) {
       return {
-        raster: createMonochromeRaster(advance, Math.max(1, font.height)),
+        raster: allocate(advance, Math.max(1, font.height)),
         substituted: false,
       };
     }
@@ -557,7 +643,7 @@ async function glyphFor(
         font.height
       );
       if (outline) {
-        const cell = createMonochromeRaster(advance, Math.max(1, font.height));
+        const cell = allocate(advance, Math.max(1, font.height));
         blitRaster(cell, outline, 0, 0);
         return { raster: cell, substituted: false };
       }
@@ -589,12 +675,22 @@ function normalizedFontName(value: string): string {
   return value.trim().toUpperCase();
 }
 
+function aliasedFontName(
+  value: string,
+  aliases: ReadonlyMap<string, string> | undefined
+): string {
+  let normalized = normalizedFontName(value);
+  if (!normalized.includes(":")) normalized = `R:${normalized}`;
+  const mapped = aliases?.get(normalized[0]);
+  return mapped
+    ? `${mapped}:${normalized.slice(normalized.indexOf(":") + 1)}`
+    : normalized;
+}
+
 function fontBasename(value: string): string {
   const normalized = normalizedFontName(value);
-  const object = normalized.includes(":")
-    ? normalized.slice(normalized.indexOf(":") + 1)
-    : normalized;
-  return object.replace(/\.[A-Z0-9]+$/, "");
+  const resource = normalized.includes(":") ? normalized : `R:${normalized}`;
+  return resource.replace(/\.[A-Z0-9]+$/, "");
 }
 
 function findBitmapFont(
@@ -643,7 +739,8 @@ function rasterizeBitmapFontGlyph(
   font: DownloadedBitmapFont,
   character: string,
   requestedWidth: number,
-  requestedHeight: number
+  requestedHeight: number,
+  allocate: RasterAllocator
 ): MonochromeRaster | undefined {
   const glyph = font.glyphs.get(character.codePointAt(0) ?? -1);
   const nativeAdvance = glyph?.advance ?? font.spaceWidth;
@@ -652,9 +749,9 @@ function rasterizeBitmapFontGlyph(
     1,
     Math.round((nativeAdvance / Math.max(1, font.cellWidth)) * requestedWidth)
   );
-  const output = createMonochromeRaster(outputWidth, Math.max(1, requestedHeight));
+  const output = allocate(outputWidth, Math.max(1, requestedHeight));
   if (!glyph) return output;
-  const source = createMonochromeRaster(glyph.width, glyph.height);
+  const source = allocate(glyph.width, glyph.height);
   for (let y = 0; y < glyph.height; y++) {
     for (let x = 0; x < glyph.width; x++) {
       const byte = glyph.data[y * glyph.bytesPerRow + (x >> 3)] ?? 0;
@@ -692,9 +789,16 @@ async function renderTextField(
   target: MonochromeRaster,
   field: TextLayoutField,
   engine: OpenTypeFontEngine,
+  allocate: RasterAllocator,
   bitmapFonts?: ReadonlyMap<string, DownloadedBitmapFont>,
   fontLinks?: ReadonlyMap<string, readonly string[]>
-): Promise<{ width: number; height: number; substituted: boolean }> {
+): Promise<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  substituted: boolean;
+}> {
   if (field.advancedText) {
     field = {
       ...field,
@@ -713,7 +817,7 @@ async function renderTextField(
         characters.length * field.font.height +
           Math.max(0, characters.length - 1) * gap
     );
-    const textRaster = createMonochromeRaster(logicalWidth, logicalHeight);
+    const textRaster = allocate(logicalWidth, logicalHeight);
     let cursor = 0;
     let substituted = false;
     for (const character of characters) {
@@ -722,6 +826,7 @@ async function renderTextField(
         engine,
         character,
         field.font,
+        allocate,
         bitmapFonts,
         fontLinks
       );
@@ -742,11 +847,19 @@ async function renderTextField(
       orientation: field.orientation,
       operation: operation(field.reverse),
     });
-    return { ...size, substituted };
+    return { x, y: field.y, ...size, substituted };
   }
-  const lines = blockLines(field);
+  const lines = layoutTextLines(field);
+  const effectiveBitmapFonts =
+    field.font.resources?.bitmapFonts ?? bitmapFonts;
   const bitmapFont = field.font.name
-    ? findBitmapFont(bitmapFonts, field.font.name)
+    ? findBitmapFont(
+        effectiveBitmapFonts,
+        aliasedFontName(
+          field.font.name,
+          field.font.resources?.memoryAliases
+        )
+      )
     : undefined;
   if (bitmapFont) {
     for (const line of lines) {
@@ -762,14 +875,22 @@ async function renderTextField(
       }, 0);
     }
   }
-  if (lines.length === 0) return { width: 0, height: 0, substituted: false };
+  if (lines.length === 0) {
+    return {
+      x: field.x,
+      y: field.y,
+      width: 0,
+      height: 0,
+      substituted: false,
+    };
+  }
   const lineStep = Math.max(1, field.font.height + (field.block?.lineSpacing ?? 0));
   const logicalWidth = Math.max(
     1,
     field.block?.width ?? Math.max(0, ...lines.map((line) => line.width))
   );
   const logicalHeight = Math.max(1, field.font.height + Math.max(0, lines.length - 1) * lineStep);
-  const textRaster = createMonochromeRaster(logicalWidth, logicalHeight);
+  const textRaster = allocate(logicalWidth, logicalHeight);
   const op = operation(field.reverse);
   let substituted = false;
   const drawLine = async (
@@ -799,6 +920,7 @@ async function renderTextField(
         engine,
         character,
         field.font,
+        allocate,
         bitmapFonts,
         fontLinks
       );
@@ -835,11 +957,14 @@ async function renderTextField(
     orientation: field.orientation,
     operation: op,
   });
-  return { ...size, substituted };
+  return { x, y: field.y, ...size, substituted };
 }
 
-function bitmapToRaster(field: BitmapLayoutField): MonochromeRaster {
-  const raster = createMonochromeRaster(field.width, field.height);
+function bitmapToRaster(
+  field: BitmapLayoutField,
+  allocate: RasterAllocator
+): MonochromeRaster {
+  const raster = allocate(field.width, field.height);
   for (let y = 0; y < field.height; y++) {
     for (let x = 0; x < field.width; x++) {
       const byte = field.data[y * field.bytesPerRow + (x >> 3)] ?? 0;
@@ -852,7 +977,8 @@ function bitmapToRaster(field: BitmapLayoutField): MonochromeRaster {
 function graphicSymbolRaster(
   code: string,
   requestedWidth: number,
-  requestedHeight: number
+  requestedHeight: number,
+  allocate: RasterAllocator
 ): MonochromeRaster {
   const data = zebraGraphicSymbolData(code);
   if (!data) throw new Error(`Unknown Zebra graphic symbol ${code}.`);
@@ -871,7 +997,7 @@ function graphicSymbolRaster(
     Math.ceil((requestedWidth * ZEBRA_GRAPHIC_SYMBOL_WIDTH) / 60)
   );
   const height = Math.max(1, Math.trunc(requestedHeight));
-  const output = createMonochromeRaster(width, height);
+  const output = allocate(width, height);
   for (let y = 0; y < height; y++) {
     const sourceY = Math.min(
       source.height - 1,
@@ -1455,9 +1581,10 @@ function renderBwippMonochrome(
       string,
       string | number | boolean
     >
-  >
+  >,
+  allocate: RasterAllocator
 ): MonochromeRaster {
-  let raster = createMonochromeRaster(1, 1);
+  let raster = allocate(1, 1);
   let polygons: DrawingPoint[][] = [];
   const drawing = {
     setopts: () => undefined,
@@ -1467,7 +1594,7 @@ function renderBwippMonochrome(
     ],
     measure: () => ({ width: 0, ascent: 0, descent: 0 }),
     init: (width: number, height: number) => {
-      raster = createMonochromeRaster(Math.ceil(width), Math.ceil(height));
+      raster = allocate(Math.ceil(width), Math.ceil(height));
     },
     line: (
       x0: number,
@@ -1513,12 +1640,13 @@ function renderBwippMonochrome(
 function padMonochromeRaster(
   raster: MonochromeRaster,
   left: number,
-  right = 0
+  right: number,
+  allocate: RasterAllocator
 ): MonochromeRaster {
   const leftPadding = Math.max(0, Math.trunc(left));
   const rightPadding = Math.max(0, Math.trunc(right));
   if (leftPadding === 0 && rightPadding === 0) return raster;
-  const padded = createMonochromeRaster(
+  const padded = allocate(
     leftPadding + raster.width + rightPadding,
     raster.height
   );
@@ -1529,9 +1657,10 @@ function padMonochromeRaster(
 function renderMaxicode(
   text: string,
   scale: number,
-  encoderOptions: Readonly<Record<string, string | number | boolean>>
+  encoderOptions: Readonly<Record<string, string | number | boolean>>,
+  allocate: RasterAllocator
 ): MonochromeRaster {
-  let raster = createMonochromeRaster(1, 1);
+  let raster = allocate(1, 1);
   let polygons: DrawingPoint[][] = [];
   let ellipses: Array<{
     x: number;
@@ -1548,7 +1677,7 @@ function renderMaxicode(
     ],
     measure: () => ({ width: 0, ascent: 0, descent: 0 }),
     init: (width: number, height: number) => {
-      raster = createMonochromeRaster(Math.ceil(width), Math.ceil(height));
+      raster = allocate(Math.ceil(width), Math.ceil(height));
     },
     line: (
       x0: number,
@@ -1649,7 +1778,8 @@ function linearRaster(
   raw: RawLinearBarcode,
   moduleWidth: number,
   height: number,
-  ratio?: number
+  ratio: number | undefined,
+  allocate: RasterAllocator
 ): MonochromeRaster {
   const widths = raw.sbs.map((value) =>
     value === 0
@@ -1663,7 +1793,7 @@ function linearRaster(
           )
         )
   );
-  const raster = createMonochromeRaster(
+  const raster = allocate(
     widths.reduce((sum, value) => sum + value, 0),
     Math.max(1, height)
   );
@@ -1688,7 +1818,10 @@ function linearRaster(
   return raster;
 }
 
-function renderTlc39(field: ExtendedBarcodeLayoutField): {
+function renderTlc39(
+  field: ExtendedBarcodeLayoutField,
+  allocate: RasterAllocator
+): {
   raster: MonochromeRaster;
   display: string;
 } {
@@ -1702,7 +1835,13 @@ function renderTlc39(field: ExtendedBarcodeLayoutField): {
   if (!code39 || !("sbs" in code39)) {
     throw new Error("The TLC39 Code 39 component could not be encoded.");
   }
-  const linear = linearRaster(code39, field.moduleWidth, field.height, field.ratio);
+  const linear = linearRaster(
+    code39,
+    field.moduleWidth,
+    field.height,
+    field.ratio,
+    allocate
+  );
   if (field.data[6] !== ",") return { raster: linear, display: "" };
 
   const payload = field.data.slice(7);
@@ -1723,11 +1862,11 @@ function renderTlc39(field: ExtendedBarcodeLayoutField): {
   }
   const microModule = Number(field.encoderOptions.zplMicroModule ?? 2);
   const microRowHeight = Number(field.encoderOptions.zplMicroRowHeight ?? 4);
-  const microRaster = createMonochromeRaster(
+  const microRaster = allocate(
     micro.pixx * microModule,
     micro.pixy * microRowHeight
   );
-  const rawMicro = createMonochromeRaster(micro.pixx, micro.pixy);
+  const rawMicro = allocate(micro.pixx, micro.pixy);
   for (let y = 0; y < micro.pixy; y++) {
     for (let x = 0; x < micro.pixx; x++) {
       if (micro.pixs[y * micro.pixx + x]) setDot(rawMicro, x, y);
@@ -1742,7 +1881,7 @@ function renderTlc39(field: ExtendedBarcodeLayoutField): {
   const linkageWidths = linkageRuns.map((run) =>
     run.units >= 3 ? Math.round(field.moduleWidth * (field.ratio ?? 2)) : field.moduleWidth * run.units
   );
-  const linkage = createMonochromeRaster(
+  const linkage = allocate(
     linkageWidths.reduce((total, value) => total + value, 0),
     linear.height + field.moduleWidth * 8
   );
@@ -1756,7 +1895,7 @@ function renderTlc39(field: ExtendedBarcodeLayoutField): {
   const linearY = microRaster.height + gap;
   const linkageOffsetX = linear.width + field.moduleWidth * 9;
   const linkageOffsetY = Math.max(0, linearY - field.moduleWidth * 4);
-  const output = createMonochromeRaster(
+  const output = allocate(
     Math.max(microRaster.width, linkageOffsetX + linkage.width),
     Math.max(linearY + linear.height, linkageOffsetY + linkage.height)
   );
@@ -1809,8 +1948,11 @@ function selectAutomaticAztec(
   }
 }
 
-function matrixModuleRaster(raw: RawMatrixBarcode): MonochromeRaster {
-  const raster = createMonochromeRaster(raw.pixx, raw.pixy);
+function matrixModuleRaster(
+  raw: RawMatrixBarcode,
+  allocate: RasterAllocator
+): MonochromeRaster {
+  const raster = allocate(raw.pixx, raw.pixy);
   for (let y = 0; y < raw.pixy; y++) {
     for (let x = 0; x < raw.pixx; x++) {
       if (raw.pixs[y * raw.pixx + x]) setDot(raster, x, y);
@@ -1876,7 +2018,10 @@ function structuredAztecSegments(bytes: Uint8Array, count: number): Uint8Array[]
   );
 }
 
-function renderAztec(field: ExtendedBarcodeLayoutField): {
+function renderAztec(
+  field: ExtendedBarcodeLayoutField,
+  allocate: RasterAllocator
+): {
   raster: MonochromeRaster;
   display: string;
 } {
@@ -1915,13 +2060,13 @@ function renderAztec(field: ExtendedBarcodeLayoutField): {
     symbols.reduce((sum, symbol) => sum + symbol.pixx, 0) +
     Math.max(0, symbols.length - 1);
   const heightInModules = Math.max(...symbols.map((symbol) => symbol.pixy));
-  const raster = createMonochromeRaster(
+  const raster = allocate(
     widthInModules * field.moduleWidth,
     heightInModules * field.moduleWidth
   );
   let x = 0;
   for (const symbol of symbols) {
-    blitRaster(raster, matrixModuleRaster(symbol), x * field.moduleWidth, 0, {
+    blitRaster(raster, matrixModuleRaster(symbol, allocate), x * field.moduleWidth, 0, {
       scaleX: field.moduleWidth,
       scaleY: field.moduleWidth,
     });
@@ -1933,14 +2078,15 @@ function renderAztec(field: ExtendedBarcodeLayoutField): {
 function codablockACode39Row(
   contents: string,
   moduleWidth: number,
-  ratio: number
+  ratio: number,
+  allocate: RasterAllocator
 ): MonochromeRaster {
   const wide = Math.round(moduleWidth * ratio);
   const runs = code39Runs(contents);
   const widths = runs.map((run) =>
     run.units >= 3 ? wide : moduleWidth * run.units
   );
-  const raster = createMonochromeRaster(
+  const raster = allocate(
     widths.reduce((total, width) => total + width, 0),
     1
   );
@@ -1952,7 +2098,10 @@ function codablockACode39Row(
   return raster;
 }
 
-function renderCodablockA(field: ExtendedBarcodeLayoutField): {
+function renderCodablockA(
+  field: ExtendedBarcodeLayoutField,
+  allocate: RasterAllocator
+): {
   raster: MonochromeRaster;
   display: string;
 } {
@@ -1974,12 +2123,12 @@ function renderCodablockA(field: ExtendedBarcodeLayoutField): {
   const barHeight = Math.max(1, rowHeight - separatorHeight);
   const ratio = field.ratio ?? 3;
   const rowRasters = symbol.rowContents.map((contents) =>
-    codablockACode39Row(contents, moduleWidth, ratio)
+    codablockACode39Row(contents, moduleWidth, ratio, allocate)
   );
   const fullWidth = rowRasters[0].width;
   const width =
     symbol.rows === 1 ? fullWidth : Math.max(1, fullWidth - moduleWidth);
-  const raster = createMonochromeRaster(
+  const raster = allocate(
     width,
     separatorHeight + symbol.rows * (barHeight + separatorHeight)
   );
@@ -1993,7 +2142,7 @@ function renderCodablockA(field: ExtendedBarcodeLayoutField): {
     if (row === symbol.rows - 1) {
       fillRect(raster, 0, y, width, separatorHeight);
     } else {
-      const separator = createMonochromeRaster(width, 1);
+      const separator = allocate(width, 1);
       const rightStopStart = fullWidth - characterWidth - moduleWidth;
       fillRect(
         separator,
@@ -2017,7 +2166,10 @@ function renderCodablockA(field: ExtendedBarcodeLayoutField): {
   return { raster, display: symbol.display };
 }
 
-function renderCodablockEF(field: ExtendedBarcodeLayoutField): {
+function renderCodablockEF(
+  field: ExtendedBarcodeLayoutField,
+  allocate: RasterAllocator
+): {
   raster: MonochromeRaster;
   display: string;
 } {
@@ -2052,13 +2204,13 @@ function renderCodablockEF(field: ExtendedBarcodeLayoutField): {
   const separatorHeight = moduleWidth;
   const barHeight = Math.max(1, rowHeight - separatorHeight);
   const dataRows = (compactRows - 1) / 2;
-  const raster = createMonochromeRaster(
+  const raster = allocate(
     raw.pixx * moduleWidth,
     separatorHeight + dataRows * (barHeight + separatorHeight)
   );
   let y = 0;
   for (let compactRow = 0; compactRow < compactRows; compactRow++) {
-    const source = createMonochromeRaster(raw.pixx, 1);
+    const source = allocate(raw.pixx, 1);
     for (let x = 0; x < raw.pixx; x++) {
       if (raw.pixs[compactRow * raw.pixx + x]) setDot(source, x, 0);
     }
@@ -2153,7 +2305,8 @@ function zplBrUpceDigits(source: string): { digits: string; check: number } {
 
 function renderZplBrUpce(
   source: string,
-  moduleWidth: number
+  moduleWidth: number,
+  allocate: RasterAllocator
 ): MonochromeRaster {
   const { digits, check } = zplBrUpceDigits(source);
   const parity = UPC_E0_PARITY[check];
@@ -2168,7 +2321,7 @@ function renderZplBrUpce(
       : pattern;
   }
   bits += "010101";
-  const raster = createMonochromeRaster(
+  const raster = allocate(
     bits.length * moduleWidth,
     74 * moduleWidth
   );
@@ -2207,7 +2360,10 @@ function normalizeZplDataBarLinear(type: number, value: string): string {
   return value.startsWith("()") ? value : `()${value}`;
 }
 
-function renderGs1DataBar(field: ExtendedBarcodeLayoutField): {
+function renderGs1DataBar(
+  field: ExtendedBarcodeLayoutField,
+  allocate: RasterAllocator
+): {
   raster: MonochromeRaster;
   display: string;
 } {
@@ -2222,7 +2378,10 @@ function renderGs1DataBar(field: ExtendedBarcodeLayoutField): {
     throw new Error(`GS1 DataBar type ${type} requires a composite component after '|'.`);
   }
   if (type === 8 && compositeSource === undefined) {
-    return { raster: renderZplBrUpce(linearSource, field.moduleWidth), display: "" };
+    return {
+      raster: renderZplBrUpce(linearSource, field.moduleWidth, allocate),
+      display: "",
+    };
   }
   const linear = normalizeZplDataBarLinear(type, linearSource);
   const segments = Math.max(
@@ -2270,7 +2429,8 @@ function renderGs1DataBar(field: ExtendedBarcodeLayoutField): {
 
   const render = (ccversion?: "a" | "b" | "c") =>
     renderBwippMonochrome(
-      ccversion === undefined ? options : { ...options, ccversion }
+      ccversion === undefined ? options : { ...options, ccversion },
+      allocate
     );
   let raster: MonochromeRaster;
   if (compositeSource === undefined) raster = render();
@@ -2288,7 +2448,12 @@ function renderGs1DataBar(field: ExtendedBarcodeLayoutField): {
   if (compositeSource !== undefined) {
     const leadingModules =
       type <= 6 ? 1 : type <= 10 ? 4 : type === 11 ? 10 : 3;
-    raster = padMonochromeRaster(raster, leadingModules * field.moduleWidth);
+    raster = padMonochromeRaster(
+      raster,
+      leadingModules * field.moduleWidth,
+      0,
+      allocate
+    );
   }
 
   if (compositeSource === undefined) {
@@ -2310,24 +2475,28 @@ function renderGs1DataBar(field: ExtendedBarcodeLayoutField): {
       raster = padMonochromeRaster(
         raster,
         module,
-        Math.max(0, 96 * module - raster.width - module)
+        Math.max(0, 96 * module - raster.width - module),
+        allocate
       );
     } else if (type === 5) {
       raster = padMonochromeRaster(
         raster,
         module,
-        Math.max(0, 79 * module - raster.width - module)
+        Math.max(0, 79 * module - raster.width - module),
+        allocate
       );
-    } else if (type === 6) raster = padMonochromeRaster(raster, module);
-    else if (type >= 7 && type <= 10) {
-      raster = padMonochromeRaster(raster, 7 * module);
+    } else if (type === 6) {
+      raster = padMonochromeRaster(raster, module, 0, allocate);
+    } else if (type >= 7 && type <= 10) {
+      raster = padMonochromeRaster(raster, 7 * module, 0, allocate);
     }
   }
   return { raster, display: "" };
 }
 
 function rawBarcodeRaster(
-  field: BarcodeLayoutField
+  field: BarcodeLayoutField,
+  allocate: RasterAllocator
 ): { raster: MonochromeRaster; display: string } {
   if (field.symbology === "B7") {
     if (field.encoderOptions.raw !== true && field.data.length > 3 * 1024) {
@@ -2351,7 +2520,7 @@ function rawBarcodeRaster(
     const widths = runs.map((run) =>
       run.units >= 3 ? wide : field.moduleWidth * run.units
     );
-    const raster = createMonochromeRaster(
+    const raster = allocate(
       widths.reduce((total, value) => total + value, 0),
       field.height
     );
@@ -2371,7 +2540,7 @@ function rawBarcodeRaster(
       field.mode,
       field.uccCheckDigit
     );
-    const raster = createMonochromeRaster(
+    const raster = allocate(
       encoded.bits.length * field.moduleWidth,
       field.height
     );
@@ -2423,13 +2592,13 @@ function rawBarcodeRaster(
       display = symbol.display;
     }
     const height = modules.length / width;
-    const rawRaster = createMonochromeRaster(width, height);
+    const rawRaster = allocate(width, height);
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         if (modules[y * width + x] !== 0) setDot(rawRaster, x, y);
       }
     }
-    const raster = createMonochromeRaster(
+    const raster = allocate(
       width * field.moduleWidth,
       height * field.moduleWidth
     );
@@ -2441,27 +2610,27 @@ function rawBarcodeRaster(
   }
   if (field.symbology === "BB") {
     return field.encoderOptions.zplMode === "A"
-      ? renderCodablockA(field)
-      : renderCodablockEF(field);
+      ? renderCodablockA(field, allocate)
+      : renderCodablockEF(field, allocate);
   }
-  if (field.symbology === "BR") return renderGs1DataBar(field);
-  if (field.symbology === "BT") return renderTlc39(field);
+  if (field.symbology === "BR") return renderGs1DataBar(field, allocate);
+  if (field.symbology === "BT") return renderTlc39(field, allocate);
   if (
     (field.symbology === "B0" || field.symbology === "BO") &&
     field.encoder === "azteccode"
   ) {
-    return renderAztec(field);
+    return renderAztec(field, allocate);
   }
   if (field.symbology === "BQ") {
     const symbol =
       field.model === "1" ? encodeLegacyQrModel1(field) : encodeQrModel2(field);
-    const modules = createMonochromeRaster(symbol.size, symbol.size);
+    const modules = allocate(symbol.size, symbol.size);
     for (let y = 0; y < symbol.size; y++) {
       for (let x = 0; x < symbol.size; x++) {
         if (symbol.modules[y * symbol.size + x] !== 0) setDot(modules, x, y);
       }
     }
-    const raster = createMonochromeRaster(
+    const raster = allocate(
       symbol.size * field.magnification,
       symbol.size * field.magnification
     );
@@ -2484,7 +2653,7 @@ function rawBarcodeRaster(
       columns: Number(field.encoderOptions.columns ?? 0),
       rows: Number(field.encoderOptions.rows ?? 0),
     });
-    const raw = createMonochromeRaster(symbol.size, symbol.size);
+    const raw = allocate(symbol.size, symbol.size);
     for (let y = 0; y < symbol.size; y++) {
       for (let x = 0; x < symbol.size; x++) {
         if (symbol.modules[y * symbol.size + x] !== 0) setDot(raw, x, y);
@@ -2499,7 +2668,7 @@ function rawBarcodeRaster(
             )
           )
         : field.moduleWidth;
-    const raster = createMonochromeRaster(
+    const raster = allocate(
       symbol.size * module,
       symbol.size * module
     );
@@ -2509,7 +2678,12 @@ function rawBarcodeRaster(
   const config = barcodeOptions(field);
   if (field.symbology === "BD") {
     return {
-      raster: renderMaxicode(config.text, field.moduleWidth, config.options),
+      raster: renderMaxicode(
+        config.text,
+        field.moduleWidth,
+        config.options,
+        allocate
+      ),
       display: "",
     };
   }
@@ -2533,7 +2707,7 @@ function rawBarcodeRaster(
   if (!raw) throw new Error("The barcode encoder produced no symbol.");
 
   if ("pixs" in raw && "pixx" in raw && "pixy" in raw) {
-    const raster = createMonochromeRaster(raw.pixx, raw.pixy);
+    const raster = allocate(raw.pixx, raw.pixy);
     for (let y = 0; y < raw.pixy; y++) {
       for (let x = 0; x < raw.pixx; x++) {
         if (raw.pixs[y * raw.pixx + x]) setDot(raster, x, y);
@@ -2553,7 +2727,7 @@ function rawBarcodeRaster(
       scaleX = autoModule;
       scaleY = autoModule;
     }
-    const scaled = createMonochromeRaster(
+    const scaled = allocate(
       raster.width * scaleX,
       raster.height * scaleY
     );
@@ -2569,7 +2743,13 @@ function rawBarcodeRaster(
   }
 
   const ratio = "ratio" in field ? field.ratio : undefined;
-  const raster = linearRaster(raw, config.scaleX, config.scaleY, ratio);
+  const raster = linearRaster(
+    raw,
+    config.scaleX,
+    config.scaleY,
+    ratio,
+    allocate
+  );
   const encodedDisplay = raw.txt?.map(([text]) => text).join("");
   const printerSpecificDisplay =
     field.symbology === "B1" ||
@@ -2588,6 +2768,7 @@ async function addInterpretation(
   display: string,
   field: BarcodeLayoutField,
   engine: OpenTypeFontEngine,
+  allocate: RasterAllocator,
   bitmapFonts?: ReadonlyMap<string, DownloadedBitmapFont>,
   fontLinks?: ReadonlyMap<string, readonly string[]>
 ): Promise<{ raster: MonochromeRaster; substituted: boolean }> {
@@ -2598,10 +2779,25 @@ async function addInterpretation(
     return { raster: bars, substituted: false };
   }
   const font = field.interpretationFont;
-  const textWidth = measureText(display, font);
+  const glyphs: MonochromeRaster[] = [];
+  let substituted = false;
+  let textWidth = 0;
+  for (const character of display) {
+    const resolved = await glyphFor(
+      engine,
+      character,
+      font,
+      allocate,
+      bitmapFonts,
+      fontLinks
+    );
+    glyphs.push(resolved.raster);
+    substituted ||= resolved.substituted;
+    textWidth += resolved.raster.width;
+  }
   const margin = Math.max(1, field.moduleWidth * 2);
   const band = font.height + margin;
-  const output = createMonochromeRaster(
+  const output = allocate(
     Math.max(bars.width, textWidth),
     bars.height +
       (field.printInterpretationAbove ? band : 0) +
@@ -2609,24 +2805,15 @@ async function addInterpretation(
   );
   const barsY = field.printInterpretationAbove ? band : 0;
   blitRaster(output, bars, Math.floor((output.width - bars.width) / 2), barsY);
-  let substituted = false;
-  const drawText = async (y: number) => {
+  const drawText = (y: number) => {
     let x = Math.floor((output.width - textWidth) / 2);
-    for (const character of display) {
-      const resolved = await glyphFor(
-        engine,
-        character,
-        font,
-        bitmapFonts,
-        fontLinks
-      );
-      substituted ||= resolved.substituted;
-      blitRaster(output, resolved.raster, x, y);
-      x += resolved.raster.width;
+    for (const glyph of glyphs) {
+      blitRaster(output, glyph, x, y);
+      x += glyph.width;
     }
   };
-  if (field.printInterpretationAbove) await drawText(0);
-  if (field.printInterpretationBelow) await drawText(barsY + bars.height + margin);
+  if (field.printInterpretationAbove) drawText(0);
+  if (field.printInterpretationBelow) drawText(barsY + bars.height + margin);
   return { raster: output, substituted };
 }
 
@@ -2643,7 +2830,8 @@ function validationErrorCode(error: unknown): "C" | "E" | "L" | "S" | "P" {
 
 async function validationBanner(
   code: "C" | "E" | "L" | "S" | "P",
-  engine: OpenTypeFontEngine
+  engine: OpenTypeFontEngine,
+  allocate: RasterAllocator
 ): Promise<MonochromeRaster> {
   const message = `INVALID - ${code}`;
   const font: LayoutFont = {
@@ -2653,11 +2841,11 @@ async function validationBanner(
     orientation: "N",
   };
   const textWidth = measureText(message, font);
-  const output = createMonochromeRaster(Math.max(156, textWidth + 10), 30);
+  const output = allocate(Math.max(156, textWidth + 10), 30);
   fillRect(output, 0, 0, output.width, output.height, "set");
   let x = Math.floor((output.width - textWidth) / 2);
   for (const character of message) {
-    const glyph = await glyphFor(engine, character, font);
+    const glyph = await glyphFor(engine, character, font, allocate);
     blitRaster(output, glyph.raster, x, 2, { operation: "clear" });
     x += glyph.raster.width;
   }
@@ -2674,6 +2862,8 @@ export async function renderLayoutToRaster(
     initialRaster?: MonochromeRaster;
     bitmapFonts?: ReadonlyMap<string, DownloadedBitmapFont>;
     fontLinks?: ReadonlyMap<string, readonly string[]>;
+    /** Maximum pixels permitted in any temporary field raster. */
+    maxFieldPixels?: number;
     /** ^MNV nominal label length; the working raster is cropped to used dots. */
     minimumHeight?: number;
   } = {}
@@ -2685,216 +2875,264 @@ export async function renderLayoutToRaster(
   const diagnostics = [...layout.diagnostics];
   let highlightRegions: HighlightRegion[] = layout.origins.map((origin) => ({
     type: "origin",
-    commandIndex: origin.commandIndex,
     sourceSpan: origin.sourceSpan,
     x: origin.x,
     y: origin.y,
   }));
-  const fontEngine = new OpenTypeFontEngine(options.fontProvider);
+  const allocate = limitedRasterAllocator(
+    options.maxFieldPixels ?? Math.max(0, width * height)
+  );
+  const fontEngine = new OpenTypeFontEngine(
+    options.fontProvider,
+    allocate.limit
+  );
 
   for (const field of layout.fields) {
-    if (field.kind === "text") {
-      const { substituted, ...size } = await renderTextField(
-        raster,
-        field,
-        fontEngine,
-        options.bitmapFonts,
-        options.fontLinks
-      );
-      if (substituted) {
-        diagnostics.push({
-          code: "FONT_SUBSTITUTED",
-          message: `Font ${field.font.name ?? field.font.key} could not be resolved and used the deterministic fallback.`,
-          severity: "warning",
-          phase: "render",
-          span: field.sourceSpan,
-          labelIndex,
-        });
-      }
-      highlightRegions.push({
-        type: "text",
-        commandIndex: field.commandIndex,
-        sourceSpan: field.sourceSpan,
-        x: field.x,
-        y: field.y,
-        ...size,
-      });
-    } else if (field.kind === "box") {
-      strokeRoundedRect(
-        raster,
-        field.x,
-        field.y,
-        field.width,
-        field.height,
-        field.thickness,
-        field.rounding,
-        operation(field.reverse, field.color)
-      );
-      highlightRegions.push({
-        type: "box",
-        commandIndex: field.commandIndex,
-        sourceSpan: field.sourceSpan,
-        x: field.x,
-        y: field.y,
-        width: field.width,
-        height: field.height,
-      });
-    } else if (field.kind === "circle" || field.kind === "ellipse") {
-      const ellipseWidth = field.kind === "circle" ? field.diameter : field.width;
-      const ellipseHeight = field.kind === "circle" ? field.diameter : field.height;
-      strokeEllipse(
-        raster,
-        field.x,
-        field.y,
-        ellipseWidth,
-        ellipseHeight,
-        field.thickness,
-        operation(field.reverse, field.color)
-      );
-      highlightRegions.push(
-        field.kind === "circle"
-          ? {
-              type: "circle",
-              commandIndex: field.commandIndex,
-              sourceSpan: field.sourceSpan,
-              x: field.x + ellipseWidth / 2,
-              y: field.y + ellipseHeight / 2,
-              radius: ellipseWidth / 2,
-            }
-          : {
-              type: "ellipse",
-              commandIndex: field.commandIndex,
-              sourceSpan: field.sourceSpan,
-              x: field.x,
-              y: field.y,
-              width: ellipseWidth,
-              height: ellipseHeight,
-            }
-      );
-    } else if (field.kind === "diagonal") {
-      drawDiagonal(
-        raster,
-        field.x,
-        field.y,
-        field.width,
-        field.height,
-        field.thickness,
-        field.direction,
-        operation(field.reverse, field.color)
-      );
-      highlightRegions.push({
-        type: "box",
-        commandIndex: field.commandIndex,
-        sourceSpan: field.sourceSpan,
-        x: field.x,
-        y: field.y,
-        width: field.width,
-        height: field.height,
-      });
-    } else if (field.kind === "bitmap") {
-      const source = bitmapToRaster(field);
-      const size = blitRaster(raster, source, field.x, field.y, {
-        orientation: field.orientation,
-        scaleX: field.scaleX,
-        scaleY: field.scaleY,
-        operation: operation(field.reverse),
-      });
-      highlightRegions.push({
-        type: "box",
-        commandIndex: field.commandIndex,
-        sourceSpan: field.sourceSpan,
-        x: field.x,
-        y: field.y,
-        ...size,
-      });
-    } else if (field.kind === "symbol") {
-      const source = graphicSymbolRaster(field.code, field.width, field.height);
-      const size = blitRaster(raster, source, field.x, field.y, {
-        orientation: field.orientation,
-        operation: operation(field.reverse),
-      });
-      highlightRegions.push({
-        type: "box",
-        commandIndex: field.commandIndex,
-        sourceSpan: field.sourceSpan,
-        x: field.x,
-        y: field.y,
-        ...size,
-      });
-    } else {
-      try {
-        const encoded = rawBarcodeRaster(field);
-        const interpreted = await addInterpretation(
-          encoded.raster,
-          encoded.display,
+    try {
+      if (field.kind === "text") {
+        const { substituted, ...region } = await renderTextField(
+          raster,
           field,
           fontEngine,
+          allocate,
           options.bitmapFonts,
           options.fontLinks
         );
-        if (interpreted.substituted) {
+        if (
+          substituted &&
+          !hasFieldDiagnostic(
+            diagnostics,
+            "FONT_SUBSTITUTED",
+            field,
+            labelIndex
+          )
+        ) {
           diagnostics.push({
             code: "FONT_SUBSTITUTED",
-            message: `Font ${field.interpretationFont.name ?? field.interpretationFont.key} could not be resolved and used the deterministic fallback.`,
+            message: `Font ${
+              field.font.name ?? field.font.key
+            } could not be resolved and used the deterministic fallback.`,
             severity: "warning",
             phase: "render",
             span: field.sourceSpan,
             labelIndex,
           });
         }
-        const size = blitRaster(raster, interpreted.raster, field.x, field.y, {
+        highlightRegions.push({
+          type: "text",
+          sourceSpan: field.sourceSpan,
+          ...region,
+        });
+      } else if (field.kind === "box") {
+        strokeRoundedRect(
+          raster,
+          field.x,
+          field.y,
+          field.width,
+          field.height,
+          field.thickness,
+          field.rounding,
+          operation(field.reverse, field.color)
+        );
+        highlightRegions.push({
+          type: "box",
+          sourceSpan: field.sourceSpan,
+          x: field.x,
+          y: field.y,
+          width: field.width,
+          height: field.height,
+        });
+      } else if (field.kind === "circle" || field.kind === "ellipse") {
+        const ellipseWidth =
+          field.kind === "circle" ? field.diameter : field.width;
+        const ellipseHeight =
+          field.kind === "circle" ? field.diameter : field.height;
+        strokeEllipse(
+          raster,
+          field.x,
+          field.y,
+          ellipseWidth,
+          ellipseHeight,
+          field.thickness,
+          operation(field.reverse, field.color)
+        );
+        highlightRegions.push(
+          field.kind === "circle"
+            ? {
+                type: "circle",
+                sourceSpan: field.sourceSpan,
+                x: field.x + ellipseWidth / 2,
+                y: field.y + ellipseHeight / 2,
+                radius: ellipseWidth / 2,
+              }
+            : {
+                type: "ellipse",
+                sourceSpan: field.sourceSpan,
+                x: field.x,
+                y: field.y,
+                width: ellipseWidth,
+                height: ellipseHeight,
+              }
+        );
+      } else if (field.kind === "diagonal") {
+        drawDiagonal(
+          raster,
+          field.x,
+          field.y,
+          field.width,
+          field.height,
+          field.thickness,
+          field.direction,
+          operation(field.reverse, field.color)
+        );
+        highlightRegions.push({
+          type: "box",
+          sourceSpan: field.sourceSpan,
+          x: field.x,
+          y: field.y,
+          width: field.width,
+          height: field.height,
+        });
+      } else if (field.kind === "bitmap") {
+        const source = bitmapToRaster(field, allocate);
+        const size = blitRaster(raster, source, field.x, field.y, {
           orientation: field.orientation,
+          scaleX: field.scaleX,
+          scaleY: field.scaleY,
           operation: operation(field.reverse),
         });
         highlightRegions.push({
-          type: "barcode",
-          commandIndex: field.commandIndex,
+          type: "box",
           sourceSpan: field.sourceSpan,
           x: field.x,
           y: field.y,
           ...size,
         });
-      } catch (error) {
-        if (field.validation) {
-          const banner = await validationBanner(
-            validationErrorCode(error),
-            fontEngine
+      } else if (field.kind === "symbol") {
+        const source = graphicSymbolRaster(
+          field.code,
+          field.width,
+          field.height,
+          allocate
+        );
+        const size = blitRaster(raster, source, field.x, field.y, {
+          orientation: field.orientation,
+          operation: operation(field.reverse),
+        });
+        highlightRegions.push({
+          type: "box",
+          sourceSpan: field.sourceSpan,
+          x: field.x,
+          y: field.y,
+          ...size,
+        });
+      } else {
+        let encoded: ReturnType<typeof rawBarcodeRaster>;
+        try {
+          encoded = rawBarcodeRaster(field, allocate);
+        } catch (error) {
+          if (error instanceof RasterLimitError) throw error;
+          if (field.validation) {
+            const banner = await validationBanner(
+              validationErrorCode(error),
+              fontEngine,
+              allocate
+            );
+            const oriented = orientedSize(
+              field.orientation,
+              banner.width,
+              banner.height
+            );
+            fillRect(
+              raster,
+              field.x,
+              field.y,
+              oriented.width,
+              oriented.height,
+              "clear"
+            );
+            const size = blitRaster(raster, banner, field.x, field.y, {
+              orientation: field.orientation,
+              operation: "set",
+            });
+            highlightRegions.push({
+              type: "barcode",
+              sourceSpan: field.sourceSpan,
+              x: field.x,
+              y: field.y,
+              ...size,
+            });
+          }
+          diagnostics.push(
+            diagnostic(
+              "INVALID_BARCODE_DATA",
+              error instanceof Error
+                ? error.message
+                : "The barcode could not be rendered.",
+              field,
+              labelIndex
+            )
           );
-          const oriented = orientedSize(
-            field.orientation,
-            banner.width,
-            banner.height
-          );
-          fillRect(
-            raster,
-            field.x,
-            field.y,
-            oriented.width,
-            oriented.height,
-            "clear"
-          );
-          const size = blitRaster(raster, banner, field.x, field.y, {
-            orientation: field.orientation,
-            operation: "set",
-          });
-          highlightRegions.push({
-            type: "barcode",
-            commandIndex: field.commandIndex,
-            sourceSpan: field.sourceSpan,
-            x: field.x,
-            y: field.y,
-            ...size,
-          });
+          continue;
         }
-        diagnostics.push(
-          diagnostic(
-            "INVALID_BARCODE_DATA",
-            error instanceof Error ? error.message : "The barcode could not be rendered.",
+
+        const interpreted = await addInterpretation(
+          encoded.raster,
+          encoded.display,
+          field,
+          fontEngine,
+          allocate,
+          options.bitmapFonts,
+          options.fontLinks
+        );
+        if (
+          interpreted.substituted &&
+          !hasFieldDiagnostic(
+            diagnostics,
+            "FONT_SUBSTITUTED",
             field,
             labelIndex
           )
+        ) {
+          diagnostics.push({
+            code: "FONT_SUBSTITUTED",
+            message: `Font ${
+              field.interpretationFont.name ?? field.interpretationFont.key
+            } could not be resolved and used the deterministic fallback.`,
+            severity: "warning",
+            phase: "render",
+            span: field.sourceSpan,
+            labelIndex,
+          });
+        }
+        const size = blitRaster(
+          raster,
+          interpreted.raster,
+          field.x,
+          field.y,
+          {
+            orientation: field.orientation,
+            operation: operation(field.reverse),
+          }
         );
+        highlightRegions.push({
+          type: "barcode",
+          sourceSpan: field.sourceSpan,
+          x: field.x,
+          y: field.y,
+          ...size,
+        });
       }
+    } catch (error) {
+      if (!(error instanceof RasterLimitError)) throw error;
+      diagnostics.push(
+        diagnostic(
+          "LABEL_LIMIT_EXCEEDED",
+          error.message,
+          field,
+          labelIndex
+        )
+      );
     }
   }
 
@@ -2908,7 +3146,6 @@ export async function renderLayoutToRaster(
 
   if (layout.settings) {
     raster = transformRaster(raster, {
-      invert: layout.settings.reverse,
       mirrorX: layout.settings.mirror,
       rotate180: layout.settings.rotate180,
     });
@@ -2917,8 +3154,8 @@ export async function renderLayoutToRaster(
       raster.width,
       raster.height,
       {
-      mirror: layout.settings.mirror,
-      rotate180: layout.settings.rotate180,
+        mirror: layout.settings.mirror,
+        rotate180: layout.settings.rotate180,
       }
     );
   }

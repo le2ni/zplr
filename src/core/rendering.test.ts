@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
-  parse,
-  parseAndRender,
+  createRenderSession,
   parseDocument,
-  render,
-  renderDocument,
   renderZpl,
 } from "@/index.node";
+import type { RenderDocumentOptions, ZplDocument } from "@/types/ZplDocument";
+
+async function renderDocument(
+  document: ZplDocument,
+  options: RenderDocumentOptions = {}
+) {
+  return (await createRenderSession(options).renderDocument(document)).labels;
+}
 
 function countDarkPixels(canvas: any): number {
   const pixels = canvas
@@ -41,15 +46,14 @@ function darkPixelBounds(canvas: any) {
 }
 
 describe("shared renderer", () => {
-  it("delegates legacy parsed and parse-and-render APIs to the canonical raster", async () => {
+  it("renders the same source deterministically through the public job API", async () => {
     const source = "^XA^PW40^LL24^FO2,2^GB12,8,2,B,2^FS^XZ";
-    const [commands] = parse(source);
-    const legacy = await render(commands, 40, 24);
-    const modern = await renderZpl(source);
-    expect(await legacy.toBuffer("png")).toEqual(
-      await modern.labels[0].canvas!.toBuffer("png")
+    const first = await renderZpl(source);
+    const second = await renderZpl(source);
+    expect(await first.labels[0].canvas.toBuffer("png")).toEqual(
+      await second.labels[0].canvas.toBuffer("png")
     );
-    expect(await parseAndRender(source, 40, 24)).toHaveLength(1);
+    expect(first.labels).toHaveLength(1);
   });
 
   it("runs renderDocument through job-scoped persistent state", async () => {
@@ -66,9 +70,11 @@ describe("shared renderer", () => {
   });
 
   it("renders a visible first text field", async () => {
-    const [commands] = parse("^XA^FO10,10^CF0,20,10^FDHello^FS^XZ");
-    const canvas = await render(commands, 180, 60);
-    expect(countDarkPixels(canvas)).toBeGreaterThan(0);
+    const result = await renderZpl("^XA^FO10,10^CF0,20,10^FDHello^FS^XZ", {
+      width: 180,
+      height: 60,
+    });
+    expect(countDarkPixels(result.labels[0].canvas)).toBeGreaterThan(0);
   });
 
   it("renders graphic boxes and circles with declared geometry", async () => {
@@ -98,12 +104,14 @@ describe("shared renderer", () => {
   });
 
   it("does not mutate input and produces identical repeated renders", async () => {
-    const [commands] = parse("^XA^FO10,10^FDHello^FS^XZ");
-    const commandCount = commands.length;
-    const first = await render(commands, 120, 50);
-    const second = await render(commands, 120, 50);
-    expect(commands).toHaveLength(commandCount);
-    expect(await first.toBuffer("png")).toEqual(await second.toBuffer("png"));
+    const document = parseDocument("^XA^FO10,10^FDHello^FS^XZ");
+    const snapshot = JSON.stringify(document);
+    const [first] = await renderDocument(document, { width: 120, height: 50 });
+    const [second] = await renderDocument(document, { width: 120, height: 50 });
+    expect(JSON.stringify(document)).toBe(snapshot);
+    expect(await first.canvas.toBuffer("png")).toEqual(
+      await second.canvas.toBuffer("png")
+    );
   });
 
   it("reports rotated text geometry and multiline field-block geometry", async () => {
@@ -114,6 +122,18 @@ describe("shared renderer", () => {
     const text = result.highlightRegions.find((region) => region.type === "text");
     expect(text?.width).toBe(20);
     expect(text?.height).toBe(25);
+  });
+
+  it("reports the rendered position of right-anchored text", async () => {
+    const result = await renderZpl(
+      "^XA^PW100^LL40^FO80,5,1^A0N,10,5^FDABC^FS^XZ"
+    );
+    const text = result.labels[0].highlightRegions.find(
+      (region) => region.type === "text"
+    );
+    expect(text).toBeDefined();
+    expect((text?.x ?? 0) + (text?.width ?? 0)).toBe(80);
+    expect(text?.y).toBe(5);
   });
 
   it("uses the BY ratio for Code 39", async () => {

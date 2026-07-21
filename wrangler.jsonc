@@ -1,0 +1,6 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "zplr",
+  "pages_build_output_dir": "./dist-playground",
+  "compatibility_date": "2026-07-21"
+}

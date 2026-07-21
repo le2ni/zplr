@@ -1,36 +1,27 @@
 # ZPLr
 
-ZPLr is a deterministic ZPL and ZPL II label renderer for Node.js and browsers.
-It parses complete jobs, interprets printer state, renders to a packed one-bit
-raster, and then expands that raster to a platform Canvas. The canonical
-output never depends on Canvas drawing, host fonts, antialiasing, or locale.
+ZPLr 0.3 is a deterministic ZPL and ZPL II parser and label renderer for ESM applications on Node.js 22/24 and evergreen browsers. It parses complete jobs, interprets virtual-printer state, renders a packed one-bit raster, and expands that raster to a required platform Canvas.
 
-The declared profile is pinned to Zebra's
-[ZPL guide](https://docs.zebra.com/us/en/printers/software/zpl-pg/zpl-ii,-zbi-2,-set-get-do,-mirror,-wml-programming-guide.html)
-published October 10, 2025. Every command that can affect label dots or an
-in-memory rendering resource is implemented. The remaining documented
-printer, network, and RFID commands are recognized as non-rendering device
-operations. Unknown commands produce structured diagnostics; they are never
-silently discarded.
+The renderer profile is pinned to Zebra's ZPL programming guide published October 10, 2025. Deterministic output does not claim proprietary Zebra font parity or pixel parity with a physical printer.
 
 ## Install
 
-```bash
-pnpm add zplr
-```
-
-Node rendering uses the optional `skia-canvas` adapter:
+Node rendering uses the optional `skia-canvas` peer:
 
 ```bash
-pnpm add skia-canvas
+pnpm add zplr skia-canvas
 ```
+
+Browser consumers install only ZPLr; the `zplr/web` entry neither resolves nor bundles `skia-canvas`.
 
 ## Render a job
 
-```ts
-import { renderZpl } from "zplr/node";
+`zplr` is the Node-default alias. `zplr/node` is equivalent and `zplr/web` supplies browser canvases.
 
-const result = await renderZpl(`
+```ts
+import { renderZpl } from "zplr";
+
+const job = await renderZpl(`
 ^XA
 ^CI28
 ^PW812
@@ -40,123 +31,82 @@ const result = await renderZpl(`
 ^XZ
 `);
 
-const label = result.labels[0];
-console.log(label.width, label.height, label.raster.bitOrder);
-console.log(result.diagnostics);
+const label = job.labels[0];
+console.log(label.raster.bitOrder, label.diagnostics);
 await label.canvas.toFile("label.png");
 ```
-
-The browser entry point has the same API and attaches an
-`HTMLCanvasElement`:
 
 ```ts
 import { renderZpl } from "zplr/web";
 
-const result = await renderZpl(source, { printDensity: 8 });
-document.body.append(result.labels[0].canvas);
+const job = await renderZpl(source, { printDensity: 8 });
+document.body.append(job.labels[0].canvas);
 ```
 
-Each rendered label includes its resolved dimensions, print density,
-MSB-first packed raster, diagnostics, source-linked highlight regions, and
-the platform Canvas.
+Every label contains resolved dimensions, print density, an MSB-first packed raster, diagnostics, source-linked highlight regions, and a required `Canvas`/`HTMLCanvasElement`. `renderZplPNG()` returns `Buffer[]` in Node and `Blob[]` in browsers.
+
+## Parse and navigate source
+
+```ts
+import {
+  findCommandAtOffset,
+  findHighlightRegionAtPoint,
+  parseDocument,
+} from "zplr";
+
+const document = parseDocument(source);
+const command = findCommandAtOffset(document, cursorOffset);
+const region = findHighlightRegionAtPoint(job.labels[0].highlightRegions, x, y);
+console.log(command?.canonical, region?.sourceSpan);
+```
+
+Command capability lookup requires the full identity: `getCommandCapability("^FO")` and `getCommandCapability("~DG")`. Prefixless lookups return `undefined`.
 
 ## Persistent sessions
 
-`renderZpl()` always starts with a fresh virtual printer. Use an explicit
-session for settings, syntax characters, downloaded graphics, stored formats,
-and font mappings that must survive between calls:
+`renderZpl()` starts with fresh virtual-printer state. Use a session when syntax characters, settings, graphics, stored formats, encodings, or fonts must persist:
 
 ```ts
-import { createRenderSession } from "zplr/node";
+import { createRenderSession, parseDocument } from "zplr";
 
 const printer = createRenderSession({ printDensity: 8 });
-
 await printer.render("~DGR:MARK.GRF,1,1,80");
-const result = await printer.render(
-  "^XA^PW400^LL240^FO20,20^XGR:MARK.GRF,4,4^FS^XZ"
-);
-
+const parsed = parseDocument("^XA^PW400^LL240^FO20,20^XGR:MARK.GRF,4,4^FS^XZ");
+const result = await printer.renderDocument(parsed);
 await printer.reset();
 ```
 
-`render`, `renderDocument`, and `reset` operations are FIFO-serialized.
-No state is global or shared between sessions.
+Session operations are FIFO-serialized and state is never global.
 
-## Dimensions and density
+## Diagnostics, limits, and failure behavior
 
-Each label is resolved independently:
+Syntax and semantic failures, unsupported behavior, missing resources, and safety-limit violations resolve through structured diagnostics. Parameters that Zebra defines as ignored or defaulted follow those rules without inventing an error. Operational failures from a host Canvas adapter or a user-supplied callback/provider reject the render promise. See the stable [diagnostic-code catalog](./docs/DIAGNOSTICS.md).
 
-1. explicit `width` / `height` options;
-2. active `^PW` / `^LL`;
-3. a documented 4 × 6 inch fallback.
+Defaults limit each dimension to 32,768 dots, each label or temporary field raster and the cumulative output of one render call to 40 million pixels, each decompressed graphic to 16 MiB, session resources to 32 MiB, stored-format depth to 16, expanded commands to 100,000, and output labels to 10,000. All limits are configurable downward or upward through `RenderJobOptions.limits`.
 
-Fallback use is reported with informational diagnostics. `printDensity`
-accepts `6 | 8 | 12 | 24` dots/mm and defaults to 8. The deprecated
-`dpi` values 150, 200, 300, and 600 remain available for compatibility.
+## Profile and evidence
 
-## Rendering coverage
+The pinned profile currently contains 94 supported, 11 partially supported, and 2 unsupported rendering/job command identities. The remaining 116 device, network, printer, and RFID commands are recognized and raster-neutral. Exact limitations are listed in the generated [command table](./docs/COMMAND_SUPPORT.md) and [conformance map](./docs/CONFORMANCE.md).
 
-The renderer includes:
+Representative raster hashes, independent barcode decoding, source spans, session state, malformed input, resource limits, and Node/browser parity are tested. ZPLr does not perform printing, networking, RFID operations, or filesystem resource lookup.
 
-- all rendering layout, text, graphic, barcode, serialization, clock, and
-  format-state commands in the pinned guide;
-- every documented barcode family and relevant parameter mode, including
-  structured `^FM` PDF417 and MicroPDF417;
-- ASCII, compressed ASCII, raw binary, compressed binary, B64, and Z64 graphic
-  payloads;
-- session-scoped graphics, images, encodings, bitmap/outline fonts, stored
-  formats, memory aliases, transfers, and deletion;
-- ZPL and ZPL II selection through persistent `^SZ` state.
+## 0.3 API freeze
 
-Font 0 and Font A are bundled. `^A@`, `^CW`, downloaded TrueType fonts, and
-downloaded Intellifont resources use the asynchronous font-provider contract.
-For `~DS`, the provider receives the original Intellifont bytes and returns an
-OpenType-compatible representation for deterministic rasterization.
+0.3.0 removes the 0.2 compatibility layer and freezes the API described in [api/0.3.0.json](./api/0.3.0.json). A 0.3.x release may add compatible functionality but cannot remove or reinterpret that surface. Read the [0.2 → 0.3 migration guide](./MIGRATION.md) before upgrading.
 
-See the generated [complete command table](./docs/COMMAND_SUPPORT.md) for the
-exact status and limitations of all 223 command identities. Prefix collisions
-such as `^JB` and `~JB` are distinct capabilities.
-
-## Diagnostics and limits
-
-Malformed ZPL returns diagnostics and omits only affected output. Programmer
-errors and unavailable platform adapters may still reject. Stable diagnostic
-codes distinguish unknown commands, invalid prefixes, resource failures, and
-allocation limits.
-
-Default safety limits are 32,768 dots per dimension, 40 million pixels per
-label, 16 MiB per decompressed graphic, 32 MiB of session resources, 16
-stored-format expansion levels, and 100,000 expanded commands.
-
-## Compatibility
-
-The command-object `parse` / `render`, `parseAndRender*`, and current
-`renderDocument` signatures remain available for compatibility. Parsed legacy
-labels delegate to the canonical raster pipeline. These APIs are deprecated;
-new code should use `renderZpl()` or `createRenderSession()`.
-
-`"zpl-ii-2025"` is the default profile. `"zpl-ii-2006"` remains a deprecated
-compatibility alias and emits a migration diagnostic.
+If stabilization reveals another necessary break, it will ship as 0.4.0 and restart the candidate cycle. 1.0.0 will promote the validated 0.3 API without a feature or API redesign. The complete process is in the [release policy](./docs/RELEASE.md).
 
 ## Development
 
 ```bash
 pnpm install
-pnpm test
-pnpm run docs:support:check
-pnpm run typecheck
-pnpm run typecheck:web
-pnpm run build
-pnpm run build:web
+pnpm run verify
+pnpm run test:e2e
+pnpm run audit:prod
 ```
 
-The test suite pins representative raster hashes, verifies Node/browser
-bit-for-bit equality, and decodes generated barcodes with an independent
-test-only decoder.
+See [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [SUPPORT.md](./SUPPORT.md). Bundled-font terms are in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
-Bundled-font redistribution terms are in
-[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+## License and affiliation
 
-## License
-
-MIT
+MIT. ZPL, ZPL II, Zebra, and related marks belong to Zebra Technologies Corp. ZPLr is an independent open-source project and is not affiliated with, endorsed by, or certified by Zebra Technologies. See [TRADEMARKS.md](./TRADEMARKS.md).

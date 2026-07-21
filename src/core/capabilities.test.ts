@@ -22,21 +22,61 @@ describe("command capability registry", () => {
   });
 
   it("marks limitations at command and parameter level", () => {
-    expect(
-      commandCapabilities.filter(({ status }) => status === "partial")
-    ).toEqual([]);
-    expect(getCommandCapability("B4")).toMatchObject({
+    const partial = commandCapabilities.filter(
+      ({ status }) => status === "partial"
+    );
+    expect(partial).toHaveLength(11);
+    expect(partial).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonical: "~DY",
+          effect: "job",
+          limitations: expect.arrayContaining([
+            expect.stringContaining("AR-compressed"),
+          ]),
+        }),
+        expect.objectContaining({
+          canonical: "^GF",
+          effect: "raster",
+          limitations: expect.arrayContaining([
+            expect.stringContaining("compressed-binary"),
+          ]),
+        }),
+        expect.objectContaining({
+          canonical: "^FC",
+          effect: "raster",
+          limitations: expect.arrayContaining([
+            expect.stringContaining("Intl"),
+          ]),
+        }),
+        expect.objectContaining({ canonical: "^KL", effect: "job" }),
+        expect.objectContaining({ canonical: "^CI", effect: "raster" }),
+        expect.objectContaining({ canonical: "^FP", effect: "raster" }),
+        expect.objectContaining({ canonical: "^FT", effect: "raster" }),
+        expect.objectContaining({ canonical: "^PA", effect: "raster" }),
+        expect.objectContaining({
+          canonical: "^SF",
+          effect: "raster",
+          limitations: expect.arrayContaining([
+            expect.stringContaining("combining-cluster"),
+          ]),
+        }),
+        expect.objectContaining({ canonical: "^SL", effect: "raster" }),
+        expect.objectContaining({ canonical: "^TB", effect: "raster" }),
+      ])
+    );
+    expect(getCommandCapability("^B4")).toMatchObject({
       status: "supported",
       category: "barcode",
       effect: "raster",
     });
-    expect(getCommandCapability("CI")).toMatchObject({
-      status: "supported",
+    expect(getCommandCapability("^CI")).toMatchObject({
+      status: "partial",
       effect: "raster",
     });
-    expect(getCommandCapability("BC")?.status).toBe("supported");
-    expect(getCommandCapability("BB")?.status).toBe("supported");
-    expect(getCommandCapability("BQ")).toMatchObject({
+    expect(getCommandCapability("^BC")?.status).toBe("supported");
+    expect(getCommandCapability("^BB")?.status).toBe("supported");
+    expect(getCommandCapability("^BQ")).toMatchObject({
       status: "supported",
       effect: "raster",
     });
@@ -45,13 +85,26 @@ describe("command capability registry", () => {
       effect: "device",
     });
     expect(getCommandCapability("^SF")).toMatchObject({
-      status: "supported",
+      status: "partial",
       category: "text",
       effect: "raster",
     });
     expect(getCommandCapability("~DS")?.status).toBe("supported");
     expect(getCommandCapability("^FM")?.status).toBe("supported");
-    expect(getCommandCapability("^SZ")?.status).toBe("supported");
+    expect(getCommandCapability("^SZ")).toMatchObject({
+      status: "unsupported",
+      effect: "job",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("mode 1"),
+      ]),
+    });
+    expect(getCommandCapability("^JM")).toMatchObject({
+      status: "unsupported",
+      effect: "job",
+      limitations: expect.arrayContaining([
+        expect.stringContaining("printDensity"),
+      ]),
+    });
     expect(getCommandCapability("^CW")).toMatchObject({
       status: "supported",
       effect: "job",

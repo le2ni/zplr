@@ -28,7 +28,7 @@ describe("extended ZPL barcode families", () => {
   it.each(representativeBarcodes)("renders %s", async (_name, command) => {
     const result = await renderZpl(
       `^XA^PW1600^LL500^FO20,20${command}^FS^XZ`,
-      { dpi: 200 }
+      { printDensity: 8 }
     );
     expect(
       result.diagnostics.filter((diagnostic) => diagnostic.severity === "error")

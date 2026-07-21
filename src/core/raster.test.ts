@@ -66,4 +66,69 @@ describe("monochrome raster", () => {
     expect(getDot(inverted, 0, 0)).toBe(false);
     expect(getDot(inverted, 1, 0)).toBe(true);
   });
+
+  it("clips magnified blits to the visible destination window", () => {
+    const source = createMonochromeRaster(2, 2);
+    setDot(source, 0, 0);
+    setDot(source, 1, 1);
+    const target = createMonochromeRaster(3, 3);
+
+    expect(
+      blitRaster(target, source, -99_999, -99_999, {
+        scaleX: 100_000,
+        scaleY: 100_000,
+      })
+    ).toEqual({ width: 200_000, height: 200_000 });
+    expect(
+      Array.from({ length: 3 }, (_, y) =>
+        Array.from({ length: 3 }, (_, x) => getDot(target, x, y))
+      )
+    ).toEqual([
+      [true, false, false],
+      [false, true, true],
+      [false, true, true],
+    ]);
+  });
+
+  it("preserves scaled pixels for every orientation while clipping", () => {
+    const source = createMonochromeRaster(3, 2);
+    setDot(source, 0, 0);
+    setDot(source, 2, 0);
+    setDot(source, 1, 1);
+
+    for (const orientation of ["N", "R", "I", "B"] as const) {
+      const actual = createMonochromeRaster(7, 7);
+      const expected = createMonochromeRaster(7, 7);
+      blitRaster(actual, source, -1, 1, {
+        orientation,
+        scaleX: 2,
+        scaleY: 3,
+      });
+
+      const logicalWidth = source.width * 2;
+      const logicalHeight = source.height * 3;
+      for (let sourceY = 0; sourceY < source.height; sourceY++) {
+        for (let sourceX = 0; sourceX < source.width; sourceX++) {
+          if (!getDot(source, sourceX, sourceY)) continue;
+          for (let scaleY = 0; scaleY < 3; scaleY++) {
+            for (let scaleX = 0; scaleX < 2; scaleX++) {
+              const x = sourceX * 2 + scaleX;
+              const y = sourceY * 3 + scaleY;
+              const point =
+                orientation === "R"
+                  ? { x: logicalHeight - 1 - y, y: x }
+                  : orientation === "I"
+                  ? { x: logicalWidth - 1 - x, y: logicalHeight - 1 - y }
+                  : orientation === "B"
+                  ? { x: y, y: logicalWidth - 1 - x }
+                  : { x, y };
+              setDot(expected, -1 + point.x, 1 + point.y);
+            }
+          }
+        }
+      }
+
+      expect(actual.data).toEqual(expected.data);
+    }
+  });
 });

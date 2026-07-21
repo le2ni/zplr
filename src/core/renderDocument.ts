@@ -1,5 +1,9 @@
-import { interpretLabel, type StoredGraphic } from "./interpreter";
-import type { CanvasPlatform } from "./layoutRenderer";
+import {
+  interpretLabel,
+  type InterpretResourceContext,
+  type StoredGraphic,
+} from "./interpreter";
+import type { CanvasPlatform } from "@/helper/rendering/canvas";
 import { renderLayoutToRaster } from "./rasterRenderer";
 import { rasterToRgba } from "./raster";
 import type { CanvasLike } from "@/helper/rendering/canvas";
@@ -8,14 +12,16 @@ import type {
   FontProvider,
   MonochromeRaster,
   PrintDensity,
+  RenderLimits,
 } from "@/types/RenderJob";
-import type { HighlightRegion } from "@/types/RenderContext";
+import type { HighlightRegion } from "@/types/HighlightRegion";
 import type {
   RenderDocumentOptions,
   ZplDiagnostic,
   ZplDocument,
   ZplLabelNode,
 } from "@/types/ZplDocument";
+import { zplDotConversion, zplNumber } from "./zplNumbers";
 
 const DEFAULT_LIMITS = {
   maxDimension: 32_768,
@@ -26,6 +32,17 @@ const DEFAULT_LIMITS = {
   maxExpandedCommands: 100_000,
   maxLabels: 10_000,
 } as const;
+
+export function resolveRenderLimits(
+  overrides: Partial<RenderLimits> | undefined
+): RenderLimits {
+  const resolved: RenderLimits = { ...DEFAULT_LIMITS };
+  for (const key of Object.keys(DEFAULT_LIMITS) as Array<keyof RenderLimits>) {
+    const value = overrides?.[key];
+    if (Number.isSafeInteger(value) && value! >= 0) resolved[key] = value!;
+  }
+  return resolved;
+}
 
 export interface DocumentRenderResult<TCanvas extends CanvasLike = CanvasLike> {
   canvas: TCanvas;
@@ -46,6 +63,10 @@ export interface RenderDocumentContext {
   bitmapFonts?: ReadonlyMap<string, DownloadedBitmapFont>;
   fontLinks?: ReadonlyMap<string, readonly string[]>;
   encodings?: ReadonlyMap<string, ReadonlyMap<number, number>>;
+  resourcesAt?: (
+    command: ZplLabelNode["commands"][number]
+  ) => InterpretResourceContext | undefined;
+  pixelBudget?: { remaining: number };
 }
 
 function parseDiagnosticsForLabel(
@@ -72,11 +93,9 @@ function uniqueDiagnostics(diagnostics: ZplDiagnostic[]): ZplDiagnostic[] {
 }
 
 function density(options: RenderDocumentOptions): PrintDensity {
-  if (options.printDensity) return options.printDensity;
-  if (options.dpi === 150) return 6;
-  if (options.dpi === 200) return 8;
-  if (options.dpi === 300) return 12;
-  if (options.dpi === 600) return 24;
+  if ([6, 8, 12, 24].includes(options.printDensity ?? 0)) {
+    return options.printDensity as PrintDensity;
+  }
   return 8;
 }
 
@@ -92,27 +111,30 @@ function commandDimension(
   let value: number | undefined;
   let unit: "D" | "I" | "M" = "D";
   let dotConversion = 1;
+  let fieldSeparated = false;
   for (const command of label.commands) {
-    if (command.code === "MU") {
-      const requested = command.parameters[0]?.trim().toUpperCase();
-      if (requested === "D" || requested === "I" || requested === "M") {
-        unit = requested;
-      }
-      const base = Number(command.parameters[1]);
-      const desired = Number(command.parameters[2]);
-      dotConversion =
-        Number.isFinite(base) &&
-        Number.isFinite(desired) &&
-        base > 0 &&
-        desired > 0
-          ? desired / base
-          : 1;
+    if (command.canonical === "^FS") {
+      fieldSeparated = true;
       continue;
     }
-    if (command.code !== code) continue;
-    const parsed = Number.parseInt(command.parameters[0]?.trim() ?? "", 10);
-    const precise = Number(command.parameters[0]?.trim() ?? "");
-    if (Number.isFinite(precise) && precise > 0) {
+    if (command.canonical === "^MU") {
+      const requested = command.parameters[0]?.trim().toUpperCase();
+      if (!requested) {
+        unit = "D";
+      } else if (requested === "D" || requested === "I" || requested === "M") {
+        unit = requested;
+      }
+      dotConversion = zplDotConversion(
+        command.parameters[1],
+        command.parameters[2],
+        dotConversion
+      );
+      continue;
+    }
+    if (command.canonical !== `^${code}`) continue;
+    if (code === "LL" && fieldSeparated) continue;
+    const precise = zplNumber(command.parameters[0]);
+    if (precise !== undefined && precise > 0) {
       const scale =
         unit === "I"
           ? printDensity * 25.4
@@ -120,8 +142,6 @@ function commandDimension(
           ? printDensity
           : dotConversion;
       value = Math.round(precise * scale);
-    } else if (Number.isFinite(parsed) && parsed > 0) {
-      value = parsed;
     }
   }
   return value;
@@ -136,22 +156,23 @@ function variableMediaMaximum(
   let unit: "D" | "I" | "M" = "D";
   let dotConversion = 1;
   for (const command of label.commands) {
-    if (command.code === "MU") {
+    if (command.canonical === "^MU") {
       const requested = command.parameters[0]?.trim().toUpperCase();
-      if (requested === "D" || requested === "I" || requested === "M") {
+      if (!requested) {
+        unit = "D";
+      } else if (requested === "D" || requested === "I" || requested === "M") {
         unit = requested;
       }
-      const base = Number(command.parameters[1]);
-      const desired = Number(command.parameters[2]);
-      dotConversion =
-        Number.isFinite(base) && Number.isFinite(desired) && base > 0 && desired > 0
-          ? desired / base
-          : 1;
-    } else if (command.code === "MN") {
+      dotConversion = zplDotConversion(
+        command.parameters[1],
+        command.parameters[2],
+        dotConversion
+      );
+    } else if (command.canonical === "^MN") {
       variable = command.parameters[0]?.trim().toUpperCase() === "V";
-    } else if (command.code === "ML") {
-      const value = Number(command.parameters[0]);
-      if (Number.isFinite(value) && value > 0) {
+    } else if (command.canonical === "^ML") {
+      const value = zplNumber(command.parameters[0]);
+      if (value !== undefined && value > 0) {
         const scale =
           unit === "I"
             ? printDensity * 25.4
@@ -218,7 +239,8 @@ export async function renderDocumentWithPlatform<
   const results: DocumentRenderResult<TCanvas>[] = [];
   const printDensity = density(options);
   const fallback = fallbackDots(options, printDensity);
-  const limits = { ...DEFAULT_LIMITS, ...options.limits };
+  const limits = resolveRenderLimits(options.limits);
+  const pixelBudget = context.pixelBudget ?? { remaining: limits.maxPixels };
 
   for (let labelIndex = 0; labelIndex < document.labels.length; labelIndex++) {
     const label = document.labels[labelIndex];
@@ -232,30 +254,17 @@ export async function renderDocumentWithPlatform<
       options.height === undefined
         ? variableMediaMaximum(label, printDensity)
         : undefined;
+    const availablePixels = Math.min(limits.maxPixels, pixelBudget.remaining);
     const maximumWorkingHeight = Math.max(
       nominalHeight,
       Math.min(
         limits.maxDimension,
-        Math.floor(limits.maxPixels / Math.max(1, width)),
+        Math.floor(availablePixels / Math.max(1, width)),
         variableMaximum ?? nominalHeight
       )
     );
     const height = variableMaximum === undefined ? nominalHeight : maximumWorkingHeight;
     const localDiagnostics = parseDiagnosticsForLabel(document, labelIndex);
-    if (options.dpi !== undefined) {
-      const dpiMessage =
-        options.printDensity === undefined
-          ? `The dpi option is deprecated; ${options.dpi} dpi maps to ${printDensity} dots/mm.`
-          : `The dpi option is deprecated and was ignored because printDensity=${options.printDensity} was provided.`;
-      localDiagnostics.push(
-        renderDiagnostic(
-          "DEPRECATED_DPI_OPTION",
-          dpiMessage,
-          labelIndex,
-          "info"
-        )
-      );
-    }
     if (options.width === undefined && sourceWidth === undefined) {
       localDiagnostics.push(
         renderDiagnostic(
@@ -284,9 +293,9 @@ export async function renderDocumentWithPlatform<
       nominalHeight <= 0 ||
       width > limits.maxDimension ||
       nominalHeight > limits.maxDimension ||
-      width * nominalHeight > limits.maxPixels
+      width * nominalHeight > availablePixels
     ) {
-      const message = `Label ${width}x${nominalHeight} exceeds the configured raster limits.`;
+      const message = `Label ${width}x${nominalHeight} exceeds the configured per-label or remaining job raster budget.`;
       const raster = { width: 0, height: 0, stride: 0, bitOrder: "msb-first" as const, data: new Uint8Array() };
       const canvas = platform.createCanvas(0, 0) as TCanvas;
       results.push({
@@ -304,24 +313,43 @@ export async function renderDocumentWithPlatform<
       continue;
     }
 
+    const hasFontResources =
+      context.fontProvider !== undefined ||
+      context.bitmapFonts !== undefined ||
+      context.fontLinks !== undefined ||
+      context.memoryAliases !== undefined;
     const layout = interpretLabel(label, {
       dpi: legacyDpi(printDensity),
       labelIndex,
       graphics: context.graphics,
       maxGraphicBytes: limits.maxGraphicBytes,
       fontAliases: context.fontAliases,
-      hasFontProvider: context.fontProvider !== undefined,
       memoryAliases: context.memoryAliases,
       encodings: context.encodings,
+      ...(hasFontResources
+        ? {
+            fontResources: {
+              bitmapFonts: context.bitmapFonts ?? new Map(),
+              fontLinks: context.fontLinks ?? new Map(),
+              memoryAliases: context.memoryAliases ?? new Map(),
+              ...(context.fontProvider
+                ? { fontProvider: context.fontProvider }
+                : {}),
+            },
+          }
+        : {}),
+      resourcesAt: context.resourcesAt,
     });
     const rendered = await renderLayoutToRaster(layout, width, height, labelIndex, {
       fontProvider: context.fontProvider,
       initialRaster: context.initialRaster,
       bitmapFonts: context.bitmapFonts,
       fontLinks: context.fontLinks,
+      maxFieldPixels: availablePixels,
       minimumHeight:
         variableMaximum === undefined ? undefined : nominalHeight,
     });
+    pixelBudget.remaining -= rendered.raster.width * rendered.raster.height;
     results.push({
       canvas: canvasFromRaster(rendered.raster, platform),
       raster: rendered.raster,

@@ -1,70 +1,136 @@
-name: Publish to NPM
+name: Publish immutable release
 
 on:
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to publish (e.g., latest, beta, next)"
-        required: false
-        default: "latest"
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: "true"
 
 jobs:
   publish:
+    name: Verify and publish npm package
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      dist_tag: ${{ steps.release.outputs.dist_tag }}
+      preview_branch: ${{ steps.release.outputs.preview_branch }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm run release:verify
+      - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
+      - name: Record the exact source revision in the package
+        run: node scripts/write-release-metadata.mjs
+      - run: node scripts/ci-fresh-consumer.mjs npm --require-release
+      - run: node scripts/ci-fresh-consumer.mjs pnpm --require-release
+      - name: Require an OIDC-capable npm CLI
+        run: node -e "const v=require('child_process').execFileSync('npm',['--version'],{encoding:'utf8'}).trim().split('.').map(Number); if(v[0]<11 || (v[0]===11 && (v[1]<5 || (v[1]===5 && v[2]<1)))) throw new Error('npm 11.5.1 or newer is required for trusted publishing')"
+      - name: Select npm dist-tag and preview branch
+        id: release
+        run: node -e "const v=require('./package.json').version; const tag=v.includes('-')?'next':'latest'; const branch='release-'+v.replace(/[^a-z0-9-]+/gi,'-').toLowerCase(); require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'dist_tag='+tag+'\npreview_branch='+branch+'\n')"
+      - name: Check whether this exact release is already published
+        id: registry
+        run: node scripts/check-published-version.mjs
+      - name: Publish with npm trusted publishing
+        if: steps.registry.outputs.exists != 'true'
+        run: npm publish --access public --tag "${{ steps.release.outputs.dist_tag }}"
+
+  verify-published:
+    name: Verify registry install, integrity, and provenance
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # Required for npm provenance
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/checkout@v6
         with:
-          node-version: "24"
-          cache: "pnpm"
-          cache-dependency-path: pnpm-lock.yaml
-          registry-url: "https://registry.npmjs.org"
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Verify registry install, integrity, and provenance
+        run: node scripts/verify-published.mjs
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Verify generated command support
-        run: pnpm run docs:support:check
-
-      - name: Type check Node
-        run: pnpm run typecheck
-
-      - name: Type check web
-        run: pnpm run typecheck:web
-
-      - name: Build package
-        run: pnpm run build
-
-      - name: Smoke test package exports
-        run: pnpm run package:check
-
-      - name: Build playground
-        run: pnpm run build:web
-
-      - name: Audit production dependencies
-        run: pnpm run audit:prod
-
-      - name: Publish to NPM
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            pnpm publish --tag ${{ github.event.inputs.tag || 'latest' }} --access public --no-git-checks
-          else
-            pnpm publish --access public --no-git-checks
-          fi
+  deploy-candidate:
+    name: Deploy exact tagged candidate preview
+    needs: [publish, verify-published]
+    if: needs.publish.outputs.dist_tag == 'next'
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: https://${{ needs.publish.outputs.preview_branch }}.zplr.pages.dev
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
+      - run: pnpm run build:web
+      - name: Deploy immutable candidate build to Cloudflare Pages
+        run: pnpm dlx wrangler@4.112.0 pages deploy dist-playground --project-name zplr --branch "${{ needs.publish.outputs.preview_branch }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify candidate metadata and security headers
+        run: node scripts/verify-deployment.mjs "https://${{ needs.publish.outputs.preview_branch }}.zplr.pages.dev" "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"
+
+  deploy-production:
+    name: Deploy exact tagged playground
+    needs: [publish, verify-published]
+    if: needs.publish.outputs.dist_tag == 'latest'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://zplr.de
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
+      - run: pnpm run build:web
+      - name: Deploy immutable build to Cloudflare Pages
+        run: pnpm dlx wrangler@4.112.0 pages deploy dist-playground --project-name zplr --branch main --commit-hash "${GITHUB_SHA}" --commit-dirty=false
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Verify production metadata and security headers
+        run: node scripts/verify-deployment.mjs https://zplr.de "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"

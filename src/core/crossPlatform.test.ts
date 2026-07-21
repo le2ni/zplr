@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Canvas } from "skia-canvas";
 import {
+  createRenderSession as createNodeSession,
   parseDocument,
-  renderDocument as renderNodeDocument,
 } from "@/index.node";
-import { renderDocument as renderWebDocument } from "@/index.web";
+import { createRenderSession as createWebSession } from "@/index.web";
 
 describe("Node and browser adapters", () => {
   const originalDocument = globalThis.document;
@@ -39,14 +39,12 @@ describe("Node and browser adapters", () => {
         "^FO50,40^BY2,2,20^B3N,Y,20,N,N^FD123^FS" +
         "^FO130,40^BQN,2,2,Q,7^FDQA,QR^FS^XZ"
     );
-    const [nodeResult] = await renderNodeDocument(document, {
-      width: 220,
-      height: 120,
-    });
-    const [webResult] = await renderWebDocument(document, {
-      width: 220,
-      height: 120,
-    });
+    const [nodeResult] = (
+      await createNodeSession({ width: 220, height: 120 }).renderDocument(document)
+    ).labels;
+    const [webResult] = (
+      await createWebSession({ width: 220, height: 120 }).renderDocument(document)
+    ).labels;
 
     expect(webResult.diagnostics).toEqual(nodeResult.diagnostics);
     expect(webResult.highlightRegions).toEqual(nodeResult.highlightRegions);

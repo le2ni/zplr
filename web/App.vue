@@ -1,5 +1,11 @@
 <template>
   <div class="relative isolate min-h-screen overflow-hidden bg-white dark:bg-zinc-950">
+    <a
+      href="#main-content"
+      class="sr-only z-50 rounded bg-white px-4 py-2 text-zinc-950 shadow focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+    >
+      Skip to content
+    </a>
     <svg
       class="absolute inset-0 -z-10 size-full stroke-zinc-200 mask-[radial-gradient(100%_100%_at_top_right,white,transparent)] dark:stroke-white/10"
       aria-hidden="true"
@@ -36,6 +42,7 @@
     </div>
 
     <main
+      id="main-content"
       class="mx-auto grid min-h-dvh max-w-7xl items-center gap-12 px-6 py-10 sm:py-14 lg:grid-cols-[minmax(0,0.9fr)_minmax(430px,1.1fr)] lg:gap-10 lg:px-8 lg:py-6 xl:gap-14 xl:py-8"
     >
       <section class="mx-auto max-w-2xl lg:mx-0">
@@ -70,15 +77,18 @@
         <p class="mt-5 max-w-xl text-lg/8 font-medium text-zinc-500 sm:text-xl/8 lg:text-lg/7 xl:text-xl/8 dark:text-zinc-400">
           Parse, inspect, and render ZPL labels with deterministic black-and-white output in Node.js and the browser.
         </p>
-        <p class="mt-3 max-w-lg text-sm/6 text-zinc-500 dark:text-zinc-500">
-          A modern ZPL II 2025 renderer with packed rasters, real label dimensions, diagnostics, graphics, fonts, and common barcodes.
+        <p
+          class="mt-3 max-w-lg text-sm/6 text-zinc-500 dark:text-zinc-500"
+          data-testid="local-only-notice"
+        >
+          A modern ZPL II 2025 renderer with packed rasters, real label dimensions, diagnostics, graphics, fonts, and common barcodes. Rendering is local-only. Label source and generated images never leave this browser.
         </p>
 
         <div class="mt-6 flex flex-wrap items-center gap-4">
           <button
             type="button"
             class="inline-flex cursor-pointer items-center rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200"
-            @click="editorOpen = true"
+            @click="openEditor"
           >
             <IconTextBoxEdit class="mr-2 size-5" aria-hidden="true" />
             Open live playground
@@ -97,15 +107,17 @@
         <dl class="mt-8 grid max-w-lg grid-cols-3 divide-x divide-zinc-200 dark:divide-white/10">
           <div class="pr-5">
             <dt class="text-xs text-zinc-500">Commands classified</dt>
-            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">223</dd>
+            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">
+              {{ commandCapabilities.length || "…" }}
+            </dd>
           </div>
           <div class="px-5">
             <dt class="text-xs text-zinc-500">Canonical raster</dt>
             <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">1-bit</dd>
           </div>
           <div class="pl-5">
-            <dt class="text-xs text-zinc-500">Runtime parity</dt>
-            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">Exact</dd>
+            <dt class="text-xs text-zinc-500">Rendering</dt>
+            <dd class="mt-1 text-lg font-semibold text-zinc-950 dark:text-white">Local-only</dd>
           </div>
         </dl>
       </section>
@@ -115,7 +127,7 @@
           type="button"
           class="group block w-full cursor-pointer text-left"
           aria-label="Open the live ZPL playground"
-          @click="editorOpen = true"
+          @click="openEditor"
         >
           <div class="overflow-hidden rounded-[2rem] border border-zinc-200 bg-white shadow-2xl shadow-zinc-900/15 ring-1 ring-black/5 transition duration-300 group-hover:-translate-y-1 group-hover:shadow-zinc-900/20 dark:border-white/10 dark:bg-zinc-900 dark:shadow-black/40 dark:ring-white/5">
             <div class="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-white/10 sm:px-5">
@@ -124,13 +136,13 @@
                 <span class="size-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
                 <span class="size-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
               </div>
-              <span class="font-mono text-xs text-zinc-400">zplr.zpl</span>
+              <span class="font-mono text-xs text-zinc-600 dark:text-zinc-400">zplr.zpl</span>
               <span class="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold tracking-wide text-emerald-700 uppercase dark:bg-emerald-400/10 dark:text-emerald-300">
                 Live
               </span>
             </div>
             <div class="landing-preview-grid flex min-h-[420px] items-center justify-center p-6 sm:min-h-[520px] sm:p-8 lg:h-[clamp(360px,calc(100dvh-12rem),580px)] lg:min-h-0 lg:p-6">
-              <span v-if="rendering" class="text-sm text-zinc-400">Rendering label…</span>
+              <span v-if="rendering" class="text-sm text-zinc-400" role="status" aria-live="polite">Rendering label…</span>
               <span v-else-if="renderFailure" class="max-w-sm text-center text-sm text-rose-600">
                 {{ renderFailure }}
               </span>
@@ -157,7 +169,7 @@
   </div>
 
   <TransitionRoot as="template" :show="editorOpen">
-    <Dialog class="relative z-50" @close="editorOpen = false">
+    <Dialog class="relative z-50" @close="closeEditor">
       <TransitionChild
         as="template"
         enter="duration-200 ease-out"
@@ -180,7 +192,10 @@
           leave-from="translate-y-0 opacity-100 sm:scale-100"
           leave-to="translate-y-4 opacity-0 sm:scale-[.98]"
         >
-          <DialogPanel class="mx-auto flex h-full max-w-[1800px] flex-col overflow-hidden bg-white shadow-2xl sm:rounded-2xl dark:bg-zinc-950">
+          <DialogPanel
+            class="mx-auto flex h-full max-w-[1800px] flex-col overflow-hidden bg-white shadow-2xl sm:rounded-2xl dark:bg-zinc-950"
+            data-testid="playground-panel"
+          >
             <header class="flex h-16 shrink-0 items-center justify-between border-b border-zinc-200 px-4 sm:px-6 dark:border-white/10">
               <div class="flex min-w-0 items-center gap-3">
                 <img class="size-8 dark:invert" src="./assets/logo.svg" alt="" />
@@ -188,7 +203,9 @@
                   <DialogTitle class="truncate text-sm font-semibold text-zinc-950 dark:text-white">
                     ZPLr live playground
                   </DialogTitle>
-                  <p class="truncate text-xs text-zinc-500">Deterministic ZPL II 2025 preview</p>
+                  <DialogDescription class="truncate text-xs text-zinc-500">
+                    Local-only deterministic ZPL II 2025 preview · v{{ packageVersion }}
+                  </DialogDescription>
                 </div>
               </div>
               <div class="flex items-center gap-2">
@@ -203,7 +220,7 @@
                 <button
                   type="button"
                   class="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-950 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 dark:hover:bg-white/10 dark:hover:text-white"
-                  @click="editorOpen = false"
+                  @click="closeEditor"
                 >
                   <span class="sr-only">Close playground</span>
                   <IconClose class="size-6" aria-hidden="true" />
@@ -220,6 +237,7 @@
                     data-testid="sample-select"
                     @change="loadSample"
                   >
+                    <option value="custom">Custom source</option>
                     <option v-for="sample in samples" :key="sample.id" :value="sample.id">
                       {{ sample.name }}
                     </option>
@@ -244,11 +262,11 @@
                 <template v-if="sizeMode === 'override'">
                   <label class="control min-w-24">
                     <span>Width</span>
-                    <input v-model.number="overrideWidth" min="1" max="32768" type="number" />
+                    <input v-model.number="overrideWidth" min="1" max="8192" type="number" />
                   </label>
                   <label class="control min-w-24">
                     <span>Height</span>
-                    <input v-model.number="overrideHeight" min="1" max="32768" type="number" />
+                    <input v-model.number="overrideHeight" min="1" max="8192" type="number" />
                   </label>
                 </template>
               </div>
@@ -261,13 +279,14 @@
                     <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">ZPL source</h2>
                     <p class="mt-0.5 text-xs text-zinc-500">Click a preview field or diagnostic to find its command.</p>
                   </div>
-                  <span class="rounded-full bg-zinc-100 px-2.5 py-1 font-mono text-[10px] font-semibold text-zinc-500 dark:bg-white/5 dark:text-zinc-400">
+                  <span class="rounded-full bg-zinc-100 px-2.5 py-1 font-mono text-[10px] font-semibold text-zinc-600 dark:bg-white/5 dark:text-zinc-400">
                     .ZPL
                   </span>
                 </div>
                 <div class="min-h-[420px] flex-1">
                   <MonacoEditor
                     v-model="source"
+                    :capabilities="commandCapabilities"
                     :cursor-position="editorCursor"
                     :highlight-range="highlightRange"
                     @update:cursor-position="editorCursor = $event"
@@ -278,6 +297,8 @@
                   <button
                     class="flex w-full items-center justify-between px-4 py-3 text-left"
                     type="button"
+                    :aria-expanded="diagnosticsOpen"
+                    aria-controls="diagnostic-list"
                     @click="diagnosticsOpen = !diagnosticsOpen"
                   >
                     <span class="text-sm font-semibold text-zinc-950 dark:text-white">Diagnostics</span>
@@ -289,15 +310,16 @@
                       {{ diagnosticsOpen ? "▴" : "▾" }}
                     </span>
                   </button>
-                  <div v-if="diagnosticsOpen" class="max-h-56 overflow-auto border-t border-zinc-200 dark:border-white/10">
+                  <div id="diagnostic-list" v-if="diagnosticsOpen" class="max-h-56 overflow-auto border-t border-zinc-200 dark:border-white/10">
                     <p v-if="!diagnostics.length" class="px-4 py-6 text-sm text-zinc-500">
                       This job has no diagnostics.
                     </p>
                     <button
                       v-for="(diagnostic, index) in diagnostics"
                       :key="diagnosticKey(diagnostic, index)"
-                      class="flex w-full gap-3 border-b border-zinc-100 px-4 py-3 text-left transition last:border-0 hover:bg-zinc-50 dark:border-white/5 dark:hover:bg-white/5"
+                      class="flex w-full gap-3 border-b border-zinc-100 px-4 py-3 text-left transition last:border-0 enabled:hover:bg-zinc-50 disabled:cursor-default dark:border-white/5 dark:enabled:hover:bg-white/5"
                       type="button"
+                      :disabled="!diagnostic.span"
                       @click="focusSpan(diagnostic.span)"
                     >
                       <span :class="severityClass(diagnostic.severity)" class="mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase">
@@ -350,7 +372,14 @@
                   </div>
 
                   <div class="landing-preview-grid flex min-h-[460px] items-center justify-center overflow-auto p-6">
-                    <span v-if="rendering" class="text-sm text-zinc-400">Rendering packed dots…</span>
+                    <span
+                      v-if="rendering"
+                      class="text-sm text-zinc-400"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      Rendering packed dots…
+                    </span>
                     <div v-else-if="renderFailure" class="max-w-sm rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-400/20 dark:bg-rose-400/10 dark:text-rose-200">
                       {{ renderFailure }}
                     </div>
@@ -371,6 +400,7 @@
                       <h2 class="text-sm font-semibold text-zinc-950 dark:text-white">Command capabilities</h2>
                       <p class="mt-1 text-xs text-zinc-500">
                         {{ capabilityCounts.supported }} supported · {{ capabilityCounts.partial }} partial ·
+                        {{ capabilityCounts.unsupported }} unsupported ·
                         {{ capabilityCounts.nonRendering }} non-rendering
                       </p>
                     </div>
@@ -415,6 +445,7 @@
 <script setup lang="ts">
 import {
   Dialog,
+  DialogDescription,
   DialogPanel,
   DialogTitle,
   TransitionChild,
@@ -425,23 +456,22 @@ import {
   IconClose,
   IconTextBoxEdit,
 } from "@iconify-prerendered/vue-mdi";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import packageJson from "../package.json";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import shippingSample from "../fixtures/zplr.zpl?raw";
 import retailSample from "../fixtures/retail-upc-ean.zpl?raw";
 import assetSample from "../fixtures/asset-matrix-pdf417.zpl?raw";
 import storedSample from "../fixtures/stored-resources.zpl?raw";
-import {
-  commandCapabilities,
-  renderZpl,
-  type CommandCapabilityStatus,
-  type PrintDensity,
-  type RenderedLabel,
-  type SourceSpan,
-  type ZplDiagnostic,
+import type {
+  CommandCapability,
+  CommandCapabilityStatus,
+  PrintDensity,
+  RenderedLabel,
+  SourceSpan,
+  ZplDiagnostic,
 } from "../src/index.web";
-import type { HighlightRegion } from "../src/types/RenderContext";
-import MonacoEditor from "./components/MonacoEditor.vue";
+const MonacoEditor = defineAsyncComponent(
+  () => import("./components/MonacoEditor.vue")
+);
 
 const samples = [
   { id: "shipping", name: "UTF-8 shipping label", source: shippingSample },
@@ -450,15 +480,17 @@ const samples = [
   { id: "stored", name: "Stored format and graphic", source: storedSample },
 ] as const;
 
-const packageVersion = packageJson.version;
-const selectedSample = ref<(typeof samples)[number]["id"]>("shipping");
+const packageVersion = __ZPLR_VERSION__;
+type SampleId = (typeof samples)[number]["id"];
+const selectedSample = ref<SampleId | "custom">("shipping");
 const source = ref(shippingSample);
 const printDensity = ref<PrintDensity>(8);
 const sizeMode = ref<"source" | "override">("source");
 const overrideWidth = ref(812);
 const overrideHeight = ref(1218);
-const labels = ref<RenderedLabel<HTMLCanvasElement>[]>([]);
-const diagnostics = ref<ZplDiagnostic[]>([]);
+const labels = shallowRef<readonly RenderedLabel<HTMLCanvasElement>[]>([]);
+const diagnostics = shallowRef<readonly ZplDiagnostic[]>([]);
+const commandCapabilities = shallowRef<readonly CommandCapability[]>([]);
 const activeLabelIndex = ref(0);
 const previewUrl = ref<string>();
 const rendering = ref(false);
@@ -470,6 +502,53 @@ const highlightRange = ref<SourceSpan>();
 const capabilityQuery = ref("");
 let renderTimer: number | undefined;
 let renderSequence = 0;
+let rendererModule: Promise<typeof import("../src/index.web")> | undefined;
+let editorTrigger: HTMLElement | undefined;
+let focusRestoreTimer: number | undefined;
+
+const playgroundLimits = {
+  maxDimension: 8_192,
+  maxPixels: 5_000_000,
+  maxGraphicBytes: 4_000_000,
+  maxSessionBytes: 8_000_000,
+  maxTemplateDepth: 8,
+  maxExpandedCommands: 25_000,
+  maxLabels: 5,
+} as const;
+
+function openEditor(event: MouseEvent): void {
+  if (focusRestoreTimer !== undefined) {
+    window.clearTimeout(focusRestoreTimer);
+    focusRestoreTimer = undefined;
+  }
+  if (event.currentTarget instanceof HTMLElement) {
+    editorTrigger = event.currentTarget;
+  }
+  editorOpen.value = true;
+}
+
+function closeEditor(): void {
+  editorOpen.value = false;
+  if (focusRestoreTimer !== undefined) window.clearTimeout(focusRestoreTimer);
+  // Run after the 150 ms leave transition and Headless UI's own focus cleanup.
+  focusRestoreTimer = window.setTimeout(restoreEditorTrigger, 300);
+}
+
+function restoreEditorTrigger(): void {
+  if (editorTrigger?.isConnected) {
+    editorTrigger.focus({ preventScroll: true });
+  }
+  editorTrigger = undefined;
+  focusRestoreTimer = undefined;
+}
+
+function loadRenderer(): Promise<typeof import("../src/index.web")> {
+  rendererModule ??= import("../src/index.web").then((module) => {
+    commandCapabilities.value = module.commandCapabilities;
+    return module;
+  });
+  return rendererModule;
+}
 
 const activeLabel = computed(() => labels.value[activeLabelIndex.value]);
 const errorCount = computed(
@@ -482,20 +561,20 @@ const infoCount = computed(
   () => diagnostics.value.filter(({ severity }) => severity === "info").length
 );
 const capabilityCounts = computed(() => ({
-  supported: commandCapabilities.filter(({ status }) => status === "supported").length,
-  partial: commandCapabilities.filter(({ status }) => status === "partial").length,
-  nonRendering: commandCapabilities.filter(({ status }) => status === "non-rendering").length,
-  unsupported: commandCapabilities.filter(({ status }) => status === "unsupported").length,
+  supported: commandCapabilities.value.filter(({ status }) => status === "supported").length,
+  partial: commandCapabilities.value.filter(({ status }) => status === "partial").length,
+  nonRendering: commandCapabilities.value.filter(({ status }) => status === "non-rendering").length,
+  unsupported: commandCapabilities.value.filter(({ status }) => status === "unsupported").length,
 }));
 const visibleCapabilities = computed(() => {
   const query = capabilityQuery.value.toUpperCase();
   const matches = query
-    ? commandCapabilities.filter(
+    ? commandCapabilities.value.filter(
         (capability) =>
           capability.canonical.includes(query) ||
           capability.name.toUpperCase().includes(query)
       )
-    : commandCapabilities.filter(({ status }) => status !== "unsupported");
+    : commandCapabilities.value.filter(({ status }) => status !== "unsupported");
   return matches.slice(0, 60);
 });
 
@@ -534,59 +613,42 @@ function capabilityClass(status: CommandCapabilityStatus): string {
   if (status === "non-rendering") {
     return "bg-sky-100 text-sky-700 dark:bg-sky-400/15 dark:text-sky-300";
   }
-  return "bg-zinc-100 text-zinc-500 dark:bg-white/5 dark:text-zinc-400";
+  return "bg-zinc-100 text-zinc-600 dark:bg-white/5 dark:text-zinc-400";
 }
 
-function contains(region: HighlightRegion, x: number, y: number): boolean {
-  if (region.type === "circle" && region.radius !== undefined) {
-    return (x - region.x) ** 2 + (y - region.y) ** 2 <= region.radius ** 2;
-  }
-  if (region.width !== undefined && region.height !== undefined) {
-    if (region.type === "ellipse") {
-      const rx = region.width / 2;
-      const ry = region.height / 2;
-      return (
-        ((x - region.x - rx) / rx) ** 2 +
-          ((y - region.y - ry) / ry) ** 2 <=
-        1
-      );
-    }
-    return (
-      x >= region.x &&
-      x <= region.x + region.width &&
-      y >= region.y &&
-      y <= region.y + region.height
-    );
-  }
-  return Math.hypot(x - region.x, y - region.y) <= 16;
-}
-
-function selectRenderedField(event: MouseEvent): void {
+async function selectRenderedField(event: MouseEvent): Promise<void> {
   const label = activeLabel.value;
   const image = event.currentTarget as HTMLImageElement;
   if (!label || !image) return;
   const bounds = image.getBoundingClientRect();
   const x = ((event.clientX - bounds.left) / bounds.width) * label.width;
   const y = ((event.clientY - bounds.top) / bounds.height) * label.height;
-  const region = [...label.highlightRegions]
-    .reverse()
-    .find((candidate) => candidate.sourceSpan && contains(candidate, x, y));
+  const { findHighlightRegionAtPoint } = await loadRenderer();
+  const region = findHighlightRegionAtPoint(label.highlightRegions, x, y);
   focusSpan(region?.sourceSpan);
 }
 
-async function updatePreview(): Promise<void> {
-  const sequence = ++renderSequence;
-  rendering.value = true;
-  renderFailure.value = undefined;
+function overrideDimension(value: number): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(
+    playgroundLimits.maxDimension,
+    Math.max(1, Math.trunc(numeric))
+  );
+}
+
+async function updatePreview(sequence: number): Promise<void> {
   try {
     const options =
       sizeMode.value === "override"
         ? {
             printDensity: printDensity.value,
-            width: Math.max(1, Math.trunc(overrideWidth.value)),
-            height: Math.max(1, Math.trunc(overrideHeight.value)),
+            width: overrideDimension(overrideWidth.value),
+            height: overrideDimension(overrideHeight.value),
+            limits: playgroundLimits,
           }
-        : { printDensity: printDensity.value };
+        : { printDensity: printDensity.value, limits: playgroundLimits };
+    const { renderZpl } = await loadRenderer();
     const result = await renderZpl(source.value, options);
     if (sequence !== renderSequence) return;
     labels.value = result.labels;
@@ -610,7 +672,10 @@ async function updatePreview(): Promise<void> {
 
 function schedulePreview(): void {
   if (renderTimer !== undefined) window.clearTimeout(renderTimer);
-  renderTimer = window.setTimeout(() => void updatePreview(), 120);
+  const sequence = ++renderSequence;
+  rendering.value = true;
+  renderFailure.value = undefined;
+  renderTimer = window.setTimeout(() => void updatePreview(sequence), 120);
 }
 
 async function downloadPng(): Promise<void> {
@@ -624,9 +689,18 @@ async function downloadPng(): Promise<void> {
   const link = document.createElement("a");
   link.href = url;
   link.download = `zplr-label-${activeLabelIndex.value + 1}.png`;
+  link.hidden = true;
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+watch(source, (value) => {
+  selectedSample.value =
+    samples.find((sample) => sample.source === value)?.id ?? "custom";
+  highlightRange.value = undefined;
+});
 
 watch(
   [source, printDensity, sizeMode, overrideWidth, overrideHeight],
@@ -637,7 +711,9 @@ watch(activeLabelIndex, () => {
   previewUrl.value = activeLabel.value?.canvas?.toDataURL("image/png");
 });
 onBeforeUnmount(() => {
+  renderSequence++;
   if (renderTimer !== undefined) window.clearTimeout(renderTimer);
+  if (focusRestoreTimer !== undefined) window.clearTimeout(focusRestoreTimer);
 });
 </script>
 

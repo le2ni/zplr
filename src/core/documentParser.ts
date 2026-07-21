@@ -70,7 +70,8 @@ function binaryCommandEnd(
   parameterStart: number,
   delimiter: string,
   code: string,
-  prefixKind: ZplPrefixKind
+  prefixKind: ZplPrefixKind,
+  state: LexicalState
 ): number | undefined {
   const headerFields =
     code === "DY" && prefixKind === "control"
@@ -81,17 +82,22 @@ function binaryCommandEnd(
   if (headerFields === 0) return undefined;
   const delimiters: number[] = [];
   for (let index = parameterStart; index < source.length; index++) {
-    if (source[index] !== delimiter) continue;
-    delimiters.push(index);
-    if (delimiters.length === headerFields) break;
+    if (source[index] === delimiter) {
+      delimiters.push(index);
+      if (delimiters.length === headerFields) break;
+    } else if (isBoundary(source[index], state)) {
+      return undefined;
+    }
   }
   if (delimiters.length < headerFields) return undefined;
   const lastDelimiter = delimiters[headerFields - 1];
   const header = source.slice(parameterStart, lastDelimiter).split(delimiter);
   const format = header[code === "DY" ? 1 : 0]?.trim().toUpperCase();
   if (format !== "B" && format !== "C") return undefined;
-  const bytes = Number.parseInt(header[code === "DY" ? 3 : 1] ?? "", 10);
-  if (!Number.isFinite(bytes) || bytes < 0) return undefined;
+  const byteCount = header[code === "DY" ? 3 : 1]?.trim() ?? "";
+  if (!/^\d+$/.test(byteCount)) return undefined;
+  const bytes = Number(byteCount);
+  if (!Number.isSafeInteger(bytes)) return undefined;
   return Math.min(source.length, lastDelimiter + 1 + bytes);
 }
 
@@ -181,13 +187,16 @@ function tokenize(
     const canonicalPrefix = prefixKind === "format" ? "^" : "~";
     const canonical = `${canonicalPrefix}${codeInfo.code}`;
     const parameterStart = boundary + 1 + codeInfo.length;
-    const changesLexicalState = ["CC", "CD", "CT"].includes(codeInfo.code);
+    const changesLexicalState = ["^CC", "~CC", "^CD", "~CD", "^CT", "~CT"].includes(
+      canonical
+    );
     const binaryEnd = binaryCommandEnd(
       source,
       parameterStart,
       state.delimiter,
       codeInfo.code,
-      prefixKind
+      prefixKind,
+      state
     );
     const end = changesLexicalState
       ? Math.min(parameterStart + 1, source.length)
@@ -268,14 +277,14 @@ function tokenize(
           `${codeInfo.code} requires the next character as its parameter.`,
           node.span,
           "error",
-          codeInfo.code
+          node.canonical
         )
       );
-    } else if (codeInfo.code === "CC") {
+    } else if (node.canonical === "^CC" || node.canonical === "~CC") {
       state.formatPrefix = rawParameters[0];
-    } else if (codeInfo.code === "CT") {
+    } else if (node.canonical === "^CT" || node.canonical === "~CT") {
       state.controlPrefix = rawParameters[0];
-    } else if (codeInfo.code === "CD") {
+    } else if (node.canonical === "^CD" || node.canonical === "~CD") {
       state.delimiter = rawParameters[0];
     }
 
@@ -286,7 +295,7 @@ function tokenize(
           "Format and control prefixes are the same; commands are treated as format commands.",
           node.span,
           "warning",
-          node.code
+          node.canonical
         )
       );
     }
@@ -348,7 +357,7 @@ function groupItems(
   };
 
   for (const command of commands) {
-    if (command.code === "XA") {
+    if (command.canonical === "^XA") {
       if (current.length > 0) {
         if (currentIsSessionSetup()) {
           finishSessionSetup();
@@ -359,7 +368,7 @@ function groupItems(
               "A new XA command started before the previous format ended.",
               command.span,
               "error",
-              "XA"
+              "^XA"
             )
           );
         } else {
@@ -378,7 +387,7 @@ function groupItems(
       continue;
     }
 
-    if (command.code === "XZ") {
+    if (command.canonical === "^XZ") {
       if (current.length === 0) {
         diagnostics.push(
           diagnostic(
@@ -386,9 +395,11 @@ function groupItems(
             "XZ was received without a matching XA.",
             command.span,
             "error",
-            "XZ"
+            "^XZ"
           )
         );
+        items.push(command);
+        continue;
       } else if (!explicit) {
         diagnostics.push(
           diagnostic(
@@ -464,16 +475,7 @@ export function parseDocument(
   }
   const tokenized = tokenize(source, options.initialSyntax);
   const diagnostics = [...tokenized.diagnostics];
-  if (options.profile === "zpl-ii-2006") {
-    diagnostics.push(
-      diagnostic(
-        "DEPRECATED_PROFILE",
-        "zpl-ii-2006 is a deprecated compatibility alias; zpl-ii-2025 semantics were used.",
-        { start: 0, end: 0 },
-        "warning"
-      )
-    );
-  } else if (options.profile !== undefined && options.profile !== profile) {
+  if (options.profile !== undefined && options.profile !== profile) {
     diagnostics.push(
       diagnostic(
         "UNSUPPORTED_PROFILE",

@@ -3,20 +3,21 @@ import {
   decodeDownloadData,
   decodeGraphic,
   GraphicDecodeError,
+  validateGraphicGeometry,
 } from "./graphicDecoder";
 import { decodePng } from "./pngDecoder";
 import { decodeBmp, decodePcx } from "./imageDecoder";
 import {
   normalizeResourceName,
+  type InterpretResourceContext,
   type StoredGraphic,
 } from "./interpreter";
 import {
-  DEFAULT_LIMITS,
   renderDocumentWithPlatform,
+  resolveRenderLimits,
   type DocumentRenderResult,
 } from "./renderDocument";
-import type { CanvasPlatform } from "./layoutRenderer";
-import type { CanvasLike } from "@/helper/rendering/canvas";
+import type { CanvasLike, CanvasPlatform } from "@/helper/rendering/canvas";
 import type {
   DownloadedBitmapFont,
   DownloadedFontSource,
@@ -34,13 +35,13 @@ import type {
   ZplLabelNode,
   ZplSyntaxState,
 } from "@/types/ZplDocument";
+import { zplDpiConversion } from "./zplNumbers";
 
 const PERSISTENT_COMMANDS = new Set([
   "BY",
   "CF",
   "CI",
   "CV",
-  "CW",
   "FW",
   "LH",
   "LL",
@@ -55,13 +56,34 @@ const PERSISTENT_COMMANDS = new Set([
   "PA",
   "PW",
   "SE",
-  "SZ",
 ]);
+
+const DOWNLOAD_OBJECT_EXTENSIONS: Readonly<Record<string, string>> = {
+  T: "TTF",
+  E: "TTE",
+  P: "PNG",
+  B: "BMP",
+  X: "PCX",
+  G: "GRF",
+  NRD: "NRD",
+  PAC: "PAC",
+  C: "WML",
+  F: "HTM",
+  H: "GET",
+};
+
+const MAX_SERIALIZATION_FIELD_SIZE = 3 * 1024;
+const RESOURCE_CONTEXT_ID: unique symbol = Symbol("resource-context-id");
+
+type ResourceContextCommand = ZplCommandNode & {
+  [RESOURCE_CONTEXT_ID]?: number;
+};
 
 interface StoredFormat {
   commands: ZplCommandNode[];
   bytes: number;
   definitionSpan: { start: number; end: number };
+  documentId: number;
 }
 
 interface RtcOffset {
@@ -82,14 +104,25 @@ interface RtcState {
 
 interface StoredObject {
   data: Uint8Array;
-  kind: "font" | "intellifont" | "encoding" | "binary";
+  kind:
+    | "opentype"
+    | "bitmap-font"
+    | DownloadedFontSource["format"]
+    | "encoding"
+    | "binary";
+}
+
+interface StoredPersistentCommand {
+  command: ZplCommandNode;
+  documentId: number;
+  bytes: number;
 }
 
 interface SessionState {
   syntax: ZplSyntaxState;
   graphics: Map<string, StoredGraphic>;
   formats: Map<string, StoredFormat>;
-  persistent: Map<string, ZplCommandNode>;
+  persistent: Map<string, StoredPersistentCommand>;
   fontAliases: Map<string, string>;
   resourceBytes: number;
   retainedRaster?: MonochromeRaster;
@@ -99,7 +132,7 @@ interface SessionState {
   bitmapFonts: Map<string, DownloadedBitmapFont>;
   encodings: Map<string, ReadonlyMap<number, number>>;
   fontLinks: Map<string, string[]>;
-  zplVersion: 1 | 2;
+  nextDocumentId: number;
 }
 
 function newState(): SessionState {
@@ -125,7 +158,7 @@ function newState(): SessionState {
     bitmapFonts: new Map(),
     encodings: new Map(),
     fontLinks: new Map(),
-    zplVersion: 2,
+    nextDocumentId: 0,
   };
 }
 
@@ -137,23 +170,30 @@ function sessionResourceName(
   return normalizeResourceName(value, extension, state.memoryAliases);
 }
 
-function aliasedPath(value: string, state: SessionState): string {
+function aliasedPathUsing(
+  value: string,
+  memoryAliases: ReadonlyMap<string, string>
+): string {
   let normalized = value.trim().toUpperCase();
   if (!normalized.includes(":")) normalized = `R:${normalized}`;
-  const mapped = state.memoryAliases.get(normalized[0]);
+  const mapped = memoryAliases.get(normalized[0]);
   return mapped
     ? `${mapped}:${normalized.slice(normalized.indexOf(":") + 1)}`
     : normalized;
 }
 
+function aliasedPath(value: string, state: SessionState): string {
+  return aliasedPathUsing(value, state.memoryAliases);
+}
+
 function changeMemoryAliases(command: ZplCommandNode, state: SessionState): void {
   const logical = ["B", "E", "R", "A"] as const;
-  const requested = logical.map((letter, index) => {
-    const value = command.parameters[index]?.trim().toUpperCase().replace(/:$/, "");
-    return value === "NONE" || ["A", "B", "E", "R"].includes(value ?? "")
-      ? value!
-      : letter;
-  });
+  const requested = logical.map((letter, index) =>
+    (command.parameters[index]?.trim().toUpperCase().replace(/:$/, "") || letter)
+  );
+  if (requested.some((value) => value !== "NONE" && !logical.includes(value as typeof logical[number]))) {
+    return;
+  }
   const multiple = command.parameters[4]?.trim().toUpperCase() === "M";
   const active = requested.filter((value) => value !== "NONE");
   if (!multiple && new Set(active).size !== active.length) {
@@ -285,6 +325,13 @@ function serializeMasked(
   return characters.join("");
 }
 
+function serializationFieldSize(command: ZplCommandNode): number {
+  return (
+    (command.parameters[0]?.length ?? 0) +
+    (command.parameters[1]?.length ?? 0)
+  );
+}
+
 const RTC_LOCALES = [
   "en", "es", "fr", "de", "it", "nb", "pt", "sv", "da", "es",
   "nl", "fi", "ja", "ko", "zh-CN", "zh-TW", "ru", "pl",
@@ -295,32 +342,57 @@ function pad(value: number, length = 2): string {
 }
 
 function dayOfYear(date: Date): number {
-  const start = new Date(date.getFullYear(), 0, 1);
-  return Math.floor((date.getTime() - start.getTime()) / 86_400_000) + 1;
+  const day = Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate()
+  );
+  const start = Date.UTC(date.getUTCFullYear(), 0, 1);
+  return Math.floor((day - start) / 86_400_000) + 1;
 }
 
 function rtcToken(date: Date, token: string, language: number): string | undefined {
   const locale = RTC_LOCALES[Math.min(18, Math.max(1, language)) - 1] ?? "en";
-  const hour = date.getHours();
+  const hour = date.getUTCHours();
   const ordinal = dayOfYear(date);
-  if (token === "a") return new Intl.DateTimeFormat(locale, { weekday: "short" }).format(date);
-  if (token === "A") return new Intl.DateTimeFormat(locale, { weekday: "long" }).format(date);
-  if (token === "b") return new Intl.DateTimeFormat(locale, { month: "short" }).format(date);
-  if (token === "B") return new Intl.DateTimeFormat(locale, { month: "long" }).format(date);
-  if (token === "d") return pad(date.getDate());
+  if (token === "a") {
+    return new Intl.DateTimeFormat(locale, {
+      weekday: "short",
+      timeZone: "UTC",
+    }).format(date);
+  }
+  if (token === "A") {
+    return new Intl.DateTimeFormat(locale, {
+      weekday: "long",
+      timeZone: "UTC",
+    }).format(date);
+  }
+  if (token === "b") {
+    return new Intl.DateTimeFormat(locale, {
+      month: "short",
+      timeZone: "UTC",
+    }).format(date);
+  }
+  if (token === "B") {
+    return new Intl.DateTimeFormat(locale, {
+      month: "long",
+      timeZone: "UTC",
+    }).format(date);
+  }
+  if (token === "d") return pad(date.getUTCDate());
   if (token === "H") return pad(hour);
   if (token === "I") return pad(hour % 12 || 12);
   if (token === "j") return pad(ordinal, 3);
-  if (token === "m") return pad(date.getMonth() + 1);
-  if (token === "M") return pad(date.getMinutes());
+  if (token === "m") return pad(date.getUTCMonth() + 1);
+  if (token === "M") return pad(date.getUTCMinutes());
   if (token === "p") return hour < 12 ? "AM" : "PM";
-  if (token === "S") return pad(date.getSeconds());
-  if (token === "w") return pad(date.getDay());
-  if (token === "y") return pad(date.getFullYear() % 100);
-  if (token === "Y") return String(date.getFullYear());
-  if (token === "U") return pad(Math.floor((ordinal - 1 + 7 - date.getDay()) / 7));
+  if (token === "S") return pad(date.getUTCSeconds());
+  if (token === "w") return pad(date.getUTCDay());
+  if (token === "y") return pad(date.getUTCFullYear() % 100);
+  if (token === "Y") return String(date.getUTCFullYear());
+  if (token === "U") return pad(Math.floor((ordinal - 1 + 7 - date.getUTCDay()) / 7));
   if (token === "W") {
-    const mondayDay = (date.getDay() + 6) % 7;
+    const mondayDay = (date.getUTCDay() + 6) % 7;
     return pad(Math.floor((ordinal - 1 + 7 - mondayDay) / 7));
   }
   return undefined;
@@ -329,12 +401,12 @@ function rtcToken(date: Date, token: string, language: number): string | undefin
 function applyRtcOffset(date: Date, offset: RtcOffset | undefined): Date {
   const result = new Date(date.getTime());
   if (!offset) return result;
-  result.setFullYear(result.getFullYear() + offset.years);
-  result.setMonth(result.getMonth() + offset.months);
-  result.setDate(result.getDate() + offset.days);
-  result.setHours(result.getHours() + offset.hours);
-  result.setMinutes(result.getMinutes() + offset.minutes);
-  result.setSeconds(result.getSeconds() + offset.seconds);
+  result.setUTCFullYear(result.getUTCFullYear() + offset.years);
+  result.setUTCMonth(result.getUTCMonth() + offset.months);
+  result.setUTCDate(result.getUTCDate() + offset.days);
+  result.setUTCHours(result.getUTCHours() + offset.hours);
+  result.setUTCMinutes(result.getUTCMinutes() + offset.minutes);
+  result.setUTCSeconds(result.getUTCSeconds() + offset.seconds);
   return result;
 }
 
@@ -342,14 +414,8 @@ function formatRtcField(
   value: string,
   indicators: readonly string[],
   rtc: RtcState,
-  labelStart: Date,
-  options: RenderJobOptions
+  sourceDate: Date
 ): string {
-  const sourceDate = rtc.fixed
-    ? new Date(rtc.fixed.getTime())
-    : rtc.mode === "S"
-    ? new Date(labelStart.getTime())
-    : clockNow(options);
   const clocks = [
     sourceDate,
     applyRtcOffset(sourceDate, rtc.offsets.get(2)),
@@ -375,6 +441,67 @@ function formatRtcField(
   return result;
 }
 
+function rtcIndicator(
+  value: string | undefined,
+  forbidden: ReadonlySet<string>,
+  used: ReadonlySet<string> = new Set()
+): string {
+  if (!value || forbidden.has(value) || used.has(value)) return "";
+  const code = value.charCodeAt(0);
+  return code >= 0x20 && code <= 0x7e ? value : "";
+}
+
+function applyRtcCommand(
+  command: ZplCommandNode,
+  rtc: RtcState,
+  options: RenderJobOptions
+): void {
+  const args = command.parameters;
+  if (command.code === "SL") {
+    const mode = args[0]?.trim().toUpperCase() || "S";
+    const tolerance = decimalInteger(mode);
+    rtc.mode =
+      mode === "S" || mode === "T"
+        ? mode
+        : tolerance >= 0 && tolerance <= 999
+        ? tolerance
+        : "S";
+    const language = decimalInteger(args[1]);
+    if (language >= 1 && language <= 18) rtc.language = language;
+  } else if (command.code === "KL") {
+    const language = decimalInteger(args[0]);
+    if (language >= 1 && language <= 18) rtc.language = language;
+  } else if (command.code === "SO") {
+    const clock = decimalInteger(args[0]);
+    if (clock === 2 || clock === 3) {
+      rtc.offsets.set(clock, {
+        months: boundedInteger(args[1], 0, -32_000, 32_000),
+        days: boundedInteger(args[2], 0, -32_000, 32_000),
+        years: boundedInteger(args[3], 0, -32_000, 32_000),
+        hours: boundedInteger(args[4], 0, -32_000, 32_000),
+        minutes: boundedInteger(args[5], 0, -32_000, 32_000),
+        seconds: boundedInteger(args[6], 0, -32_000, 32_000),
+      });
+    }
+  } else if (command.code === "ST") {
+    const current = rtc.fixed ?? clockNow(options);
+    const month = boundedInteger(args[0], current.getUTCMonth() + 1, 1, 12);
+    const day = boundedInteger(args[1], current.getUTCDate(), 1, 31);
+    const year = boundedInteger(args[2], current.getUTCFullYear(), 1998, 2097);
+    let hour = boundedInteger(args[3], current.getUTCHours(), 0, 23);
+    const minute = boundedInteger(args[4], current.getUTCMinutes(), 0, 59);
+    const second = boundedInteger(args[5], current.getUTCSeconds(), 0, 59);
+    const requestedFormat = args[6]?.trim().toUpperCase();
+    const meridiem =
+      requestedFormat === "A" || requestedFormat === "P"
+        ? requestedFormat
+        : "M";
+    if (meridiem === "P" && hour < 12) hour += 12;
+    if (meridiem === "A" && hour === 12) hour = 0;
+    rtc.fixed = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  }
+}
+
 function dynamicLabel(
   label: ZplLabelNode,
   state: SessionState,
@@ -391,52 +518,43 @@ function dynamicLabel(
   const output: ZplCommandNode[] = [];
   let indicators: string[] | undefined;
   let lastDataIndex = -1;
+  let firstFieldOriginSeen = false;
+  let queuedTime: Date | undefined;
+
+  const fieldClock = (): Date => {
+    if (rtc.fixed) return new Date(rtc.fixed.getTime());
+    if (rtc.mode === "S") return new Date(labelStart.getTime());
+    queuedTime ??= clockNow(options);
+    if (rtc.mode === "T") return new Date(queuedTime.getTime());
+    const toleranceMilliseconds = Math.max(1, rtc.mode) * 1_000;
+    return queuedTime.getTime() - labelStart.getTime() > toleranceMilliseconds
+      ? new Date(queuedTime.getTime())
+      : new Date(labelStart.getTime());
+  };
 
   for (const original of label.commands) {
     const command = cloneCommand(original);
-    const args = command.parameters;
-    if (command.code === "SL") {
-      const mode = args[0]?.trim().toUpperCase() || "S";
-      rtc.mode = mode === "S" || mode === "T" ? mode : Math.max(0, Number(mode) || 0);
-      const language = Number.parseInt(args[1] ?? "", 10);
-      if (language >= 1 && language <= 18) rtc.language = language;
-    } else if (command.code === "KL") {
-      const language = Number.parseInt(args[0] ?? "", 10);
-      if (language >= 1 && language <= 18) rtc.language = language;
-    } else if (command.code === "SO") {
-      const clock = Number(args[0]);
-      if (clock === 2 || clock === 3) {
-        rtc.offsets.set(clock, {
-          months: Number(args[1]) || 0,
-          days: Number(args[2]) || 0,
-          years: Number(args[3]) || 0,
-          hours: Number(args[4]) || 0,
-          minutes: Number(args[5]) || 0,
-          seconds: Number(args[6]) || 0,
-        });
-      }
-    } else if (command.code === "ST") {
-      const current = rtc.fixed ?? clockNow(options);
-      let hour = Number(args[3] ?? current.getHours());
-      const meridiem = args[6]?.trim().toUpperCase();
-      if (meridiem === "P" && hour < 12) hour += 12;
-      if (meridiem === "A" && hour === 12) hour = 0;
-      rtc.fixed = new Date(
-        Number(args[2] ?? current.getFullYear()),
-        Math.max(0, Number(args[0] ?? current.getMonth() + 1) - 1),
-        Number(args[1] ?? current.getDate()),
-        hour,
-        Number(args[4] ?? current.getMinutes()),
-        Number(args[5] ?? current.getSeconds())
-      );
+    if (command.capability !== "supported" && command.capability !== "partial") {
+      output.push(command);
+      continue;
+    }
+    if (command.code === "FO") firstFieldOriginSeen = true;
+    if (command.code !== "SL" || !firstFieldOriginSeen) {
+      applyRtcCommand(command, rtc, options);
     }
 
+    const args = command.parameters;
+
     if (command.code === "FC") {
-      indicators = [
-        command.rawParameters[0] || "%",
-        args[1]?.[0] || "",
-        args[2]?.[0] || "",
-      ];
+      const forbidden = new Set(["^", "~", command.prefix, command.delimiter]);
+      const primary =
+        rtcIndicator(args[0]?.[0] || "%", forbidden) ||
+        rtcIndicator("%", forbidden);
+      const used = new Set(primary ? [primary] : []);
+      const secondary = rtcIndicator(args[1]?.[0], forbidden, used);
+      if (secondary) used.add(secondary);
+      const tertiary = rtcIndicator(args[2]?.[0], forbidden, used);
+      indicators = [primary, secondary, tertiary];
       output.push(command);
       continue;
     }
@@ -455,7 +573,7 @@ function dynamicLabel(
         serialStep
       );
       const value = indicators
-        ? formatRtcField(serialized, indicators, rtc, labelStart, options)
+        ? formatRtcField(serialized, indicators, rtc, fieldClock())
         : serialized;
       output.push(replacementDataCommand(command, value));
       lastDataIndex = output.length - 1;
@@ -463,7 +581,7 @@ function dynamicLabel(
     }
     if (command.code === "FD" || command.code === "FV") {
       const value = indicators
-        ? formatRtcField(command.rawParameters, indicators, rtc, labelStart, options)
+        ? formatRtcField(command.rawParameters, indicators, rtc, fieldClock())
         : command.rawParameters;
       output.push(
         value === command.rawParameters
@@ -474,7 +592,10 @@ function dynamicLabel(
       continue;
     }
     if (command.code === "SF") {
-      if (lastDataIndex >= 0) {
+      if (
+        lastDataIndex >= 0 &&
+        serializationFieldSize(command) <= MAX_SERIALIZATION_FIELD_SIZE
+      ) {
         const data = output[lastDataIndex];
         const value = serializeMasked(
           data.rawParameters,
@@ -511,7 +632,31 @@ function semanticDiagnostic(
 }
 
 function limits(options: RenderJobOptions): RenderLimits {
-  return { ...DEFAULT_LIMITS, ...options.limits };
+  return resolveRenderLimits(options.limits);
+}
+
+function decimalInteger(value: string | undefined): number {
+  const source = value?.trim() ?? "";
+  if (!/^-?\d+$/.test(source)) return Number.NaN;
+  const parsed = Number(source);
+  return Number.isSafeInteger(parsed) ? parsed : Number.NaN;
+}
+
+function boundedInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number
+): number {
+  const parsed = decimalInteger(value);
+  return parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
+function fieldNumber(value: string | undefined): string | undefined {
+  const source = value?.trim() ?? "";
+  if (!/^\d+$/.test(source)) return undefined;
+  const parsed = Number(source);
+  return parsed >= 0 && parsed <= 9999 ? String(parsed) : undefined;
 }
 
 function cloneCommand(command: ZplCommandNode): ZplCommandNode {
@@ -554,15 +699,21 @@ function replacementDataCommand(
 function fieldAssignments(commands: readonly ZplCommandNode[]): Map<string, string> {
   const assignments = new Map<string, string>();
   for (let index = 0; index < commands.length; index++) {
-    if (commands[index].code !== "FN") continue;
-    const field = commands[index].parameters[0]?.trim();
+    if (commands[index].canonical !== "^FN") continue;
+    const field = fieldNumber(commands[index].parameters[0]);
     if (!field) continue;
     for (let cursor = index + 1; cursor < commands.length; cursor++) {
-      if (commands[cursor].code === "FD" || commands[cursor].code === "FV") {
+      if (
+        commands[cursor].canonical === "^FD" ||
+        commands[cursor].canonical === "^FV"
+      ) {
         assignments.set(field, commands[cursor].rawParameters);
         break;
       }
-      if (commands[cursor].code === "FS" || commands[cursor].code === "FN") break;
+      if (
+        commands[cursor].canonical === "^FS" ||
+        commands[cursor].canonical === "^FN"
+      ) break;
     }
   }
   return assignments;
@@ -571,10 +722,11 @@ function fieldAssignments(commands: readonly ZplCommandNode[]): Map<string, stri
 function invocationAssignmentIndexes(commands: readonly ZplCommandNode[]): Set<number> {
   const indexes = new Set<number>();
   for (let index = 0; index < commands.length; index++) {
-    if (commands[index].code !== "FN") continue;
+    if (commands[index].canonical !== "^FN") continue;
+    if (!fieldNumber(commands[index].parameters[0])) continue;
     for (let cursor = index; cursor < commands.length; cursor++) {
       indexes.add(cursor);
-      if (commands[cursor].code === "FS") break;
+      if (commands[cursor].canonical === "^FS") break;
     }
   }
   return indexes;
@@ -585,22 +737,48 @@ function applyAssignments(
   assignments: ReadonlyMap<string, string>
 ): ZplCommandNode[] {
   const output: ZplCommandNode[] = [];
+  let pending:
+    | { command: ZplCommandNode; value: string | undefined; resolved: boolean }
+    | undefined;
+
+  const finishPending = () => {
+    if (pending?.value !== undefined && !pending.resolved) {
+      output.push(replacementDataCommand(pending.command, pending.value));
+    }
+    pending = undefined;
+  };
+
   for (let index = 0; index < commands.length; index++) {
     const command = commands[index];
-    if (command.code !== "FN") {
-      output.push(cloneCommand(command));
+    if (command.canonical === "^FN") {
+      finishPending();
+      const field = fieldNumber(command.parameters[0]);
+      pending = {
+        command,
+        value: field ? assignments.get(field) : undefined,
+        resolved: false,
+      };
       continue;
     }
-    const field = command.parameters[0]?.trim();
-    const value = field ? assignments.get(field) : undefined;
-    const next = commands[index + 1];
-    if (next?.code === "FD" || next?.code === "FV") {
-      output.push(value === undefined ? cloneCommand(next) : replacementDataCommand(next, value));
-      index++;
-    } else if (value !== undefined) {
-      output.push(replacementDataCommand(command, value));
+
+    if (
+      pending &&
+      !pending.resolved &&
+      (command.canonical === "^FD" || command.canonical === "^FV")
+    ) {
+      output.push(
+        pending.value === undefined
+          ? cloneCommand(command)
+          : replacementDataCommand(command, pending.value)
+      );
+      pending.resolved = true;
+      continue;
     }
+
+    if (command.canonical === "^FS") finishPending();
+    output.push(cloneCommand(command));
   }
+  finishPending();
   return output;
 }
 
@@ -628,12 +806,53 @@ function utf8ByteLength(value: string): number {
   return bytes;
 }
 
+function resourceCost(name: string, payloadBytes: number): number {
+  return utf8ByteLength(name) + Math.max(1, payloadBytes);
+}
+
+function disabledResource(name: string): boolean {
+  return name.startsWith("NONE:");
+}
+
+function namedResourceCost(state: SessionState, name: string): number {
+  const graphic = state.graphics.get(name);
+  const format = state.formats.get(name);
+  const object = state.objects.get(name);
+  return (
+    (graphic ? resourceCost(name, graphic.data.byteLength) : 0) +
+    (format ? resourceCost(name, format.bytes) : 0) +
+    (object ? resourceCost(name, object.data.byteLength) : 0)
+  );
+}
+
+function clearNamedResource(state: SessionState, name: string): void {
+  state.resourceBytes -= namedResourceCost(state, name);
+  state.graphics.delete(name);
+  state.formats.delete(name);
+  state.objects.delete(name);
+  state.bitmapFonts.delete(name);
+  state.encodings.delete(name);
+}
+
+function replaceNamedResource(
+  state: SessionState,
+  name: string,
+  bytes: number,
+  store: () => void
+): void {
+  clearNamedResource(state, name);
+  store();
+  state.resourceBytes += bytes;
+}
+
 function expandFormats(
   label: ZplLabelNode,
   state: SessionState,
+  currentDocumentId: number,
   maxDepth: number,
   maxCommands: number,
-  diagnostics: ZplDiagnostic[]
+  diagnostics: ZplDiagnostic[],
+  onCommand?: (command: ZplCommandNode) => void
 ): ZplLabelNode {
   const assignments = fieldAssignments(label.commands);
   const assignmentIndexes = invocationAssignmentIndexes(label.commands);
@@ -657,26 +876,40 @@ function expandFormats(
   const expand = (
     commands: readonly ZplCommandNode[],
     depth: number,
-    active: ReadonlySet<string>
+    active: ReadonlySet<string>,
+    anchor?: { start: number; end: number }
   ): ZplCommandNode[] => {
     if (depth > maxDepth) {
+      const sourceCommand = commands[0];
+      const diagnosticCommand = sourceCommand
+        ? {
+            ...cloneCommand(sourceCommand),
+            span: { ...(anchor ?? sourceCommand.span) },
+          }
+        : undefined;
       diagnostics.push(
         semanticDiagnostic(
           "TEMPLATE_DEPTH_EXCEEDED",
-          `Stored-format expansion exceeded ${maxDepth} levels.`
+          `Stored-format expansion exceeded ${maxDepth} levels.`,
+          diagnosticCommand
         )
       );
       return [];
     }
     const output: ZplCommandNode[] = [];
-    for (const command of commands) {
+    for (const originalCommand of commands) {
+      const command = anchor
+        ? { ...cloneCommand(originalCommand), span: { ...anchor } }
+        : originalCommand;
       if (commandLimitReached) return output;
-      if (command.code !== "XF") {
+      if (command.canonical !== "^XF") {
         if (expandedCommands >= maxCommands) {
           reportCommandLimit(command);
           return output;
         }
-        output.push(cloneCommand(command));
+        const expanded = cloneCommand(command);
+        onCommand?.(expanded);
+        output.push(expanded);
         expandedCommands++;
         continue;
       }
@@ -689,7 +922,9 @@ function expandFormats(
             `Stored format ${name} recursively recalls itself.`,
             command,
             "error",
-            stored ? [stored.definitionSpan] : undefined
+            stored?.documentId === currentDocumentId
+              ? [stored.definitionSpan]
+              : undefined
           )
         );
         continue;
@@ -706,11 +941,18 @@ function expandFormats(
       }
       const nextActive = new Set(active);
       nextActive.add(name);
+      // Stored commands from another render point into another source buffer.
+      // Anchor every expanded command to the current recall in that case.
+      const nextAnchor =
+        stored.documentId === currentDocumentId
+          ? undefined
+          : anchor ?? command.span;
       output.push(
         ...expand(
           applyAssignments(stored.commands, assignments),
           depth + 1,
-          nextActive
+          nextActive,
+          nextAnchor
         )
       );
       if (commandLimitReached) return output;
@@ -718,7 +960,9 @@ function expandFormats(
     return output;
   };
 
-  const hasRecall = label.commands.some((command) => command.code === "XF");
+  const hasRecall = label.commands.some(
+    (command) => command.canonical === "^XF"
+  );
   const invocation = hasRecall
     ? label.commands.filter((_, index) => !assignmentIndexes.has(index))
     : label.commands;
@@ -742,25 +986,25 @@ function deleteResources(pattern: string, state: SessionState): void {
   for (const [name, graphic] of state.graphics) {
     if (!matcher.test(name)) continue;
     state.graphics.delete(name);
-    state.resourceBytes -= graphic.data.byteLength;
+    state.resourceBytes -= resourceCost(name, graphic.data.byteLength);
   }
   for (const [name, format] of state.formats) {
     if (!matcher.test(name)) continue;
     state.formats.delete(name);
-    state.resourceBytes -= format.bytes;
+    state.resourceBytes -= resourceCost(name, format.bytes);
   }
   for (const [name, object] of state.objects) {
     if (!matcher.test(name)) continue;
     state.objects.delete(name);
     state.bitmapFonts.delete(name);
     state.encodings.delete(name);
-    state.resourceBytes -= object.data.byteLength;
+    state.resourceBytes -= resourceCost(name, object.data.byteLength);
   }
 }
 
 function eraseDownloadedGraphics(state: SessionState): void {
-  for (const graphic of state.graphics.values()) {
-    state.resourceBytes -= graphic.data.byteLength;
+  for (const [name, graphic] of state.graphics) {
+    state.resourceBytes -= resourceCost(name, graphic.data.byteLength);
   }
   state.graphics.clear();
 }
@@ -828,18 +1072,30 @@ function transferResources(
   renderLimits: RenderLimits,
   diagnostics: ZplDiagnostic[]
 ): void {
+  const rawSource = command.parameters[0]?.trim() ?? "";
+  const rawDestination = command.parameters[1]?.trim() ?? "";
+  if (!/^[ABER]:/i.test(rawSource) || !/^[ABER]:/i.test(rawDestination)) {
+    return;
+  }
   const sourcePattern = normalizedTransferName(
-    command.parameters[0] ?? "",
+    rawSource,
     true,
     state
   );
   const destinationPattern = normalizedTransferName(
-    command.parameters[1] ?? "",
+    rawDestination,
     false,
     state
   );
   if (!destinationPattern) return;
+  const sourceDevice = sourcePattern.slice(0, sourcePattern.indexOf(":"));
+  const destinationDevice = destinationPattern.slice(
+    0,
+    destinationPattern.indexOf(":")
+  );
+  if (sourceDevice === destinationDevice) return;
   const matcher = wildcardMatcher(sourcePattern);
+  const multipleObjectTransfer = sourcePattern.includes("*");
   const graphics = [...state.graphics.entries()];
   const formats = [...state.formats.entries()];
   const objects = [...state.objects.entries()];
@@ -871,14 +1127,16 @@ function transferResources(
       destinationPattern,
       match.slice(1)
     );
-    if (!destination) continue;
-    const previous = state.graphics.get(destination)?.data.byteLength ?? 0;
-    if (!reserve(destination, graphic.data.byteLength, previous)) continue;
-    state.graphics.set(destination, {
-      ...graphic,
-      data: graphic.data.slice(),
+    if (!destination || disabledResource(destination)) continue;
+    const previous = namedResourceCost(state, destination);
+    const bytes = resourceCost(destination, graphic.data.byteLength);
+    if (!reserve(destination, bytes, previous)) continue;
+    replaceNamedResource(state, destination, bytes, () => {
+      state.graphics.set(destination, {
+        ...graphic,
+        data: graphic.data.slice(),
+      });
     });
-    state.resourceBytes += graphic.data.byteLength - previous;
   }
   for (const [name, format] of formats) {
     const match = matcher.exec(name);
@@ -889,17 +1147,20 @@ function transferResources(
       destinationPattern,
       match.slice(1)
     );
-    if (!destination) continue;
-    const previous = state.formats.get(destination)?.bytes ?? 0;
-    if (!reserve(destination, format.bytes, previous)) continue;
-    state.formats.set(destination, {
-      ...format,
-      commands: format.commands.map(cloneCommand),
-      definitionSpan: { ...format.definitionSpan },
+    if (!destination || disabledResource(destination)) continue;
+    const previous = namedResourceCost(state, destination);
+    const bytes = resourceCost(destination, format.bytes);
+    if (!reserve(destination, bytes, previous)) continue;
+    replaceNamedResource(state, destination, bytes, () => {
+      state.formats.set(destination, {
+        ...format,
+        commands: format.commands.map(cloneCommand),
+        definitionSpan: { ...format.definitionSpan },
+      });
     });
-    state.resourceBytes += format.bytes - previous;
   }
   for (const [name, object] of objects) {
+    if (multipleObjectTransfer && name.endsWith(".FNT")) continue;
     const match = matcher.exec(name);
     if (!match) continue;
     const destination = transferDestination(
@@ -908,15 +1169,34 @@ function transferResources(
       destinationPattern,
       match.slice(1)
     );
-    if (!destination) continue;
-    const previous = state.objects.get(destination)?.data.byteLength ?? 0;
-    if (!reserve(destination, object.data.byteLength, previous)) continue;
-    state.objects.set(destination, { ...object, data: object.data.slice() });
+    if (!destination || disabledResource(destination)) continue;
+    const previous = namedResourceCost(state, destination);
+    const bytes = resourceCost(destination, object.data.byteLength);
+    if (!reserve(destination, bytes, previous)) continue;
     const bitmap = state.bitmapFonts.get(name);
-    if (bitmap) state.bitmapFonts.set(destination, bitmap);
     const encoding = state.encodings.get(name);
+    const copiedData = object.data.slice();
+    replaceNamedResource(state, destination, bytes, () => {
+      state.objects.set(destination, { ...object, data: copiedData });
+    });
+    if (bitmap) {
+      let offset = 0;
+      state.bitmapFonts.set(destination, {
+        ...bitmap,
+        glyphs: new Map(
+          [...bitmap.glyphs].map(([codePoint, glyph]) => {
+            const end = offset + glyph.data.length;
+            const copiedGlyph = {
+              ...glyph,
+              data: copiedData.subarray(offset, end),
+            };
+            offset = end;
+            return [codePoint, copiedGlyph];
+          })
+        ),
+      });
+    }
     if (encoding) state.encodings.set(destination, new Map(encoding));
-    state.resourceBytes += object.data.byteLength - previous;
   }
 }
 
@@ -928,9 +1208,21 @@ function storeRenderedImage(
   diagnostics: ZplDiagnostic[]
 ): boolean {
   const name = sessionResourceName(command.parameters[0] ?? "UNKNOWN", "GRF", state);
-  const previous = state.graphics.get(name)?.data.byteLength ?? 0;
-  if (
-    state.resourceBytes - previous + raster.data.byteLength >
+  if (disabledResource(name)) {
+    return (command.parameters[1]?.trim().toUpperCase() || "Y") !== "N";
+  }
+  const previous = namedResourceCost(state, name);
+  const bytes = resourceCost(name, raster.data.byteLength);
+  if (raster.data.byteLength > renderLimits.maxGraphicBytes) {
+    diagnostics.push(
+      semanticDiagnostic(
+        "GRAPHIC_LIMIT_EXCEEDED",
+        `Storing ${name} requires ${raster.data.byteLength} bytes, exceeding the ${renderLimits.maxGraphicBytes}-byte graphic limit.`,
+        command
+      )
+    );
+  } else if (
+    state.resourceBytes - previous + bytes >
     renderLimits.maxSessionBytes
   ) {
     diagnostics.push(
@@ -941,13 +1233,14 @@ function storeRenderedImage(
       )
     );
   } else {
-    state.graphics.set(name, {
-      data: raster.data.slice(),
-      bytesPerRow: raster.stride,
-      width: raster.width,
-      height: raster.height,
+    replaceNamedResource(state, name, bytes, () => {
+      state.graphics.set(name, {
+        data: raster.data.slice(),
+        bytesPerRow: raster.stride,
+        width: raster.width,
+        height: raster.height,
+      });
     });
-    state.resourceBytes += raster.data.byteLength - previous;
   }
   return (command.parameters[1]?.trim().toUpperCase() || "Y") !== "N";
 }
@@ -959,8 +1252,9 @@ function processDownloadGraphic(
   diagnostics: ZplDiagnostic[]
 ): void {
   const name = sessionResourceName(command.parameters[0] ?? "", "GRF", state);
-  const expectedBytes = Number.parseInt(command.parameters[1] ?? "", 10);
-  const bytesPerRow = Number.parseInt(command.parameters[2] ?? "", 10);
+  if (disabledResource(name)) return;
+  const expectedBytes = decimalInteger(command.parameters[1]);
+  const bytesPerRow = decimalInteger(command.parameters[2]);
   try {
     const graphic = decodeGraphic(
       command.parameters.slice(3).join(command.delimiter),
@@ -968,8 +1262,9 @@ function processDownloadGraphic(
       expectedBytes,
       renderLimits.maxGraphicBytes
     );
-    const previous = state.graphics.get(name)?.data.byteLength ?? 0;
-    if (state.resourceBytes - previous + graphic.data.byteLength > renderLimits.maxSessionBytes) {
+    const previous = namedResourceCost(state, name);
+    const bytes = resourceCost(name, graphic.data.byteLength);
+    if (state.resourceBytes - previous + bytes > renderLimits.maxSessionBytes) {
       diagnostics.push(
         semanticDiagnostic(
           "SESSION_RESOURCE_LIMIT_EXCEEDED",
@@ -979,8 +1274,9 @@ function processDownloadGraphic(
       );
       return;
     }
-    state.graphics.set(name, graphic);
-    state.resourceBytes += graphic.data.byteLength - previous;
+    replaceNamedResource(state, name, bytes, () => {
+      state.graphics.set(name, graphic);
+    });
   } catch (error) {
     diagnostics.push(
       semanticDiagnostic(
@@ -1010,9 +1306,11 @@ function storeObjectResource(
   command: ZplCommandNode,
   diagnostics: ZplDiagnostic[]
 ): boolean {
-  const previous = state.objects.get(name)?.data.byteLength ?? 0;
+  if (disabledResource(name)) return false;
+  const previous = namedResourceCost(state, name);
+  const bytes = resourceCost(name, object.data.byteLength);
   if (
-    state.resourceBytes - previous + object.data.byteLength >
+    state.resourceBytes - previous + bytes >
     renderLimits.maxSessionBytes
   ) {
     diagnostics.push(
@@ -1024,10 +1322,9 @@ function storeObjectResource(
     );
     return false;
   }
-  state.objects.set(name, object);
-  state.resourceBytes += object.data.byteLength - previous;
-  state.bitmapFonts.delete(name);
-  state.encodings.delete(name);
+  replaceNamedResource(state, name, bytes, () => {
+    state.objects.set(name, object);
+  });
   return true;
 }
 
@@ -1045,6 +1342,12 @@ function downloadDiagnostic(
   );
 }
 
+function normalizeLegacyHexZeros(source: string): string {
+  return /^\s*:(?:B64|Z64):/.test(source)
+    ? source
+    : source.replace(/[Oo]/g, "0");
+}
+
 function processDownloadEncoding(
   command: ZplCommandNode,
   state: SessionState,
@@ -1052,13 +1355,20 @@ function processDownloadEncoding(
   diagnostics: ZplDiagnostic[]
 ): void {
   const name = objectPath(command.parameters[0] ?? "", "DAT", state);
-  const expectedBytes = Number.parseInt(command.parameters[1] ?? "", 10);
+  if (disabledResource(name)) return;
+  const expectedBytes = decimalInteger(command.parameters[1]);
   try {
     const data = decodeDownloadData(
       command.parameters.slice(2).join(command.delimiter),
       expectedBytes,
       renderLimits.maxGraphicBytes
     );
+    if (data.length % 4 !== 0) {
+      throw new GraphicDecodeError(
+        "INVALID_OBJECT_DATA",
+        "Downloaded encoding data must contain complete four-byte mappings."
+      );
+    }
     if (
       !storeObjectResource(
         name,
@@ -1089,14 +1399,15 @@ function processDownloadOutlineFont(
   renderLimits: RenderLimits,
   diagnostics: ZplDiagnostic[]
 ): void {
-  const extension = command.code === "DS" ? "FNT" : "TTF";
+  const extension =
+    command.code === "DT" ? "DAT" : "FNT";
   const name = objectPath(command.parameters[0] ?? "", extension, state);
-  const expectedBytes = Number.parseInt(command.parameters[1] ?? "", 10);
+  if (disabledResource(name)) return;
+  const expectedBytes = decimalInteger(command.parameters[1]);
   try {
-    const source = command.parameters
-      .slice(2)
-      .join(command.delimiter)
-      .replace(command.code === "DS" ? /[Oo]/g : /$^/, "0");
+    const rawSource = command.parameters.slice(2).join(command.delimiter);
+    const source =
+      command.code === "DS" ? normalizeLegacyHexZeros(rawSource) : rawSource;
     const data = decodeDownloadData(
       source,
       expectedBytes,
@@ -1104,7 +1415,15 @@ function processDownloadOutlineFont(
     );
     storeObjectResource(
       name,
-      { data, kind: command.code === "DS" ? "intellifont" : "font" },
+      {
+        data,
+        kind:
+          command.code === "DS"
+            ? "intellifont"
+            : command.code === "DT"
+            ? "bounded-truetype"
+            : "unbounded-truetype",
+      },
       state,
       renderLimits,
       command,
@@ -1122,11 +1441,12 @@ function processDownloadBitmapFont(
   diagnostics: ZplDiagnostic[]
 ): void {
   const name = objectPath(command.parameters[0] ?? "", "FNT", state);
-  const cellHeight = Number.parseInt(command.parameters[2] ?? "", 10);
-  const cellWidth = Number.parseInt(command.parameters[3] ?? "", 10);
-  const baseline = Number.parseInt(command.parameters[4] ?? "", 10);
-  const spaceWidth = Number.parseInt(command.parameters[5] ?? "", 10);
-  const expectedCharacters = Number.parseInt(command.parameters[6] ?? "", 10);
+  if (disabledResource(name)) return;
+  const cellHeight = decimalInteger(command.parameters[2]);
+  const cellWidth = decimalInteger(command.parameters[3]);
+  const baseline = decimalInteger(command.parameters[4]);
+  const spaceWidth = decimalInteger(command.parameters[5]);
+  const expectedCharacters = decimalInteger(command.parameters[6]);
   const source = command.parameters.slice(8).join(command.delimiter);
   const glyphs = new Map<number, {
     codePoint: number;
@@ -1138,24 +1458,91 @@ function processDownloadBitmapFont(
     bytesPerRow: number;
     data: Uint8Array;
   }>();
-  const chunks: Uint8Array[] = [];
-  const matcher = /#([0-9A-Fa-f]{1,6})\.(-?\d+)\.(-?\d+)\.(-?\d+)\.(-?\d+)\.(-?\d+)\.([\s\S]*?)(?=#(?:[0-9A-Fa-f]{1,6})\.|$)/g;
+  const orientation = command.parameters[1]?.trim().toUpperCase();
+  const copyright = command.parameters[7] ?? "";
+  const matcher = /#([0-9A-Fa-f]{1,4})\.(-?\d+)\.(-?\d+)\.(-?\d+)\.(-?\d+)\.(-?\d+)\.([\s\S]*?)(?=#(?:[0-9A-Fa-f]{1,4})\.|$)/g;
   try {
+    if (
+      orientation !== "N" ||
+      copyright.length < 1 ||
+      copyright.length > 63 ||
+      !Number.isSafeInteger(cellHeight) ||
+      !Number.isSafeInteger(cellWidth) ||
+      !Number.isSafeInteger(baseline) ||
+      !Number.isSafeInteger(spaceWidth) ||
+      !Number.isSafeInteger(expectedCharacters) ||
+      cellHeight <= 0 ||
+      cellWidth <= 0 ||
+      baseline <= 0 ||
+      baseline > cellHeight ||
+      spaceWidth <= 0 ||
+      spaceWidth > Math.min(32_000, renderLimits.maxDimension) ||
+      expectedCharacters <= 0 ||
+      expectedCharacters > 256 ||
+      cellHeight > Math.min(32_000, renderLimits.maxDimension) ||
+      cellWidth > Math.min(32_000, renderLimits.maxDimension)
+    ) {
+      throw new GraphicDecodeError(
+        "INVALID_OBJECT_DATA",
+        "Downloaded bitmap font header metrics are invalid."
+      );
+    }
+    let totalBytes = 0;
+    let matchedSource = false;
     for (const match of source.matchAll(matcher)) {
+      if (!matchedSource && source.slice(0, match.index).trim() !== "") {
+        throw new GraphicDecodeError(
+          "INVALID_OBJECT_DATA",
+          "Downloaded bitmap font contains data before its first glyph."
+        );
+      }
+      matchedSource = true;
       const codePoint = Number.parseInt(match[1], 16);
       const height = Number.parseInt(match[2], 10);
       const width = Number.parseInt(match[3], 10);
       const xOffset = Number.parseInt(match[4], 10);
       const yOffset = Number.parseInt(match[5], 10);
       const advance = Number.parseInt(match[6], 10);
+      if (
+        !Number.isSafeInteger(codePoint) ||
+        codePoint < 0 ||
+        codePoint > 0xffff ||
+        glyphs.has(codePoint) ||
+        ![height, width, xOffset, yOffset, advance].every(Number.isSafeInteger) ||
+        height <= 0 ||
+        width <= 0 ||
+        advance < 0 ||
+        height > renderLimits.maxDimension ||
+        width > renderLimits.maxDimension ||
+        advance > renderLimits.maxDimension ||
+        Math.abs(xOffset) > renderLimits.maxDimension ||
+        Math.abs(yOffset) > renderLimits.maxDimension
+      ) {
+        throw new GraphicDecodeError(
+          "INVALID_OBJECT_DATA",
+          "Downloaded bitmap font glyph metrics are invalid or duplicated."
+        );
+      }
       const bytesPerRow = Math.ceil(width / 8);
       const expectedBytes = bytesPerRow * height;
+      if (!Number.isSafeInteger(expectedBytes)) {
+        throw new GraphicDecodeError(
+          "GRAPHIC_LIMIT_EXCEEDED",
+          "Downloaded bitmap font glyph dimensions exceed the graphic budget."
+        );
+      }
+      totalBytes += expectedBytes;
+      if (!Number.isSafeInteger(totalBytes) || totalBytes > renderLimits.maxGraphicBytes) {
+        throw new GraphicDecodeError(
+          "GRAPHIC_LIMIT_EXCEEDED",
+          `Downloaded bitmap font exceeds the ${renderLimits.maxGraphicBytes}-byte graphic limit.`
+        );
+      }
       const data = decodeDownloadData(
-        match[7].replace(/[Oo]/g, "0"),
+        normalizeLegacyHexZeros(match[7]),
         expectedBytes,
         renderLimits.maxGraphicBytes
       );
-      chunks.push(data);
       glyphs.set(codePoint, {
         codePoint,
         width,
@@ -1167,28 +1554,49 @@ function processDownloadBitmapFont(
         data,
       });
     }
-    if (
-      !Number.isFinite(cellHeight) ||
-      !Number.isFinite(cellWidth) ||
-      glyphs.size === 0
-    ) {
-      throw new Error("Downloaded bitmap font header or glyph data is invalid.");
+    if (!matchedSource || glyphs.size === 0) {
+      throw new GraphicDecodeError(
+        "INVALID_OBJECT_DATA",
+        "Downloaded bitmap font does not contain any valid glyphs."
+      );
     }
-    if (Number.isFinite(expectedCharacters) && glyphs.size !== expectedCharacters) {
-      throw new Error(
+    if (glyphs.size !== expectedCharacters) {
+      throw new GraphicDecodeError(
+        "INVALID_OBJECT_DATA",
         `Bitmap font declared ${expectedCharacters} characters but supplied ${glyphs.size}.`
       );
     }
-    const raw = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+    const previous = namedResourceCost(state, name);
+    const bytes = resourceCost(name, totalBytes);
+    if (
+      state.resourceBytes - previous + bytes >
+      renderLimits.maxSessionBytes
+    ) {
+      diagnostics.push(
+        semanticDiagnostic(
+          "SESSION_RESOURCE_LIMIT_EXCEEDED",
+          `Storing ${name} would exceed the ${renderLimits.maxSessionBytes}-byte session limit.`,
+          command
+        )
+      );
+      return;
+    }
+    const raw = new Uint8Array(totalBytes);
     let offset = 0;
-    for (const chunk of chunks) {
-      raw.set(chunk, offset);
-      offset += chunk.length;
+    const storedGlyphs: typeof glyphs = new Map();
+    for (const [codePoint, glyph] of glyphs) {
+      raw.set(glyph.data, offset);
+      const end = offset + glyph.data.length;
+      storedGlyphs.set(codePoint, {
+        ...glyph,
+        data: raw.subarray(offset, end),
+      });
+      offset = end;
     }
     if (
       !storeObjectResource(
         name,
-        { data: raw, kind: "font" },
+        { data: raw, kind: "bitmap-font" },
         state,
         renderLimits,
         command,
@@ -1202,7 +1610,7 @@ function processDownloadBitmapFont(
       cellHeight,
       baseline,
       spaceWidth,
-      glyphs,
+      glyphs: storedGlyphs,
     });
   } catch (error) {
     downloadDiagnostic(error, command, diagnostics);
@@ -1215,84 +1623,112 @@ function processDownloadObject(
   renderLimits: RenderLimits,
   diagnostics: ZplDiagnostic[]
 ): void {
-  const format = command.parameters[1]?.trim().toUpperCase() || "A";
-  const extensionCode = command.parameters[2]?.trim().toUpperCase() || "G";
-  const extension =
-    extensionCode === "T"
-      ? "TTF"
-      : extensionCode === "E"
-      ? "TTE"
-      : extensionCode === "P"
-      ? "PNG"
-      : extensionCode === "B"
-      ? "BMP"
-      : extensionCode === "X"
-      ? "PCX"
-      : extensionCode === "G"
-      ? "GRF"
-      : extensionCode;
-  const name = objectPath(command.parameters[0] ?? "", extension, state);
-  const expectedBytes = Number.parseInt(command.parameters[3] ?? "", 10);
-  const bytesPerRow = Number.parseInt(command.parameters[4] ?? "", 10);
+  const format = command.parameters[1]?.trim().toUpperCase() ?? "";
+  const extensionCode =
+    command.parameters[2]?.trim().toUpperCase() ||
+    (format === "P" ? "P" : "G");
+  const extension = DOWNLOAD_OBJECT_EXTENSIONS[extensionCode];
+  const name = objectPath(command.parameters[0] ?? "", extension ?? "GRF", state);
+  if (disabledResource(name)) return;
+  const expectedBytes = decimalInteger(command.parameters[3]);
+  const bytesPerRow = decimalInteger(command.parameters[4]);
   const source = command.parameters.slice(5).join(command.delimiter);
   try {
-    if (extension === "GRF" && format === "A") {
+    if (format === "C") {
+      throw new GraphicDecodeError(
+        "UNSUPPORTED_GRAPHIC_FORMAT",
+        "~DY AR-compressed BAR-ONE payloads are not supported."
+      );
+    }
+    if (!["A", "B", "P"].includes(format)) {
+      throw new GraphicDecodeError(
+        "UNSUPPORTED_GRAPHIC_FORMAT",
+        "~DY download format must be A, B, C, or P."
+      );
+    }
+    if ((extension ?? "GRF") === "GRF" && format === "A") {
       const graphic = decodeGraphic(
         source,
         bytesPerRow,
         expectedBytes,
         renderLimits.maxGraphicBytes
       );
-      const previous = state.graphics.get(name)?.data.byteLength ?? 0;
-      if (state.resourceBytes - previous + graphic.data.byteLength > renderLimits.maxSessionBytes) {
-        throw new Error(`Storing ${name} exceeds the session resource limit.`);
+      const previous = namedResourceCost(state, name);
+      const storedBytes = resourceCost(name, graphic.data.byteLength);
+      if (state.resourceBytes - previous + storedBytes > renderLimits.maxSessionBytes) {
+        throw new GraphicDecodeError(
+          "SESSION_RESOURCE_LIMIT_EXCEEDED",
+          `Storing ${name} exceeds the session resource limit.`
+        );
       }
-      state.graphics.set(name, graphic);
-      state.resourceBytes += graphic.data.byteLength - previous;
+      replaceNamedResource(state, name, storedBytes, () => {
+        state.graphics.set(name, graphic);
+      });
       return;
     }
     const bytes =
-      format === "B" || format === "C"
-        ? Uint8Array.from([...source].map((character) => character.charCodeAt(0) & 0xff))
+      format === "B"
+        ? decodeRawDownloadData(
+            source,
+            expectedBytes,
+            renderLimits.maxGraphicBytes
+          )
         : decodeDownloadData(source, expectedBytes, renderLimits.maxGraphicBytes);
     if (bytes.length !== expectedBytes) {
       throw new Error(
         `Object declared ${expectedBytes} bytes but decoded ${bytes.length}.`
       );
     }
-    if (extension === "GRF") {
-      const graphic =
-        {
-          data: bytes,
+    if ((extension ?? "GRF") === "GRF") {
+      const graphic = {
+        data: bytes,
+        bytesPerRow,
+        ...validateGraphicGeometry(
           bytesPerRow,
-          width: bytesPerRow * 8,
-          height: Math.ceil(bytes.length / bytesPerRow),
-        };
-      const previous = state.graphics.get(name)?.data.byteLength ?? 0;
-      if (state.resourceBytes - previous + graphic.data.byteLength > renderLimits.maxSessionBytes) {
-        throw new Error(`Storing ${name} exceeds the session resource limit.`);
+          bytes.length,
+          renderLimits.maxGraphicBytes
+        ),
+      };
+      const previous = namedResourceCost(state, name);
+      const storedBytes = resourceCost(name, graphic.data.byteLength);
+      if (state.resourceBytes - previous + storedBytes > renderLimits.maxSessionBytes) {
+        throw new GraphicDecodeError(
+          "SESSION_RESOURCE_LIMIT_EXCEEDED",
+          `Storing ${name} exceeds the session resource limit.`
+        );
       }
-      state.graphics.set(name, graphic);
-      state.resourceBytes += graphic.data.byteLength - previous;
-    } else if (["PNG", "BMP", "PCX"].includes(extension)) {
+      replaceNamedResource(state, name, storedBytes, () => {
+        state.graphics.set(name, graphic);
+      });
+    } else if (extension && ["PNG", "BMP", "PCX"].includes(extension)) {
       const graphic =
         extension === "PNG"
           ? decodePng(bytes, renderLimits.maxGraphicBytes)
           : extension === "BMP"
           ? decodeBmp(bytes, renderLimits.maxGraphicBytes)
           : decodePcx(bytes, renderLimits.maxGraphicBytes);
-      const previous = state.graphics.get(name)?.data.byteLength ?? 0;
-      if (state.resourceBytes - previous + graphic.data.byteLength > renderLimits.maxSessionBytes) {
-        throw new Error(`Storing ${name} exceeds the session resource limit.`);
+      const previous = namedResourceCost(state, name);
+      const storedBytes = resourceCost(name, graphic.data.byteLength);
+      if (state.resourceBytes - previous + storedBytes > renderLimits.maxSessionBytes) {
+        throw new GraphicDecodeError(
+          "SESSION_RESOURCE_LIMIT_EXCEEDED",
+          `Storing ${name} exceeds the session resource limit.`
+        );
       }
-      state.graphics.set(name, graphic);
-      state.resourceBytes += graphic.data.byteLength - previous;
+      replaceNamedResource(state, name, storedBytes, () => {
+        state.graphics.set(name, graphic);
+      });
     } else {
       storeObjectResource(
         name,
         {
           data: bytes,
-          kind: extension === "TTF" || extension === "TTE" ? "font" : "binary",
+          kind:
+            extension === "TTF"
+              ? "opentype"
+              : extension === "TTE"
+              ? "truetype-extension"
+              : "binary",
         },
         state,
         renderLimits,
@@ -1305,34 +1741,219 @@ function processDownloadObject(
   }
 }
 
-function processFontLink(command: ZplCommandNode, state: SessionState): void {
-  const extension = aliasedPath(command.parameters[0] ?? "", state);
-  const base = aliasedPath(command.parameters[1] ?? "", state);
-  if (!extension || !base) return;
+function decodeRawDownloadData(
+  source: string,
+  expectedBytes: number,
+  maxBytes: number
+): Uint8Array {
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0) {
+    throw new GraphicDecodeError(
+      "OBJECT_BYTE_COUNT_MISMATCH",
+      `Downloaded object declares an invalid byte count: ${expectedBytes}.`
+    );
+  }
+  if (expectedBytes > maxBytes) {
+    throw new GraphicDecodeError(
+      "GRAPHIC_LIMIT_EXCEEDED",
+      `Downloaded object requires ${expectedBytes} bytes, exceeding the ${maxBytes}-byte limit.`
+    );
+  }
+
+  const bytes = new Uint8Array(expectedBytes);
+  let offset = 0;
+  for (const character of source) {
+    if (offset >= expectedBytes) {
+      throw new GraphicDecodeError(
+        "OBJECT_BYTE_COUNT_MISMATCH",
+        `Object declared ${expectedBytes} bytes but supplied more data.`
+      );
+    }
+    const value = character.charCodeAt(0);
+    if (value > 0xff) {
+      throw new GraphicDecodeError(
+        "INVALID_OBJECT_DATA",
+        "Raw downloaded object data must contain byte-valued characters only."
+      );
+    }
+    bytes[offset++] = value;
+  }
+  if (offset !== expectedBytes) {
+    throw new GraphicDecodeError(
+      "OBJECT_BYTE_COUNT_MISMATCH",
+      `Object declared ${expectedBytes} bytes but decoded ${offset}.`
+    );
+  }
+  return bytes;
+}
+
+function fontLinkCost(base: string, links: readonly string[]): number {
+  return (
+    utf8ByteLength(base) +
+    links.reduce((sum, link) => sum + utf8ByteLength(link) + 1, 1)
+  );
+}
+
+function processFontLink(
+  command: ZplCommandNode,
+  state: SessionState,
+  renderLimits: RenderLimits,
+  diagnostics: ZplDiagnostic[]
+): void {
+  const requestedExtension = command.parameters[0]?.trim() ?? "";
+  const requestedBase = command.parameters[1]?.trim() ?? "";
+  if (!requestedExtension || !requestedBase) return;
+  const extension = aliasedPath(requestedExtension, state);
+  const base = aliasedPath(requestedBase, state);
+  if (disabledResource(extension) || disabledResource(base)) return;
   const links = [...(state.fontLinks.get(base) ?? [])];
   const enabled = command.parameters[2]?.trim() === "1";
   const filtered = links.filter((name) => name !== extension);
   if (enabled) filtered.push(extension);
-  if (filtered.length > 0) state.fontLinks.set(base, filtered.slice(-5));
+  const next = filtered.slice(-5);
+  const previousBytes = links.length > 0 ? fontLinkCost(base, links) : 0;
+  const nextBytes = next.length > 0 ? fontLinkCost(base, next) : 0;
+  if (
+    state.resourceBytes - previousBytes + nextBytes >
+    renderLimits.maxSessionBytes
+  ) {
+    diagnostics.push(
+      semanticDiagnostic(
+        "SESSION_RESOURCE_LIMIT_EXCEEDED",
+        `Updating font links for ${base} would exceed the ${renderLimits.maxSessionBytes}-byte session limit.`,
+        command
+      )
+    );
+    return;
+  }
+  if (next.length > 0) state.fontLinks.set(base, next);
   else state.fontLinks.delete(base);
+  state.resourceBytes += nextBytes - previousBytes;
 }
 
-function sessionFontProvider(
+function processFontAlias(
+  command: ZplCommandNode,
   state: SessionState,
+  renderLimits: RenderLimits,
+  diagnostics: ZplDiagnostic[]
+): void {
+  const identifier = command.parameters[0]?.trim().toUpperCase() ?? "";
+  const requestedName = command.parameters[1]?.trim() ?? "";
+  if (!/^[A-Z0-9]$/.test(identifier) || !requestedName) return;
+  const name = aliasedPath(requestedName, state);
+  const previousName = state.fontAliases.get(identifier);
+  const previousBytes = previousName
+    ? utf8ByteLength(identifier) + utf8ByteLength(previousName) + 1
+    : 0;
+  const nextBytes = utf8ByteLength(identifier) + utf8ByteLength(name) + 1;
+  if (
+    state.resourceBytes - previousBytes + nextBytes >
+    renderLimits.maxSessionBytes
+  ) {
+    diagnostics.push(
+      semanticDiagnostic(
+        "SESSION_RESOURCE_LIMIT_EXCEEDED",
+        `Assigning font identifier ${identifier} would exceed the ${renderLimits.maxSessionBytes}-byte session limit.`,
+        command
+      )
+    );
+    return;
+  }
+  state.fontAliases.set(identifier, name);
+  state.resourceBytes += nextBytes - previousBytes;
+}
+
+function storePersistentCommand(
+  command: ZplCommandNode,
+  state: SessionState,
+  documentId: number,
+  renderLimits: RenderLimits,
+  diagnostics: ZplDiagnostic[]
+): void {
+  let storedCommand = command;
+  if (command.code === "MU") {
+    const previous = state.persistent.get("MU")?.command;
+    const previousUnit = previous?.parameters[0]?.trim().toUpperCase();
+    const requestedUnit = command.parameters[0]?.trim().toUpperCase() ?? "";
+    const unit =
+      requestedUnit === ""
+        ? "D"
+        : ["D", "I", "M"].includes(requestedUnit)
+          ? requestedUnit
+          : previousUnit && ["D", "I", "M"].includes(previousUnit)
+            ? previousUnit
+            : "D";
+    const conversion =
+      zplDpiConversion(command.parameters[1], command.parameters[2]) ??
+      zplDpiConversion(previous?.parameters[1], previous?.parameters[2]) ??
+      { base: 150, desired: 150 };
+    storedCommand = cloneCommand(command);
+    storedCommand.parameters = [
+      unit,
+      String(conversion.base),
+      String(conversion.desired),
+    ];
+    storedCommand.rawParameters = storedCommand.parameters.join(
+      storedCommand.delimiter
+    );
+  }
+  const bytes = Math.max(
+    1,
+    utf8ByteLength(storedCommand.canonical + storedCommand.rawParameters)
+  );
+  const previous = state.persistent.get(command.code)?.bytes ?? 0;
+  if (state.resourceBytes - previous + bytes > renderLimits.maxSessionBytes) {
+    diagnostics.push(
+      semanticDiagnostic(
+        "SESSION_RESOURCE_LIMIT_EXCEEDED",
+        `Persisting ${command.canonical} would exceed the ${renderLimits.maxSessionBytes}-byte session limit.`,
+        command
+      )
+    );
+    return;
+  }
+  // Map iteration defines replay order, so an updated setting must move to the
+  // point at which the printer received it. This matters for dependent settings
+  // such as ^MU and ^PW.
+  state.persistent.delete(command.code);
+  state.persistent.set(command.code, {
+    command: cloneCommand(storedCommand),
+    documentId,
+    bytes,
+  });
+  state.resourceBytes += bytes - previous;
+}
+
+function fontProviderForResources(
+  memoryAliases: ReadonlyMap<string, string>,
+  objects: ReadonlyMap<string, StoredObject>,
+  bitmapFonts: ReadonlyMap<string, DownloadedBitmapFont>,
   fallback?: FontProvider
 ): FontProvider | undefined {
-  if (state.objects.size === 0 && !fallback) return undefined;
+  if (objects.size === 0 && !fallback) return undefined;
 
   const resolveStoredFont = async (
     requestedName: string,
     storedName: string,
     object: StoredObject
   ): Promise<ArrayBuffer | Uint8Array | undefined> => {
-    if (object.kind === "font") return object.data;
-    if (object.kind !== "intellifont") return undefined;
+    // ~DB resources are resolved by the deterministic bitmap-font path. Their
+    // printer bytes are not OpenType and must never be sent to the outline
+    // parser when a glyph is absent.
+    if (object.kind === "bitmap-font" || bitmapFonts.has(storedName)) {
+      return undefined;
+    }
+    if (object.kind === "opentype") return object.data;
+    if (
+      object.kind !== "intellifont" &&
+      object.kind !== "bounded-truetype" &&
+      object.kind !== "unbounded-truetype" &&
+      object.kind !== "truetype-extension"
+    ) {
+      return undefined;
+    }
     const source: DownloadedFontSource = {
       name: storedName,
-      format: "intellifont",
+      format: object.kind,
       data: object.data.slice(),
     };
     return fallback?.resolveFont(requestedName, source);
@@ -1340,15 +1961,36 @@ function sessionFontProvider(
 
   return {
     async resolveFont(name: string) {
-      const resolved = aliasedPath(name, state);
-      const direct = state.objects.get(resolved);
-      if (direct?.kind === "font" || direct?.kind === "intellifont") {
+      const resolved = aliasedPathUsing(name, memoryAliases);
+      const direct = objects.get(resolved);
+      if (
+        direct &&
+        [
+          "opentype",
+          "bitmap-font",
+          "intellifont",
+          "bounded-truetype",
+          "unbounded-truetype",
+          "truetype-extension",
+        ].includes(direct.kind)
+      ) {
         return resolveStoredFont(name, resolved, direct);
       }
       const objectName = resolved.slice(resolved.indexOf(":") + 1);
       const basename = objectName.replace(/\.[A-Z0-9]+$/i, "");
-      for (const [candidate, object] of state.objects) {
-        if (object.kind !== "font" && object.kind !== "intellifont") continue;
+      const device = resolved.slice(0, resolved.indexOf(":"));
+      for (const [candidate, object] of objects) {
+        if (
+          ![
+            "opentype",
+            "bitmap-font",
+            "intellifont",
+            "bounded-truetype",
+            "unbounded-truetype",
+            "truetype-extension",
+          ].includes(object.kind)
+        ) continue;
+        if (candidate.slice(0, candidate.indexOf(":")) !== device) continue;
         const candidateName = candidate.slice(candidate.indexOf(":") + 1);
         if (candidateName.replace(/\.[A-Z0-9]+$/i, "") === basename) {
           return resolveStoredFont(name, candidate, object);
@@ -1359,12 +2001,29 @@ function sessionFontProvider(
   };
 }
 
+function sessionFontProvider(
+  state: SessionState,
+  fallback?: FontProvider
+): FontProvider | undefined {
+  return fontProviderForResources(
+    state.memoryAliases,
+    state.objects,
+    state.bitmapFonts,
+    fallback
+  );
+}
+
 function processJobCommand(
   command: ZplCommandNode,
   state: SessionState,
+  documentId: number,
   renderLimits: RenderLimits,
-  diagnostics: ZplDiagnostic[]
+  diagnostics: ZplDiagnostic[],
+  options: RenderJobOptions
 ): void {
+  if (command.capability !== "supported" && command.capability !== "partial") {
+    return;
+  }
   if (command.canonical === "~DG") {
     processDownloadGraphic(command, state, renderLimits, diagnostics);
   } else if (command.canonical === "~DB") {
@@ -1377,52 +2036,176 @@ function processJobCommand(
     processDownloadObject(command, state, renderLimits, diagnostics);
   } else if (command.canonical === "~EG") {
     eraseDownloadedGraphics(state);
-  } else if (command.code === "ID") {
+  } else if (command.canonical === "^ID") {
     deleteResources(command.parameters[0] ?? "R:*.*", state);
-  } else if (command.code === "TO") {
+  } else if (command.canonical === "^TO") {
     transferResources(command, state, renderLimits, diagnostics);
-  } else if (command.code === "CM") {
+  } else if (command.canonical === "^CM") {
     changeMemoryAliases(command, state);
-  } else if (command.code === "FL") {
-    processFontLink(command, state);
-  } else if (command.code === "CW") {
-    const identifier = command.parameters[0]?.trim().toUpperCase();
-    const name = command.parameters[1]?.trim();
-    if (identifier && name) state.fontAliases.set(identifier, aliasedPath(name, state));
-  } else if (command.code === "SZ") {
-    const version = command.parameters[0]?.trim();
-    if (version === "1" || version === "2") {
-      state.zplVersion = Number(version) as 1 | 2;
+  } else if (command.canonical === "^FL") {
+    processFontLink(command, state, renderLimits, diagnostics);
+  } else if (command.canonical === "^CW") {
+    processFontAlias(command, state, renderLimits, diagnostics);
+  } else if (["^KL", "^SL", "^SO", "^ST"].includes(command.canonical)) {
+    applyRtcCommand(command, state.rtc, options);
+  }
+  if (PERSISTENT_COMMANDS.has(command.code)) {
+    storePersistentCommand(
+      command,
+      state,
+      documentId,
+      renderLimits,
+      diagnostics
+    );
+  }
+}
+
+function hasJobEffect(command: ZplCommandNode): boolean {
+  if (command.capability !== "supported" && command.capability !== "partial") {
+    return false;
+  }
+  return (
+    command.canonical === "~DG" ||
+    command.canonical === "~DB" ||
+    command.canonical === "~DE" ||
+    command.canonical === "~DS" ||
+    command.canonical === "~DT" ||
+    command.canonical === "~DU" ||
+    command.canonical === "~DY" ||
+    command.canonical === "~EG" ||
+    command.canonical === "^ID" ||
+    command.canonical === "^TO" ||
+    command.canonical === "^CM" ||
+    command.canonical === "^FL" ||
+    command.canonical === "^CW"
+  );
+}
+
+function commandReadsResources(command: ZplCommandNode): boolean {
+  return ["SE", "CF", "A", "A@", "XG", "IM", "IL"].includes(
+    command.code
+  );
+}
+
+function snapshotInterpretResources(
+  state: SessionState,
+  fallback?: FontProvider
+): InterpretResourceContext {
+  const memoryAliases = new Map(state.memoryAliases);
+  const objects = new Map(state.objects);
+  const bitmapFonts = new Map(state.bitmapFonts);
+  const fontLinks = new Map(
+    [...state.fontLinks].map(([name, links]) => [name, [...links]] as const)
+  );
+  const fontProvider = fontProviderForResources(
+    memoryAliases,
+    objects,
+    bitmapFonts,
+    fallback
+  );
+  return {
+    graphics: new Map(state.graphics),
+    fontAliases: new Map(state.fontAliases),
+    memoryAliases,
+    encodings: new Map(state.encodings),
+    fontResources: {
+      bitmapFonts,
+      fontLinks,
+      memoryAliases,
+      ...(fontProvider ? { fontProvider } : {}),
+    },
+  };
+}
+
+function createResourceTimeline(
+  state: SessionState,
+  documentId: number,
+  renderLimits: RenderLimits,
+  diagnostics: ZplDiagnostic[],
+  options: RenderJobOptions
+): {
+  readonly contexts: ReadonlyMap<number, InterpretResourceContext>;
+  readonly onCommand: (command: ZplCommandNode) => void;
+  readonly attachInherited: (label: ZplLabelNode) => void;
+} {
+  const contexts = new Map<number, InterpretResourceContext>();
+  let nextId = 0;
+  let initial = [...state.persistent.values()].some(({ command }) =>
+    commandReadsResources(command)
+  )
+    ? snapshotInterpretResources(state, options.fontProvider)
+    : undefined;
+  let current = initial;
+
+  const onCommand = (command: ZplCommandNode): void => {
+    const id = nextId++;
+    (command as ResourceContextCommand)[RESOURCE_CONTEXT_ID] = id;
+    if (commandReadsResources(command)) {
+      current ??= snapshotInterpretResources(state, options.fontProvider);
+      contexts.set(id, current);
     }
-  }
-  if (
-    PERSISTENT_COMMANDS.has(command.code) &&
-    (command.code !== "SZ" ||
-      ["1", "2"].includes(command.parameters[0]?.trim()))
-  ) {
-    state.persistent.set(command.code, cloneCommand(command));
-  }
+    if (hasJobEffect(command)) {
+      processJobCommand(
+        command,
+        state,
+        documentId,
+        renderLimits,
+        diagnostics,
+        options
+      );
+      current = undefined;
+    }
+  };
+
+  const attachInherited = (label: ZplLabelNode): void => {
+    for (const command of label.commands) {
+      if (
+        (command as ResourceContextCommand)[RESOURCE_CONTEXT_ID] !== undefined
+      ) {
+        continue;
+      }
+      const id = nextId++;
+      (command as ResourceContextCommand)[RESOURCE_CONTEXT_ID] = id;
+      if (commandReadsResources(command)) {
+        initial ??= snapshotInterpretResources(state, options.fontProvider);
+        contexts.set(id, initial);
+      }
+    }
+  };
+
+  return { contexts, onCommand, attachInherited };
+}
+
+function timelineResources(
+  contexts: ReadonlyMap<number, InterpretResourceContext>,
+  command: ZplCommandNode
+): InterpretResourceContext | undefined {
+  const id = (command as ResourceContextCommand)[RESOURCE_CONTEXT_ID];
+  return id === undefined ? undefined : contexts.get(id);
 }
 
 function storeFormat(
   label: ZplLabelNode,
   state: SessionState,
+  documentId: number,
   renderLimits: RenderLimits,
   diagnostics: ZplDiagnostic[]
 ): boolean {
-  const download = label.commands.find((command) => command.code === "DF");
+  const download = label.commands.find((command) => command.canonical === "^DF");
   if (!download) return false;
   const name = sessionResourceName(download.parameters[0] ?? "", "ZPL", state);
+  if (disabledResource(name)) return true;
   const commands = label.commands.filter(
-    (command) => !["XA", "XZ", "DF"].includes(command.code)
+    (command) => !["^XA", "^XZ", "^DF"].includes(command.canonical)
   );
   const bytes = commands.reduce(
     (sum, command) =>
       sum + utf8ByteLength(command.canonical + command.rawParameters),
     0
   );
-  const previous = state.formats.get(name)?.bytes ?? 0;
-  if (state.resourceBytes - previous + bytes > renderLimits.maxSessionBytes) {
+  const previous = namedResourceCost(state, name);
+  const storedBytes = resourceCost(name, bytes);
+  if (state.resourceBytes - previous + storedBytes > renderLimits.maxSessionBytes) {
     diagnostics.push(
       semanticDiagnostic(
         "SESSION_RESOURCE_LIMIT_EXCEEDED",
@@ -1432,32 +2215,54 @@ function storeFormat(
     );
     return true;
   }
-  state.formats.set(name, {
-    commands: commands.map(cloneCommand),
-    bytes,
-    definitionSpan: { ...download.span },
+  replaceNamedResource(state, name, storedBytes, () => {
+    state.formats.set(name, {
+      commands: commands.map(cloneCommand),
+      bytes,
+      definitionSpan: { ...download.span },
+      documentId,
+    });
   });
-  state.resourceBytes += bytes - previous;
   return true;
 }
 
-function withPersistentState(label: ZplLabelNode, state: SessionState): ZplLabelNode {
-  const start = label.commands[0]?.code === "XA" ? [label.commands[0]] : [];
+function withPersistentState(
+  label: ZplLabelNode,
+  state: SessionState,
+  documentId: number
+): ZplLabelNode {
+  const start = label.commands[0]?.canonical === "^XA" ? [label.commands[0]] : [];
   const rest = label.commands.slice(start.length);
-  const inherited = [...state.persistent.values()].map(cloneCommand);
+  const anchor = label.commands[0]?.span.start ?? label.span.start;
+  const inherited = [...state.persistent.values()].map((stored) => {
+    const command = cloneCommand(stored.command);
+    if (stored.documentId !== documentId) {
+      command.span = { start: anchor, end: anchor };
+    }
+    return command;
+  });
   return cloneLabel(label, [...start, ...inherited, ...rest]);
 }
 
-function updatePersistentState(label: ZplLabelNode, state: SessionState): void {
+function updatePersistentState(
+  label: ZplLabelNode,
+  state: SessionState,
+  documentId: number,
+  renderLimits: RenderLimits,
+  diagnostics: ZplDiagnostic[]
+): void {
   for (const command of label.commands) {
-    if (PERSISTENT_COMMANDS.has(command.code)) {
-      if (
-        command.code === "SZ" &&
-        !["1", "2"].includes(command.parameters[0]?.trim())
-      ) {
-        continue;
-      }
-      state.persistent.set(command.code, cloneCommand(command));
+    if (
+      (command.capability === "supported" || command.capability === "partial") &&
+      PERSISTENT_COMMANDS.has(command.code)
+    ) {
+      storePersistentCommand(
+        command,
+        state,
+        documentId,
+        renderLimits,
+        diagnostics
+      );
     }
   }
 }
@@ -1495,12 +2300,12 @@ function printQuantity(label: ZplLabelNode): {
 } {
   const command = [...label.commands]
     .reverse()
-    .find((candidate) => candidate.code === "PQ");
+    .find((candidate) => candidate.canonical === "^PQ");
   const quantity = Math.max(
     1,
-    Math.min(99_999_999, Number.parseInt(command?.parameters[0] ?? "1", 10) || 1)
+    Math.min(99_999_999, decimalInteger(command?.parameters[0] ?? "1") || 1)
   );
-  const requestedReplicates = Number.parseInt(command?.parameters[2] ?? "0", 10);
+  const requestedReplicates = decimalInteger(command?.parameters[2] ?? "0");
   return {
     quantity,
     replicates: Math.max(1, requestedReplicates || 1),
@@ -1514,54 +2319,38 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
   platform: CanvasPlatform<TCanvas>,
   state: SessionState
 ): Promise<RenderJobResult<TCanvas>> {
+  const documentId = state.nextDocumentId++;
   const renderLimits = limits(options);
   const jobDiagnostics = strictDiagnostics(document.diagnostics, options.strict);
   const labels: DocumentRenderResult<TCanvas>[] = [];
   let sourceLabelIndex = 0;
   let generatedLabels = 0;
+  const pixelBudget = { remaining: renderLimits.maxPixels };
 
   for (const item of document.items) {
     if (item.kind === "command") {
-      processJobCommand(item, state, renderLimits, jobDiagnostics);
+      processJobCommand(
+        item,
+        state,
+        documentId,
+        renderLimits,
+        jobDiagnostics,
+        options
+      );
       continue;
     }
 
     const currentLabelIndex = sourceLabelIndex++;
-    const localSemanticDiagnostics: ZplDiagnostic[] = [];
-
-    for (const command of item.commands) {
-      if (
-        command.canonical === "~DG" ||
-        command.canonical === "~DB" ||
-        command.canonical === "~DE" ||
-        command.canonical === "~DS" ||
-        command.canonical === "~DT" ||
-        command.canonical === "~DU" ||
-        command.canonical === "~DY" ||
-        command.canonical === "~EG" ||
-        command.code === "ID" ||
-        command.code === "TO" ||
-        command.code === "CM" ||
-        command.code === "FL" ||
-        command.code === "CW" ||
-        command.code === "SZ"
-      ) {
-        processJobCommand(
-          command,
-          state,
-          renderLimits,
-          localSemanticDiagnostics
-        );
-      }
-    }
-    jobDiagnostics.push(
-      ...localSemanticDiagnostics.map((diagnostic) => ({
-        ...diagnostic,
-        labelIndex: currentLabelIndex,
-      }))
-    );
     const formatDiagnostics: ZplDiagnostic[] = [];
-    if (storeFormat(item, state, renderLimits, formatDiagnostics)) {
+    if (
+      storeFormat(
+        item,
+        state,
+        documentId,
+        renderLimits,
+        formatDiagnostics
+      )
+    ) {
       jobDiagnostics.push(
         ...formatDiagnostics.map((diagnostic) => ({
           ...diagnostic,
@@ -1572,15 +2361,48 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
     }
 
     const expansionDiagnostics: ZplDiagnostic[] = [];
+    const localSemanticDiagnostics: ZplDiagnostic[] = [];
+    const resourceTimeline = createResourceTimeline(
+      state,
+      documentId,
+      renderLimits,
+      localSemanticDiagnostics,
+      options
+    );
     const expanded = expandFormats(
       item,
       state,
+      documentId,
       renderLimits.maxTemplateDepth,
       renderLimits.maxExpandedCommands,
-      expansionDiagnostics
+      expansionDiagnostics,
+      resourceTimeline.onCommand
     );
     jobDiagnostics.push(
       ...expansionDiagnostics.map((diagnostic) => ({
+        ...diagnostic,
+        labelIndex: currentLabelIndex,
+      }))
+    );
+    for (const command of expanded.commands) {
+      if (
+        command.canonical === "^SF" &&
+        serializationFieldSize(command) > MAX_SERIALIZATION_FIELD_SIZE
+      ) {
+        localSemanticDiagnostics.push(
+          semanticDiagnostic(
+            "INVALID_SERIALIZATION_FIELD",
+            `^SF mask and increment strings exceed the ${MAX_SERIALIZATION_FIELD_SIZE}-character combined limit; serialization was ignored.`,
+            command
+          )
+        );
+      }
+    }
+    const prepared = withPersistentState(expanded, state, documentId);
+    resourceTimeline.attachInherited(prepared);
+    const resourceContexts = resourceTimeline.contexts;
+    jobDiagnostics.push(
+      ...localSemanticDiagnostics.map((diagnostic) => ({
         ...diagnostic,
         labelIndex: currentLabelIndex,
       }))
@@ -1589,10 +2411,17 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
     const available = Math.max(0, renderLimits.maxLabels - generatedLabels);
     const quantity = Math.min(plan.quantity, available);
     if (quantity < plan.quantity) {
+      const subject = plan.command
+        ? `^PQ requested ${plan.quantity} label${plan.quantity === 1 ? "" : "s"}`
+        : `This format would generate ${plan.quantity} label${
+            plan.quantity === 1 ? "" : "s"
+          }`;
       jobDiagnostics.push({
         ...semanticDiagnostic(
           "LABEL_QUANTITY_LIMIT_EXCEEDED",
-          `^PQ requested ${plan.quantity} labels, exceeding the ${renderLimits.maxLabels}-label job limit.`,
+          `${subject}, but only ${available} of the ${renderLimits.maxLabels}-label job limit ${
+            available === 1 ? "remains" : "remain"
+          }.`,
           plan.command
         ),
         labelIndex: currentLabelIndex,
@@ -1605,21 +2434,20 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
 
     for (let copyIndex = 0; copyIndex < quantity; copyIndex++) {
       const serialStep = Math.floor(copyIndex / plan.replicates);
-      const dynamic = dynamicLabel(
-        expanded,
+      const renderedLabel = dynamicLabel(
+        prepared,
         state,
         options,
         serialStep,
         labelStart,
         copyIndex === quantity - 1
       );
-      const inherited = withPersistentState(dynamic, state);
       const labelDocument: ZplDocument = {
         kind: "document",
         source: document.source,
         profile: document.profile,
-        items: [inherited],
-        labels: [inherited],
+        items: [renderedLabel],
+        labels: [renderedLabel],
         syntax: document.syntax,
         diagnostics: [
           ...document.diagnostics
@@ -1648,6 +2476,9 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
           bitmapFonts: state.bitmapFonts,
           fontLinks: state.fontLinks,
           encodings: state.encodings,
+          resourcesAt: (command) =>
+            timelineResources(resourceContexts, command),
+          pixelBudget,
         }
       );
       const normalizedRendered = rendered.map((label) => ({
@@ -1661,9 +2492,9 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
         ),
       }));
 
-      const imageSave = [...inherited.commands]
+      const imageSave = [...renderedLabel.commands]
         .reverse()
-        .find((command) => command.code === "IS");
+        .find((command) => command.canonical === "^IS");
       let printImage = true;
       if (imageSave && normalizedRendered[0]) {
         const imageDiagnostics: ZplDiagnostic[] = [];
@@ -1688,20 +2519,61 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
         );
       }
 
-      const mapClear = [...inherited.commands]
+      const mapClear = [...renderedLabel.commands]
         .reverse()
-        .find((command) => command.code === "MC");
+        .find((command) => command.canonical === "^MC");
       if (
         normalizedRendered[0] &&
         (mapClear?.parameters[0]?.trim().toUpperCase() || "Y") === "N"
       ) {
-        state.retainedRaster = cloneRaster(normalizedRendered[0].raster);
+        const previous = state.retainedRaster
+          ? Math.max(1, state.retainedRaster.data.byteLength)
+          : 0;
+        const bytes = Math.max(
+          1,
+          normalizedRendered[0].raster.data.byteLength
+        );
+        if (
+          state.resourceBytes - previous + bytes >
+          renderLimits.maxSessionBytes
+        ) {
+          jobDiagnostics.push({
+            ...semanticDiagnostic(
+              "SESSION_RESOURCE_LIMIT_EXCEEDED",
+              `Retaining the label raster would exceed the ${renderLimits.maxSessionBytes}-byte session limit.`,
+              mapClear
+            ),
+            labelIndex: currentLabelIndex,
+          });
+        } else {
+          state.retainedRaster = cloneRaster(normalizedRendered[0].raster);
+          state.resourceBytes += bytes - previous;
+        }
       } else {
+        if (state.retainedRaster) {
+          state.resourceBytes -= Math.max(
+            1,
+            state.retainedRaster.data.byteLength
+          );
+        }
         state.retainedRaster = undefined;
       }
       generatedLabels++;
     }
-    updatePersistentState(expanded, state);
+    const persistenceDiagnostics: ZplDiagnostic[] = [];
+    updatePersistentState(
+      expanded,
+      state,
+      documentId,
+      renderLimits,
+      persistenceDiagnostics
+    );
+    jobDiagnostics.push(
+      ...persistenceDiagnostics.map((diagnostic) => ({
+        ...diagnostic,
+        labelIndex: currentLabelIndex,
+      }))
+    );
   }
 
   const labelDiagnostics = labels.flatMap((label) => label.diagnostics);

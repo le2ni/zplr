@@ -3,6 +3,7 @@ import { zlibSync } from "fflate";
 import {
   crc16Ccitt,
   decodeBinaryGraphic,
+  decodeDownloadData,
   decodeGraphic,
   GraphicDecodeError,
 } from "./graphicDecoder";
@@ -48,6 +49,22 @@ describe("graphic decoding", () => {
       () => decodeGraphic(":B64:AQID:", 3, 3, 16),
       "INVALID_GRAPHIC_WRAPPER"
     );
+
+    const padded = "AQ==";
+    expect([
+      ...decodeGraphic(
+        `:B64:${padded}:${crc16Ccitt(padded)}`,
+        1,
+        1,
+        16
+      ).data,
+    ]).toEqual([1]);
+    for (const invalid of ["A", "AB=="]) {
+      expectGraphicError(
+        () => decodeGraphic(`:B64:${invalid}:${crc16Ccitt(invalid)}`, 1, 1, 16),
+        "INVALID_GRAPHIC_BASE64"
+      );
+    }
   });
 
   it("decompresses Z64 and checks declared sizes before allocation", () => {
@@ -56,8 +73,22 @@ describe("graphic decoding", () => {
     const wrapped = `:Z64:${encoded}:${crc16Ccitt(encoded)}`;
     expect([...decodeGraphic(wrapped, 2, 4, 16).data]).toEqual([...source]);
 
+    const invalidAdler = zlibSync(source);
+    invalidAdler[invalidAdler.length - 1] ^= 1;
+    const invalidAdlerEncoded = base64(invalidAdler);
     expectGraphicError(
-      () => decodeGraphic(wrapped, 2, 5, 16),
+      () =>
+        decodeGraphic(
+          `:Z64:${invalidAdlerEncoded}:${crc16Ccitt(invalidAdlerEncoded)}`,
+          2,
+          4,
+          16
+        ),
+      "INVALID_GRAPHIC_ZLIB"
+    );
+
+    expectGraphicError(
+      () => decodeGraphic(wrapped, 1, 5, 16),
       "GRAPHIC_BYTE_COUNT_MISMATCH"
     );
     expectGraphicError(
@@ -79,33 +110,54 @@ describe("graphic decoding", () => {
     );
   });
 
-  it("decodes raw and zlib-compressed binary graphic fields", () => {
+  it("decodes raw binary fields and diagnoses proprietary compressed binary", () => {
     const source = Uint8Array.from([0x80, 0x5e, 0x7e, 0x2c]);
     expect([
       ...decodeBinaryGraphic(binary(source), 1, 4, 4, false, 16).data,
     ]).toEqual([...source]);
 
-    const compressed = zlibSync(source);
-    expect([
-      ...decodeBinaryGraphic(
-        binary(compressed),
-        1,
-        compressed.length,
-        source.length,
-        true,
-        16
-      ).data,
-    ]).toEqual([...source]);
+    expectGraphicError(
+      () => decodeBinaryGraphic(binary(source), 1, 4, 4, true, 16),
+      "UNSUPPORTED_GRAPHIC_FORMAT"
+    );
   });
 
-  it("rejects expanding ASCII and encoded input before oversized output allocation", () => {
-    expectGraphicError(
-      () => decodeGraphic("0000", 1, 1, 16),
-      "GRAPHIC_BYTE_COUNT_MISMATCH"
-    );
+  it("ignores surplus ASCII after the declared count and bounds encoded input", () => {
+    expect([...decodeGraphic("0000", 1, 1, 16).data]).toEqual([0]);
     expectGraphicError(
       () => decodeGraphic(`:B64:${"A".repeat(2000)}:0000`, 1, 1, 16),
       "GRAPHIC_LIMIT_EXCEEDED"
+    );
+  });
+
+  it("bounds raster row geometry as well as decoded payload bytes", () => {
+    expectGraphicError(
+      () => decodeGraphic("AA", 100_000, 1, 8),
+      "GRAPHIC_LIMIT_EXCEEDED"
+    );
+    expectGraphicError(
+      () => decodeBinaryGraphic("\x80", 100_000, 1, 1, false, 8),
+      "GRAPHIC_LIMIT_EXCEEDED"
+    );
+    expectGraphicError(
+      () => decodeGraphic("AA", 2, 1, 16),
+      "INVALID_GRAPHIC_DIMENSIONS"
+    );
+  });
+
+  it("decodes plain object hex within its declared allocation", () => {
+    expect([...decodeDownloadData("00 ff", 2, 2)]).toEqual([0, 255]);
+    expectGraphicError(
+      () => decodeDownloadData("0001", 1, 8),
+      "OBJECT_BYTE_COUNT_MISMATCH"
+    );
+    expectGraphicError(
+      () => decodeDownloadData("0", 1, 8),
+      "INVALID_OBJECT_DATA"
+    );
+    expectGraphicError(
+      () => decodeDownloadData("", Number.NaN, 8),
+      "OBJECT_BYTE_COUNT_MISMATCH"
     );
   });
 });

@@ -10,7 +10,7 @@ import {
 } from "@zxing/library";
 import { describe, expect, it } from "vitest";
 import { createRenderSession, renderZpl } from "@/index.node";
-import type { HighlightRegion } from "@/types/RenderContext";
+import type { HighlightRegion } from "@/types/HighlightRegion";
 import type { MonochromeRaster, RenderedLabel } from "@/types/RenderJob";
 import { createMonochromeRaster, getDot, setDot } from "./raster";
 

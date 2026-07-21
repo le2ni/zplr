@@ -1,5 +1,17 @@
 import { Orientation } from "./Orientation";
+import type {
+  DownloadedBitmapFont,
+  FontProvider,
+} from "./RenderJob";
 import { SourceSpan, ZplDiagnostic } from "./ZplDocument";
+
+/** Resource view captured when a downloaded font is selected. */
+export interface LayoutFontResources {
+  readonly bitmapFonts: ReadonlyMap<string, DownloadedBitmapFont>;
+  readonly fontLinks: ReadonlyMap<string, readonly string[]>;
+  readonly memoryAliases: ReadonlyMap<string, string>;
+  readonly fontProvider?: FontProvider;
+}
 
 export interface LayoutFont {
   readonly key: string;
@@ -7,6 +19,8 @@ export interface LayoutFont {
   readonly height: number;
   readonly width: number;
   readonly orientation: Orientation;
+  /** Internal render-session snapshot used to preserve command ordering. */
+  readonly resources?: LayoutFontResources;
 }
 
 export interface LayoutFieldBlock {

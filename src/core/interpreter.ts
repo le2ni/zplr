@@ -1,6 +1,5 @@
 import { Orientation } from "@/types/Orientation";
 import {
-  BarcodeLayoutField,
   BitmapLayoutField,
   BoxLayoutField,
   CircleLayoutField,
@@ -12,6 +11,7 @@ import {
   LayoutField,
   LayoutFieldBlock,
   LayoutFont,
+  LayoutFontResources,
   LayoutOrigin,
   QrLayoutField,
   TextLayoutField,
@@ -35,6 +35,9 @@ import {
   structuredPdf417Parts,
   type StructuredPdf417Part,
 } from "./pdf417Structured";
+import { zplDotConversion, zplNumber } from "./zplNumbers";
+
+const MAX_FIELD_BLOCK_DATA = 3 * 1024;
 
 interface BarcodeDefaults {
   moduleWidth: number;
@@ -164,15 +167,26 @@ export interface StoredGraphic {
   height: number;
 }
 
+export interface InterpretResourceContext {
+  graphics: ReadonlyMap<string, StoredGraphic>;
+  fontAliases: ReadonlyMap<string, string>;
+  memoryAliases: ReadonlyMap<string, string>;
+  encodings: ReadonlyMap<string, ReadonlyMap<number, number>>;
+  fontResources: LayoutFontResources;
+}
+
 export interface InterpretOptions {
   dpi?: 150 | 200 | 300 | 600;
   labelIndex?: number;
   graphics?: ReadonlyMap<string, StoredGraphic>;
   maxGraphicBytes?: number;
   fontAliases?: ReadonlyMap<string, string>;
-  hasFontProvider?: boolean;
   memoryAliases?: ReadonlyMap<string, string>;
   encodings?: ReadonlyMap<string, ReadonlyMap<number, number>>;
+  fontResources?: LayoutFontResources;
+  resourcesAt?: (
+    command: ZplCommandNode
+  ) => InterpretResourceContext | undefined;
 }
 
 function newField(): FieldState {
@@ -191,14 +205,39 @@ function semanticDiagnostic(
     message,
     severity,
     phase: "semantic",
-    span: node?.span,
-    command: node?.code,
+    span:
+      node && node.span.start < node.span.end
+        ? node.span
+        : undefined,
+    command: node?.canonical,
     labelIndex,
+  };
+}
+
+function renderDiagnostic(
+  code: string,
+  message: string,
+  node: ZplCommandNode | undefined,
+  labelIndex: number,
+  severity: "warning" | "error" = "warning"
+): ZplDiagnostic {
+  return {
+    ...semanticDiagnostic(code, message, node, labelIndex, severity),
+    phase: "render",
   };
 }
 
 function trimmed(value: string | undefined): string {
   return value?.trim() ?? "";
+}
+
+function fieldNumber(value: string | undefined): string | undefined {
+  const normalized = trimmed(value);
+  if (!/^\d+$/.test(normalized)) return undefined;
+  const number = Number(normalized);
+  return Number.isSafeInteger(number) && number <= 9999
+    ? String(number)
+    : undefined;
 }
 
 function numberValue(
@@ -210,20 +249,10 @@ function numberValue(
 ): number {
   const normalized = trimmed(value);
   if (normalized === "") return fallback;
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) return fallback;
+  const parsed = zplNumber(normalized);
+  if (parsed === undefined) return fallback;
   const clamped = Math.min(Math.max(parsed, min), max);
   return integer ? Math.trunc(clamped) : clamped;
-}
-
-function optionalNumber(
-  value: string | undefined,
-  min: number,
-  max: number,
-  integer = false
-): number | undefined {
-  if (trimmed(value) === "") return undefined;
-  return numberValue(value, min, min, max, integer);
 }
 
 function orientationValue(
@@ -250,6 +279,12 @@ export function normalizeResourceName(
 ): string {
   let normalized = value.trim().toUpperCase();
   if (!normalized.includes(":")) normalized = `R:${normalized}`;
+  const separator = normalized.indexOf(":");
+  const device = normalized.slice(0, separator) || "R";
+  let object = normalized.slice(separator + 1);
+  if (object === "") object = "UNKNOWN";
+  else if (object.startsWith(".")) object = `UNKNOWN${object}`;
+  normalized = `${device}:${object}`;
   if (!/\.[A-Z0-9]+$/.test(normalized)) normalized += `.${defaultExtension}`;
   const drive = normalized[0];
   const mapped = memoryAliases?.get(drive);
@@ -319,23 +354,34 @@ function decodeHexFieldData(
   diagnostics: ZplDiagnostic[],
   labelIndex: number
 ): string {
-  if (!indicator) {
-    return [...data]
-      .map((character) => {
-        const codePoint = character.codePointAt(0) ?? 0;
-        const mapped = codePoint <= 255 ? remap.get(codePoint) : undefined;
-        return mapped === undefined
-          ? character
-          : decodeFieldBytes([mapped], characterSet, new Map(), encoding);
-      })
-      .join("");
-  }
+  const tableDecodesBytes =
+    encoding !== undefined && [14, 24, 26].includes(characterSet);
+  const decodeBytes = (bytes: readonly number[]): string => {
+    const decoded = decodeFieldBytes(bytes, characterSet, remap, encoding);
+    return tableDecodesBytes ? decoded : applyEncodingTable(decoded, encoding);
+  };
+  const mapDirectCharacter = (character: string): string => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    const mapped = codePoint <= 255 ? remap.get(codePoint) : undefined;
+    if (mapped !== undefined) {
+      const decoded = decodeFieldBytes(
+        [mapped],
+        characterSet,
+        new Map(),
+        encoding
+      );
+      return tableDecodesBytes ? decoded : applyEncodingTable(decoded, encoding);
+    }
+    return applyEncodingTable(character, encoding);
+  };
+  if (!indicator) return [...data].map(mapDirectCharacter).join("");
+
   let result = "";
   let encoded: number[] = [];
   const flushEncoded = () => {
     if (encoded.length === 0) return;
     try {
-      result += decodeFieldBytes(encoded, characterSet, remap, encoding);
+      result += decodeBytes(encoded);
     } catch {
       diagnostics.push(
         semanticDiagnostic(
@@ -354,11 +400,9 @@ function decodeHexFieldData(
     if (data[index] !== indicator) {
       flushEncoded();
       const codePoint = data.codePointAt(index) ?? 0;
-      const mapped = codePoint <= 255 ? remap.get(codePoint) : undefined;
-      result +=
-        mapped === undefined
-          ? data[index]
-          : decodeFieldBytes([mapped], characterSet, new Map(), encoding);
+      const character = String.fromCodePoint(codePoint);
+      result += mapDirectCharacter(character);
+      index += character.length - 1;
       continue;
     }
 
@@ -386,9 +430,6 @@ function decodeHexFieldData(
 
 const CP850_HIGH =
   "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜø£Ø×ƒáíóúñÑªº¿®¬½¼¡«»░▒▓│┤ÁÂÀ©╣║╗╝¢¥┐└┴┬├─┼ãÃ╚╔╩╦╠═╬¤ðÐÊËÈıÍÎÏ┘┌█▄¦Ì▀ÓßÔÒõÕµþÞÚÛÙýÝ¯´\u00AD±‗¾¶§÷¸°¨·¹³²■\u00A0";
-const CP1252_CONTROLS =
-  "€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008DŽ\u008F\u0090‘’“”•–—˜™š›œ\u009DžŸ";
-
 const INTERNATIONAL_REPLACEMENTS: readonly Readonly<Record<number, string>>[] = [
   {},
   {},
@@ -489,20 +530,20 @@ function fieldNumberValues(
 ): Map<string, string> {
   const values = new Map<string, string>();
   for (let index = 0; index < commands.length; index++) {
-    if (commands[index].code !== "FN") continue;
-    const number = trimmed(commands[index].parameters[0]).match(/^\d+/)?.[0];
+    if (commands[index].canonical !== "^FN") continue;
+    const number = fieldNumber(commands[index].parameters[0]);
     if (!number) continue;
     for (let cursor = index + 1; cursor < commands.length; cursor++) {
       const command = commands[cursor];
-      if (["FD", "FV"].includes(command.code)) {
+      if (command.canonical === "^FD" || command.canonical === "^FV") {
         values.set(number, command.rawParameters);
         break;
       }
-      if (command.code === "SN") {
+      if (command.canonical === "^SN") {
         values.set(number, command.parameters[0] ?? "1");
         break;
       }
-      if (command.code === "FS" || command.code === "FN") break;
+      if (command.canonical === "^FS" || command.canonical === "^FN") break;
     }
   }
   return values;
@@ -524,19 +565,24 @@ function concatenateFieldData(
     result += data.slice(cursor, start);
     const descriptor = data.slice(start + indicator.length, end);
     const parts = descriptor.split(",").map((part) => part.trim());
-    const source = /^\d+$/.test(parts[0] ?? "")
-      ? values.get(parts[0])
-      : undefined;
+    const sourceNumber = fieldNumber(parts[0]);
+    const source = sourceNumber ? values.get(sourceNumber) : undefined;
     if (source === undefined) {
       result += data.slice(start, end + indicator.length);
     } else if (parts.length === 1) {
       result += source;
     } else {
       const direction = parts[1]?.toLowerCase();
-      const position = Number.parseInt(parts[2] ?? "", 10);
-      const count = Number.parseInt(parts[3] ?? "", 10);
+      const position = /^\d+$/.test(parts[2] ?? "")
+        ? Number(parts[2])
+        : Number.NaN;
+      const count = /^\d+$/.test(parts[3] ?? "")
+        ? Number(parts[3])
+        : Number.NaN;
       if (
         (direction === "f" || direction === "b") &&
+        Number.isSafeInteger(position) &&
+        Number.isSafeInteger(count) &&
         position > 0 &&
         count >= 0
       ) {
@@ -747,6 +793,18 @@ function parseQrData(
           return undefined;
         }
         cursor++;
+        if (cursor === payload.length) {
+          diagnostics.push(
+            semanticDiagnostic(
+              "INVALID_QR_FIELD_DATA",
+              "QR manual input segments cannot be empty.",
+              node,
+              labelIndex,
+              "error"
+            )
+          );
+          return undefined;
+        }
       }
     }
     segments = parsed;
@@ -831,8 +889,8 @@ export function interpretLabel(
   ): number => {
     const normalized = trimmed(value);
     if (normalized === "") return fallback;
-    const parsed = Number(normalized);
-    if (!Number.isFinite(parsed)) return fallback;
+    const parsed = zplNumber(normalized);
+    if (parsed === undefined) return fallback;
     const scaled = parsed * measurementScale();
     const clamped = Math.min(Math.max(scaled, min), max);
     return integer ? Math.round(clamped) : clamped;
@@ -845,6 +903,7 @@ export function interpretLabel(
   ): number | undefined =>
     trimmed(value) === "" ? undefined : dotValue(value, min, min, max, integer);
   let field = newField();
+  let fieldSeparated = false;
 
   const finalizeField = (separator?: ZplCommandNode, unterminated = false) => {
     if (separator) touchField(field, separator, labelState.reverse);
@@ -865,6 +924,24 @@ export function interpretLabel(
           "The final field was rendered without an FS terminator.",
           label.commands[label.commands.length - 1],
           labelIndex
+        )
+      );
+    }
+
+    if (
+      field.block?.mode === "FB" &&
+      field.data !== undefined &&
+      field.data.length > MAX_FIELD_BLOCK_DATA
+    ) {
+      diagnostics.push(
+        semanticDiagnostic(
+          "TEXT_BLOCK_LIMIT_EXCEEDED",
+          `^FB field data exceeds the ${MAX_FIELD_BLOCK_DATA}-character limit and was truncated for layout.`,
+          field.dataCommandIndex === undefined
+            ? undefined
+            : label.commands[field.dataCommandIndex],
+          labelIndex,
+          "error"
         )
       );
     }
@@ -936,7 +1013,7 @@ export function interpretLabel(
         !field.barcode.interpretationFont.name
       ) {
         diagnostics.push(
-          semanticDiagnostic(
+          renderDiagnostic(
             "FONT_SUBSTITUTED",
             `Font ${
               field.barcode.interpretationFont.name ??
@@ -1142,7 +1219,7 @@ export function interpretLabel(
         !font.name
       ) {
         diagnostics.push(
-          semanticDiagnostic(
+          renderDiagnostic(
             "FONT_SUBSTITUTED",
             `Font ${font.name ?? font.key} uses the deterministic fallback font.`,
             label.commands[commandIndex],
@@ -1174,7 +1251,27 @@ export function interpretLabel(
   };
 
   for (const node of label.commands) {
+    if (node.capability === "unsupported") {
+      if (node.code.startsWith("B")) {
+        field.unsupportedSelection = node;
+        field.barcode = undefined;
+        field.graphic = undefined;
+        touchField(field, node, labelState.reverse);
+      }
+      continue;
+    }
+    if (node.capability !== "supported" && node.capability !== "partial") {
+      continue;
+    }
     const args = node.parameters;
+    const commandResources = options.resourcesAt?.(node);
+    const graphics = commandResources?.graphics ?? options.graphics;
+    const fontAliases = commandResources?.fontAliases ?? options.fontAliases;
+    const memoryAliases =
+      commandResources?.memoryAliases ?? options.memoryAliases;
+    const encodings = commandResources?.encodings ?? options.encodings;
+    const fontResources =
+      commandResources?.fontResources ?? options.fontResources;
     if (
       node.code !== "GS" &&
       (["A", "A@", "GB", "GC", "GD", "GE", "GF", "XG", "IM"].includes(node.code) ||
@@ -1196,27 +1293,25 @@ export function interpretLabel(
         break;
       case "MU": {
         const unit = trimmed(args[0]).toUpperCase();
-        if (["D", "I", "M"].includes(unit)) {
+        if (unit === "") {
+          labelState.measurementUnit = "D";
+        } else if (["D", "I", "M"].includes(unit)) {
           labelState.measurementUnit = unit as "D" | "I" | "M";
         }
-        const base = Number(args[1]);
-        const desired = Number(args[2]);
-        labelState.dotConversion =
-          Number.isFinite(base) &&
-          Number.isFinite(desired) &&
-          base > 0 &&
-          desired > 0
-            ? desired / base
-            : 1;
+        labelState.dotConversion = zplDotConversion(
+          args[1],
+          args[2],
+          labelState.dotConversion
+        );
         break;
       }
       case "SE": {
         const name = normalizeResourceName(
           trimmed(args[0]),
           "DAT",
-          options.memoryAliases
+          memoryAliases
         );
-        labelState.encoding = options.encodings?.get(name);
+        labelState.encoding = encodings?.get(name);
         if (!labelState.encoding) {
           diagnostics.push(
             semanticDiagnostic(
@@ -1245,7 +1340,9 @@ export function interpretLabel(
         settings.width = dotValue(args[0], settings.width ?? 0, 1, 32000);
         break;
       case "LL":
-        settings.height = dotValue(args[0], settings.height ?? 0, 1, 32000);
+        if (!fieldSeparated) {
+          settings.height = dotValue(args[0], settings.height ?? 0, 1, 32000);
+        }
         break;
       case "LS":
         settings.shiftX = -dotValue(args[0], 0, -9999, 9999);
@@ -1275,9 +1372,10 @@ export function interpretLabel(
         );
         labelState.defaultFont = {
           key,
-          name: options.fontAliases?.get(key),
+          name: fontAliases?.get(key),
           ...dimensions,
           orientation: labelState.defaultOrientation,
+          ...(fontResources ? { resources: fontResources } : {}),
         };
         break;
       }
@@ -1297,6 +1395,8 @@ export function interpretLabel(
         break;
       case "LR":
         labelState.reverse = yesNo(args[0], true);
+        settings.reverse = labelState.reverse;
+        field.labelReverse = labelState.reverse;
         break;
       case "BY":
         labelState.barcodeDefaults = {
@@ -1388,7 +1488,7 @@ export function interpretLabel(
         );
         field.font = {
           key,
-          name: options.fontAliases?.get(key),
+          name: fontAliases?.get(key),
           ...resolveDimensions(
             key,
             optionalDot(args[1], 0, 32000),
@@ -1397,6 +1497,7 @@ export function interpretLabel(
             dpi
           ),
           orientation,
+          ...(fontResources ? { resources: fontResources } : {}),
         };
         field.unsupportedSelection = undefined;
         field.barcode = undefined;
@@ -1425,6 +1526,7 @@ export function interpretLabel(
             dpi
           ),
           orientation,
+          ...(fontResources ? { resources: fontResources } : {}),
         };
         field.unsupportedSelection = undefined;
         field.barcode = undefined;
@@ -1510,7 +1612,7 @@ export function interpretLabel(
         touchField(field, node, labelState.reverse);
         break;
       case "FN": {
-        const number = trimmed(args[0]).match(/^\d+/)?.[0];
+        const number = fieldNumber(args[0]);
         const inherited = number ? fnValues.get(number) : undefined;
         if (inherited !== undefined) {
           field.font ??= { ...labelState.defaultFont };
@@ -1532,15 +1634,14 @@ export function interpretLabel(
         {
           const previous = label.commands[node.index - 1];
           const concatenated =
-            node.code === "FD" && previous?.code === "FE"
+            node.code === "FD" && previous?.canonical === "^FE"
               ? concatenateFieldData(
                   node.rawParameters,
                   previous.rawParameters[0] || "#",
                   fnValues
                 )
               : node.rawParameters;
-        field.data = applyEncodingTable(
-          decodeHexFieldData(
+          field.data = decodeHexFieldData(
             concatenated,
             field.hexIndicator,
             labelState.characterSet,
@@ -1549,9 +1650,7 @@ export function interpretLabel(
             node,
             diagnostics,
             labelIndex
-          ),
-          labelState.encoding
-        );
+          );
         }
         field.dataCommandIndex = node.index;
         touchField(field, node, labelState.reverse);
@@ -1616,6 +1715,9 @@ export function interpretLabel(
         break;
       }
       case "GF": {
+        field.graphic = undefined;
+        field.barcode = undefined;
+        field.unsupportedSelection = undefined;
         const format = trimmed(args[0])[0] || "A";
         if (!["A", "B", "C"].includes(format)) {
           diagnostics.push(
@@ -1694,12 +1796,15 @@ export function interpretLabel(
         break;
       }
       case "XG": {
+        field.graphic = undefined;
+        field.barcode = undefined;
+        field.unsupportedSelection = undefined;
         const name = normalizeResourceName(
           trimmed(args[0]),
           "GRF",
-          options.memoryAliases
+          memoryAliases
         );
-        const graphic = options.graphics?.get(name);
+        const graphic = graphics?.get(name);
         if (!graphic) {
           diagnostics.push(
             semanticDiagnostic(
@@ -1725,12 +1830,15 @@ export function interpretLabel(
         break;
       }
       case "IM": {
+        field.graphic = undefined;
+        field.barcode = undefined;
+        field.unsupportedSelection = undefined;
         const name = normalizeResourceName(
           trimmed(args[0]),
           "GRF",
-          options.memoryAliases
+          memoryAliases
         );
-        const graphic = options.graphics?.get(name);
+        const graphic = graphics?.get(name);
         if (!graphic) {
           diagnostics.push(
             semanticDiagnostic(
@@ -1759,9 +1867,9 @@ export function interpretLabel(
         const name = normalizeResourceName(
           trimmed(args[0]),
           "GRF",
-          options.memoryAliases
+          memoryAliases
         );
-        const graphic = options.graphics?.get(name);
+        const graphic = graphics?.get(name);
         if (!graphic) {
           diagnostics.push(
             semanticDiagnostic(
@@ -1952,12 +2060,11 @@ export function interpretLabel(
           commandIndex: node.index,
           orientation: orientationValue(args[0], labelState.defaultOrientation),
           mod43CheckDigit: yesNo(args[1], false),
-          height: numberValue(
+          height: dotValue(
             args[2],
             labelState.barcodeDefaults.height,
             1,
-            32000,
-            true
+            32000
           ),
           printInterpretationBelow: yesNo(args[3], true),
           printInterpretationAbove: yesNo(args[4], false),
@@ -1973,16 +2080,25 @@ export function interpretLabel(
         break;
       case "BC": {
         const modeCandidate = trimmed(args[5]);
+        if (modeCandidate && !["N", "U", "A", "D"].includes(modeCandidate)) {
+          diagnostics.push(
+            semanticDiagnostic(
+              "UNSUPPORTED_CODE128_MODE",
+              `^BC mode ${modeCandidate} is unsupported; normal mode was used.`,
+              node,
+              labelIndex
+            )
+          );
+        }
         field.barcode = {
           symbology: "BC",
           commandIndex: node.index,
           orientation: orientationValue(args[0], labelState.defaultOrientation),
-          height: numberValue(
+          height: dotValue(
             args[1],
             labelState.barcodeDefaults.height,
             1,
-            32000,
-            true
+            32000
           ),
           printInterpretationBelow: yesNo(args[2], true),
           printInterpretationAbove: yesNo(args[3], false),
@@ -2037,7 +2153,18 @@ export function interpretLabel(
         break;
       }
       case "BQ": {
-        const model = trimmed(args[1]) === "1" ? "1" : "2";
+        const requestedModel = trimmed(args[1]);
+        if (requestedModel && requestedModel !== "1" && requestedModel !== "2") {
+          diagnostics.push(
+            semanticDiagnostic(
+              "UNSUPPORTED_QR_MODEL",
+              `^BQ model ${requestedModel} is unsupported; Model 2 was used.`,
+              node,
+              labelIndex
+            )
+          );
+        }
+        const model = requestedModel === "1" ? "1" : "2";
         const defaultMagnification =
           dpi === 150 ? 1 : dpi === 200 ? 2 : dpi === 300 ? 3 : 6;
         const reliabilityCandidate = trimmed(args[3]);
@@ -2074,7 +2201,7 @@ export function interpretLabel(
           orientation: orientationValue(args[0], labelState.defaultOrientation),
           moduleWidth: Math.max(1, labelState.barcodeDefaults.moduleWidth),
           height: explicitRowHeight
-            ? numberValue(args[1], 1, 1, 32000, true)
+            ? dotValue(args[1], 1, 1, 32000)
             : 1,
           overallHeight: explicitRowHeight
             ? undefined
@@ -2412,15 +2539,20 @@ export function interpretLabel(
           matrix: true,
           commandIndex: node.index,
           orientation: orientationValue(args[0], labelState.defaultOrientation),
-          moduleWidth: numberValue(args[1], defaultModule, 1, 10, true),
+          moduleWidth: dotValue(args[1], defaultModule, 1, 10),
           ratio: numberValue(args[2], 2, 2, 3),
           height: dotValue(args[3], defaultLinearHeight, 1, 9999),
           printInterpretationBelow: false,
           printInterpretationAbove: false,
           interpretationFont: { ...(field.font ?? labelState.defaultFont) },
           encoderOptions: {
-            zplMicroModule: numberValue(args[4], defaultModule, 1, 10, true),
-            zplMicroRowHeight: numberValue(args[5], dpi === 600 ? 8 : 4, 1, 255, true),
+            zplMicroModule: dotValue(args[4], defaultModule, 1, 10),
+            zplMicroRowHeight: dotValue(
+              args[5],
+              dpi === 600 ? 8 : 4,
+              1,
+              255
+            ),
           },
         };
         field.graphic = undefined;
@@ -2437,8 +2569,9 @@ export function interpretLabel(
         const requestedRows = numberValue(args[4], 0, 0, 32000, true);
         const columns = requestedColumns > 144 ? 0 : requestedColumns;
         const rows = requestedRows > 144 ? 0 : requestedRows;
+        const requestedModule = zplNumber(args[1]);
         const explicitModule =
-          trimmed(args[1]) !== "" && Number(trimmed(args[1])) !== 0;
+          requestedModule !== undefined && requestedModule !== 0;
         const aspect = numberValue(args[7], 1, 1, 2, true);
         const module = explicitModule
           ? dotValue(args[1], 1, 1, 32000)
@@ -2506,10 +2639,13 @@ export function interpretLabel(
       }
       case "FS":
         finalizeField(node);
+        fieldSeparated = true;
         break;
       case "CI": {
         const requested = trimmed(args[0]) || "0";
-        const selected = Number.parseInt(requested, 10);
+        const selected = /^\d+$/.test(requested)
+          ? Number(requested)
+          : Number.NaN;
         const accepted =
           (selected >= 0 && selected <= 17) ||
           selected === 24 ||
@@ -2525,8 +2661,14 @@ export function interpretLabel(
         const remap = new Map<number, number>();
         if (selected >= 0 && selected <= 13) {
           for (let index = 1; index + 1 < args.length && remap.size < 256; index += 2) {
-            const source = Number.parseInt(trimmed(args[index]), 10);
-            const destination = Number.parseInt(trimmed(args[index + 1]), 10);
+            const sourceValue = trimmed(args[index]);
+            const destinationValue = trimmed(args[index + 1]);
+            const source = /^\d+$/.test(sourceValue)
+              ? Number(sourceValue)
+              : Number.NaN;
+            const destination = /^\d+$/.test(destinationValue)
+              ? Number(destinationValue)
+              : Number.NaN;
             if (
               source >= 0 &&
               source <= 255 &&
@@ -2542,22 +2684,6 @@ export function interpretLabel(
         break;
       }
       default:
-        if (node.capability === "unknown") {
-          diagnostics.push(
-            semanticDiagnostic(
-              "UNKNOWN_COMMAND",
-              `${node.canonical} is not recognized by this renderer.`,
-              node,
-              labelIndex
-            )
-          );
-        }
-        if (node.code.startsWith("B") && node.capability === "unsupported") {
-          field.unsupportedSelection = node;
-          field.barcode = undefined;
-          field.graphic = undefined;
-          touchField(field, node, labelState.reverse);
-        }
         break;
     }
   }

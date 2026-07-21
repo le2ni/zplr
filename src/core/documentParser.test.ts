@@ -76,6 +76,33 @@ describe("parseDocument", () => {
     expect(
       invalidPrefix.diagnostics.map((diagnostic) => diagnostic.code)
     ).toContain("INVALID_COMMAND_PREFIX");
+
+    const controlDelimiter = parseDocument("~CD;^XA^FO10;20^XZ");
+    expect(
+      controlDelimiter.labels
+        .flatMap(({ commands }) => commands)
+        .find(({ canonical }) => canonical === "^FO")?.parameters
+    ).toEqual(["10", "20"]);
+  });
+
+  it("does not let malformed binary counts or wrong prefixes change structure", () => {
+    const malformedBinary = parseDocument("^XA^GFB,1x,1,1,^FO1,2^XZ");
+    expect(
+      malformedBinary.labels[0].commands.map(({ canonical }) => canonical)
+    ).toContain("^FO");
+
+    const incompleteBinaryHeader = parseDocument(
+      "^XA^GFB,4,^FO1,2^GB1,1,1^FS^XZ"
+    );
+    expect(
+      incompleteBinaryHeader.labels[0].commands.map(({ canonical }) => canonical)
+    ).toEqual(expect.arrayContaining(["^FO", "^GB", "^FS", "^XZ"]));
+
+    const wrongStart = parseDocument("~XA^FO1,2^XZ");
+    expect(wrongStart.labels[0].explicit).toBe(false);
+    expect(wrongStart.diagnostics).toContainEqual(
+      expect.objectContaining({ code: "INVALID_COMMAND_PREFIX", command: "~XA" })
+    );
   });
 
   it("recognizes STX, ETX, and SI command alternatives", () => {
@@ -123,6 +150,10 @@ describe("parseDocument", () => {
     expect(unmatched.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "UNMATCHED_FORMAT_END"
     );
+    expect(unmatched.labels).toHaveLength(0);
+    expect(unmatched.items).toEqual([
+      expect.objectContaining({ kind: "command", canonical: "^XZ" }),
+    ]);
 
     const incomplete = parseDocument("^XA^FDx");
     expect(incomplete.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
@@ -168,17 +199,11 @@ describe("parseDocument", () => {
     ]);
 
     const profile = parseDocument("^XA^XZ", {
-      profile: "future-profile" as "zpl-ii-2006",
+      profile: "future-profile" as "zpl-ii-2025",
     });
     expect(profile.profile).toBe("zpl-ii-2025");
     expect(profile.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "UNSUPPORTED_PROFILE"
-    );
-
-    const legacy = parseDocument("^XA^XZ", { profile: "zpl-ii-2006" });
-    expect(legacy.profile).toBe("zpl-ii-2025");
-    expect(legacy.diagnostics).toContainEqual(
-      expect.objectContaining({ code: "DEPRECATED_PROFILE", severity: "warning" })
     );
   });
 });

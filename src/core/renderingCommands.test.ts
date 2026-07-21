@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { zlibSync } from "fflate";
 import { createRenderSession, renderZpl } from "@/index.node";
 import { notoSansCondensedTtf } from "@/assets/notoSansCondensed.generated";
 import type { MonochromeRaster } from "@/types/RenderJob";
@@ -111,6 +110,18 @@ describe("additional rendering commands", () => {
     );
   });
 
+  it("reports one fallback diagnostic per substituted field", async () => {
+    const result = await renderZpl(
+      "^XA^PW120^LL70" +
+        "^FO0,0^AWN,12,6^FDText^FS" +
+        "^FO0,20^AWN,12,6^B3N,N,20,Y,N^FD123^FS^XZ"
+    );
+
+    expect(
+      result.diagnostics.filter(({ code }) => code === "FONT_SUBSTITUTED")
+    ).toHaveLength(2);
+  });
+
   it("renders every ^GS printer symbol without unsupported diagnostics", async () => {
     const result = await renderZpl(
       "^XA^PW500^LL100" +
@@ -127,9 +138,9 @@ describe("additional rendering commands", () => {
 
   it("concatenates complete and sliced ^FN fields with ^FE", async () => {
     const expanded = await renderZpl(
-      "^XA^PW300^LL50^FO0,70^FN2^FDField FN 2 Data^FS" +
+      "^XA^PW300^LL50^FO0,70^FN0002^FDField FN 2 Data^FS" +
         "^FO0,70^FN3^FDField FN 3 Data^FS" +
-        "^FO0,20^A0N,20,10^FE#^FD#2# / #3,b,1,4#^FS^XZ"
+        "^FO0,20^A0N,20,10^FE#^FD#0002# / #3,b,1,4#^FS^XZ"
     );
     const direct = await renderZpl(
       "^XA^PW300^LL50^FO0,20^A0N,20,10^FDField FN 2 Data / Data^FS^XZ"
@@ -173,6 +184,22 @@ describe("additional rendering commands", () => {
     const converted = await session.render("^XA^PW20^LL10^FO1,1^GB1,1,1^FS^XZ");
     expect(converted.labels[0]).toMatchObject({ width: 40, height: 20 });
     expect(getDot(converted.labels[0].raster, 2, 2)).toBe(true);
+
+    const retained = await renderZpl(
+      "^XA^MUD,150,300^MUD,1,3^MUD^PW10^LL5^FO1,1^GB1,1,1^FS^XZ",
+      { printDensity: 12 }
+    );
+    expect(retained.labels[0]).toMatchObject({ width: 20, height: 10 });
+    expect(getDot(retained.labels[0].raster, 2, 2)).toBe(true);
+  });
+
+  it("rejects JavaScript-only numeric syntax in ZPL parameters", async () => {
+    const result = await renderZpl(
+      "^XA^PW0x20^LL1e2^FO0x4,1e1^GB1,1,1^FS^XZ",
+      { fallbackSize: { width: 10, height: 10, unit: "dots" } }
+    );
+    expect(result.labels[0]).toMatchObject({ width: 10, height: 10 });
+    expect(getDot(result.labels[0].raster, 0, 0)).toBe(true);
   });
 
   it("loads and moves session images with ^IL and ^IM", async () => {
@@ -186,6 +213,72 @@ describe("additional rendering commands", () => {
 
     const loaded = await session.render("^XA^PW10^LL10^ILR:DOT.GRF^XZ");
     expect(getDot(loaded.labels[0].raster, 0, 0)).toBe(true);
+  });
+
+  it("applies ^LR as field reversal instead of inverting the whole label", async () => {
+    const result = await renderZpl(
+      "^XA^PW8^LL4" +
+        "^FO0,0^GB8,4,4^FS" +
+        "^LRY^FO1,1^GB2,2,2^FS^XZ"
+    );
+    const raster = result.labels[0].raster;
+    expect(getDot(raster, 0, 0)).toBe(true);
+    expect(getDot(raster, 1, 1)).toBe(false);
+    expect(getDot(raster, 2, 2)).toBe(false);
+    expect(getDot(raster, 7, 3)).toBe(true);
+  });
+
+  it("applies graphic deletes and transfers in format command order", async () => {
+    const deleted = await renderZpl(
+      "~DGR:DOT.GRF,1,1,80" +
+        "^XA^PW8^LL4" +
+        "^FO1,1^XGR:DOT.GRF^FS" +
+        "^IDR:DOT.GRF" +
+        "^FO3,1^XGR:DOT.GRF^FS^XZ"
+    );
+    expect(getDot(deleted.labels[0].raster, 1, 1)).toBe(true);
+    expect(getDot(deleted.labels[0].raster, 3, 1)).toBe(false);
+    expect(
+      deleted.diagnostics.filter(
+        ({ code }) => code === "MISSING_GRAPHIC_RESOURCE"
+      )
+    ).toHaveLength(1);
+
+    const transferred = await renderZpl(
+      "~DGR:DOT.GRF,1,1,80" +
+        "^XA^PW8^LL4" +
+        "^FO1,1^XGE:COPY.GRF^FS" +
+        "^TOR:DOT.GRF,E:COPY.GRF" +
+        "^FO3,1^XGE:COPY.GRF^FS^XZ"
+    );
+    expect(getDot(transferred.labels[0].raster, 1, 1)).toBe(false);
+    expect(getDot(transferred.labels[0].raster, 3, 1)).toBe(true);
+    expect(
+      transferred.diagnostics.filter(
+        ({ code }) => code === "MISSING_GRAPHIC_RESOURCE"
+      )
+    ).toHaveLength(1);
+  });
+
+  it("keeps a downloaded font selected before an in-format delete", async () => {
+    const result = await renderZpl(
+      "~DBR:TINY.FNT,N,5,8,5,4,1,TEST,#0041.1.8.0.1.8.80" +
+        "^CWZ,R:TINY.FNT" +
+        "^XA^PW30^LL14" +
+        "^FO1,1^AZN,8,8^FDA^FS" +
+        "^IDR:TINY.FNT" +
+        "^FO15,1^AZN,8,8^FDA^FS^XZ"
+    );
+    expect(
+      result.diagnostics.filter(({ code }) => code === "FONT_SUBSTITUTED")
+    ).toHaveLength(1);
+    expect(
+      Array.from({ length: 14 }, (_, y) =>
+        Array.from({ length: 10 }, (_, x) =>
+          getDot(result.labels[0].raster, x, y)
+        )
+      ).flat()
+    ).toContain(true);
   });
 
   it("saves images, transfers objects, and erases downloaded graphics", async () => {
@@ -253,8 +346,25 @@ describe("additional rendering commands", () => {
     }
   });
 
+  it("ignores ^SF masks beyond the documented combined size limit", async () => {
+    const oversizedMask = "d".repeat(3 * 1024 + 1);
+    const rendered = await renderZpl(
+      `^XA^PW140^LL30^FO0,0^A0N,20,10^FD0000^SF${oversizedMask},1^FS^PQ2^XZ`
+    );
+    const expected = await renderZpl(
+      "^XA^PW140^LL30^FO0,0^A0N,20,10^FD0000^FS^XZ"
+    );
+
+    expect(rendered.labels).toHaveLength(2);
+    expect(rendered.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+    expect(rendered.labels[1].raster.data).toEqual(expected.labels[0].raster.data);
+    expect(rendered.diagnostics.map(({ code }) => code)).toContain(
+      "INVALID_SERIALIZATION_FIELD"
+    );
+  });
+
   it("formats deterministic primary and offset RTC fields with ^FC", async () => {
-    const clock = new Date(2026, 6, 20, 14, 5, 6);
+    const clock = new Date("2026-07-20T14:05:06Z");
     const clocked = await renderZpl(
       "^XA^PW360^LL35^SO2,0,0,0,1,0,0^SO3,0,0,0,2,0,0" +
         "^FO0,0^A0N,20,10^FC%,{,#" +
@@ -266,6 +376,17 @@ describe("additional rendering commands", () => {
         "^FD2026-07-20 14:05:06 15 16^FS^XZ"
     );
     expect(clocked.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+
+    const calendar = await renderZpl(
+      "^XA^PW100^LL35^FO0,0^A0N,20,10^FC%^FD%w %j^FS^XZ",
+      { clock }
+    );
+    const expectedCalendar = await renderZpl(
+      "^XA^PW100^LL35^FO0,0^A0N,20,10^FD01 201^FS^XZ"
+    );
+    expect(calendar.labels[0].raster.data).toEqual(
+      expectedCalendar.labels[0].raster.data
+    );
   });
 
   it("persists ^ST clock state and enforces the batch allocation limit", async () => {
@@ -286,6 +407,95 @@ describe("additional rendering commands", () => {
     expect(limited.diagnostics.map(({ code }) => code)).toContain(
       "LABEL_QUANTITY_LIMIT_EXCEEDED"
     );
+  });
+
+  it("applies standalone RTC setup commands to later labels", async () => {
+    const setup =
+      "^ST07,20,2026,02,05,06,P" +
+      "^SO2,0,1,0,0,0,0^SLT,1^KL4";
+    const field =
+      "^PW260^LL35^FO0,0^A0N,20,10^FC%,{" +
+      "^FD%B %Y-%m-%d {d^FS";
+    const session = createRenderSession();
+    const configured = await session.render(setup);
+    const actual = await session.render(`^XA${field}^XZ`);
+    const expected = await renderZpl(`^XA${setup}${field}^XZ`);
+
+    expect(configured.labels).toHaveLength(0);
+    expect(actual.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+  });
+
+  it("applies ^SL clock tolerances and ignores ^SL after the first ^FO", async () => {
+    const ticks = [
+      new Date("2026-07-20T14:05:00Z"),
+      new Date("2026-07-20T14:05:05Z"),
+      new Date("2026-07-20T14:05:11Z"),
+    ];
+    let tick = 0;
+    const tolerant = await renderZpl(
+      "^XA^SL10^PW40^LL25^FO0,0^A0N,20,10^FC%^FD%S^FS^PQ2^XZ",
+      { clock: () => ticks[Math.min(tick++, ticks.length - 1)] }
+    );
+    const expectedFirst = await renderZpl(
+      "^XA^PW40^LL25^FO0,0^A0N,20,10^FD00^FS^XZ"
+    );
+    const expectedSecond = await renderZpl(
+      "^XA^PW40^LL25^FO0,0^A0N,20,10^FD11^FS^XZ"
+    );
+    expect(tolerant.labels[0].raster.data).toEqual(
+      expectedFirst.labels[0].raster.data
+    );
+    expect(tolerant.labels[1].raster.data).toEqual(
+      expectedSecond.labels[0].raster.data
+    );
+
+    tick = 0;
+    const misplaced = await renderZpl(
+      "^XA^PW40^LL25^FO0,0^SLT^A0N,20,10^FC%^FD%S^FS^XZ",
+      { clock: () => ticks[Math.min(tick++, ticks.length - 1)] }
+    );
+    expect(misplaced.labels[0].raster.data).toEqual(
+      expectedFirst.labels[0].raster.data
+    );
+  });
+
+  it("uses one queue-time clock reading for every RTC field on a label", async () => {
+    const ticks = [
+      new Date("2026-07-20T14:05:00Z"),
+      new Date("2026-07-20T14:05:05Z"),
+      new Date("2026-07-20T14:05:11Z"),
+    ];
+    let tick = 0;
+    const result = await renderZpl(
+      "^XA^SLT^PW50^LL45" +
+        "^FO0,0^A0N,20,10^FC%^FD%S^FS" +
+        "^FO0,22^A0N,20,10^FC%^FD%S^FS^XZ",
+      { clock: () => ticks[Math.min(tick++, ticks.length - 1)] }
+    );
+    const expected = await renderZpl(
+      "^XA^PW50^LL45" +
+        "^FO0,0^A0N,20,10^FD05^FS" +
+        "^FO0,22^A0N,20,10^FD05^FS^XZ"
+    );
+
+    expect(tick).toBe(2);
+    expect(result.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+  });
+
+  it("defaults invalid RTC parameters instead of rolling the clock", async () => {
+    const clock = new Date("2026-07-20T14:05:06Z");
+    const result = await renderZpl(
+      "^XA^PW260^LL35^ST99,99,1,99,99,99,X" +
+        "^SO2,1e2,40000,-40000,Infinity,," +
+        "^FO0,0^A0N,20,10^FC%,{" +
+        "^FD%Y-%m-%d %H:%M:%S {Y-{m-{d^FS^XZ",
+      { clock }
+    );
+    const expected = await renderZpl(
+      "^XA^PW260^LL35^FO0,0^A0N,20,10" +
+        "^FD2026-07-20 14:05:06 2026-07-20^FS^XZ"
+    );
+    expect(result.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
   });
 
   it("honors ^CM memory aliases for subsequent resource commands", async () => {
@@ -312,6 +522,35 @@ describe("additional rendering commands", () => {
     expect(getDot(result.labels[0].raster, 8, 10)).toBe(true);
   });
 
+  it("sizes barcode interpretation bands from downloaded font advances", async () => {
+    const result = await renderZpl(
+      "~DBR:WIDE.FNT,N,5,8,5,4,1,TEST,#0031.1.8.0.1.200.80" +
+        "^CWZ,R:WIDE.FNT" +
+        "^XA^PW240^LL80^FO1,1^AZN,8,8" +
+        "^BCN,20,Y,N,N,N^FD1^FS^XZ"
+    );
+    const barcode = result.labels[0].highlightRegions.find(
+      ({ type }) => type === "barcode"
+    );
+    expect(barcode?.width).toBeGreaterThanOrEqual(200);
+    expect(result.diagnostics.map(({ code }) => code)).not.toContain(
+      "FONT_SUBSTITUTED"
+    );
+  });
+
+  it("does not resolve extensionless fonts across printer memory devices", async () => {
+    const result = await renderZpl(
+      "~DBR:TINY.FNT,N,5,8,5,4,1,TEST," +
+        "#0041.5.8.0.5.8.FF818181FF" +
+        "^CWZ,E:TINY" +
+        "^XA^PW30^LL20^FO1,1^AZN,10,8^FDA^FS^XZ"
+    );
+
+    expect(result.diagnostics.map(({ code }) => code)).toContain(
+      "FONT_SUBSTITUTED"
+    );
+  });
+
   it("applies downloaded ~DE translation tables selected with ^SE", async () => {
     const mapped = await renderZpl(
       "~DER:MAP.DAT,4,00410042" +
@@ -321,6 +560,12 @@ describe("additional rendering commands", () => {
       "^XA^PW40^LL20^FO0,0^AAN,9,5^FDA^FS^XZ"
     );
     expect(mapped.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+
+    const chained = await renderZpl(
+      "~DER:CHAIN.DAT,8,0041004200430041" +
+        "^XA^PW40^LL20^SER:CHAIN.DAT^CI24^FH_^FO0,0^AAN,9,5^FD_42^FS^XZ"
+    );
+    expect(chained.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
   });
 
   it("decodes ^CI code pages, UTF-16, Shift-JIS, and remapping pairs", async () => {
@@ -352,7 +597,7 @@ describe("additional rendering commands", () => {
   it("downloads binary GRF, ASCII PNG, and TrueType ~DY objects", async () => {
     const png =
       "89504E470D0A1A0A0000000D49484452000000010000000108000000003A7E9B55" +
-      "0000000A49444154789C6360000000020001E221BC330000000049454E44AE426082";
+      "0000000A49444154789C636000000002000148AFA4710000000049454E44AE426082";
     const font = notoSansCondensedTtf();
     const source =
       `~DYR:DOT.GRF,B,G,1,1,${String.fromCharCode(0x80)}` +
@@ -370,15 +615,29 @@ describe("additional rendering commands", () => {
     );
   });
 
-  it("renders raw and compressed binary ^GF streams containing command bytes", async () => {
-    const source = Uint8Array.from([0x80, 0x5e, 0x7e, 0x2c]);
-    const compressed = zlibSync(source);
+  it("defaults unknown ~DY extensions to GRF and diagnoses AR compression", async () => {
     const result = await renderZpl(
-      `^XA^PW20^LL10^FO1,1^GFB,4,4,1,${binaryString(source)}^FS` +
-        `^FO10,1^GFC,${compressed.length},4,1,${binaryString(compressed)}^FS^XZ`
+      "~DYR:DOT,A,Z,1,1,80" +
+        "~DYR:OLD,C,G,1,1,x" +
+        "^XA^PW5^LL5^FO1,1^IMR:DOT.GRF^FS^XZ"
     );
     expect(getDot(result.labels[0].raster, 1, 1)).toBe(true);
-    expect(getDot(result.labels[0].raster, 10, 1)).toBe(true);
+    expect(result.diagnostics.map(({ code }) => code)).toContain(
+      "UNSUPPORTED_GRAPHIC_FORMAT"
+    );
+  });
+
+  it("renders raw ^GF command bytes and isolates unsupported compressed data", async () => {
+    const source = Uint8Array.from([0x80, 0x5e, 0x7e, 0x2c]);
+    const result = await renderZpl(
+      `^XA^PW20^LL10^FO1,1^GFB,4,4,1,${binaryString(source)}^FS` +
+        `^FO10,1^GFC,4,4,1,${binaryString(source)}^FS^XZ`
+    );
+    expect(getDot(result.labels[0].raster, 1, 1)).toBe(true);
+    expect(getDot(result.labels[0].raster, 10, 1)).toBe(false);
+    expect(result.diagnostics.map(({ code }) => code)).toContain(
+      "UNSUPPORTED_GRAPHIC_FORMAT"
+    );
     expect(result.diagnostics.map(({ code }) => code)).not.toEqual(
       expect.arrayContaining(["UNKNOWN_COMMAND", "INVALID_COMMAND"])
     );
@@ -447,6 +706,35 @@ describe("additional rendering commands", () => {
     expect(bounds(result.labels[0].raster).maxX).toBeGreaterThanOrEqual(12);
   });
 
+  it("clears stale destination font metadata when ^TO overwrites an object", async () => {
+    const result = await renderZpl(
+      "~DBE:DEST.FNT,N,5,8,5,4,1,TEST," +
+        "#0041.1.8.0.1.8.80" +
+        "~DTR:SRC.TTF,1,00" +
+        "^TOR:SRC.TTF,E:DEST.FNT" +
+        "^CWZ,E:DEST.FNT" +
+        "^XA^PW30^LL20^FO1,1^AZN,10,8^FDA^FS^XZ"
+    );
+    expect(result.diagnostics.map(({ code }) => code)).toContain(
+      "FONT_SUBSTITUTED"
+    );
+  });
+
+  it("ignores ^TO without two explicit, different memory devices", async () => {
+    const result = await renderZpl(
+      "~DGR:SRC.GRF,1,1,80" +
+        "^TOR:SRC.GRF,R:SAME.GRF" +
+        "^TOSRC.GRF,E:IMPLICIT.GRF" +
+        "^XA^PW8^LL4" +
+        "^FO1,1^XGR:SAME.GRF^FS" +
+        "^FO3,1^XGE:IMPLICIT.GRF^FS^XZ"
+    );
+    expect(
+      result.diagnostics.filter(({ code }) => code === "MISSING_GRAPHIC_RESOURCE")
+    ).toHaveLength(2);
+    expect(result.labels[0].raster.data.every((byte) => byte === 0)).toBe(true);
+  });
+
   it("segments ^FM PDF417 data across declared printer origins", () => {
     const data = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".repeat(4);
     const document = parseDocument(
@@ -460,9 +748,6 @@ describe("additional rendering commands", () => {
       [150, 20],
       [290, 20],
     ]);
-    expect(layout.diagnostics.map(({ code }) => code)).not.toContain(
-      "STRUCTURED_APPEND_METADATA_APPROXIMATED"
-    );
   });
 
   it("applies ^PA Arabic shaping and bidirectional ordering", () => {

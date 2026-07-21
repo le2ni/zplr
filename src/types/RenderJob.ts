@@ -1,4 +1,4 @@
-import type { HighlightRegion } from "./RenderContext";
+import type { HighlightRegion } from "./HighlightRegion";
 import type {
   ParseDocumentOptions,
   RenderDocumentOptions,
@@ -19,6 +19,7 @@ export interface MonochromeRaster {
 
 export interface RenderLimits {
   maxDimension: number;
+  /** Maximum pixels in one label or field raster, and cumulatively across output labels. */
   maxPixels: number;
   maxGraphicBytes: number;
   maxSessionBytes: number;
@@ -31,7 +32,11 @@ export interface DownloadedFontSource {
   /** Canonical printer resource name, including its memory designator. */
   readonly name: string;
   /** Format of the downloaded outline-font bytes. */
-  readonly format: "intellifont";
+  readonly format:
+    | "intellifont"
+    | "bounded-truetype"
+    | "unbounded-truetype"
+    | "truetype-extension";
   /** A copy of the bytes supplied by the corresponding download command. */
   readonly data: Uint8Array;
 }
@@ -39,8 +44,8 @@ export interface DownloadedFontSource {
 export interface FontProvider {
   /**
    * Resolve a printer font to OpenType-compatible bytes. `source` is supplied
-   * for downloaded Intellifont resources so the host can decode or convert the
-   * embedded font while preserving normal ^A@ and ^CW lookup behavior.
+   * for downloaded printer-font resources so the host can decode or convert
+   * the embedded font while preserving normal ^A@ and ^CW lookup behavior.
    */
   resolveFont(
     name: string,
@@ -71,24 +76,24 @@ export interface RenderJobOptions
   extends ParseDocumentOptions,
     RenderDocumentOptions {
   fontProvider?: FontProvider;
-  /** RTC source used by ^FC. A fixed Date makes clock fields deterministic. */
+  /** RTC source used by ^FC. Date components are read in UTC for deterministic output. */
   clock?: Date | (() => Date);
 }
 
 export interface RenderedLabel<TSurface = never> {
-  raster: MonochromeRaster;
-  width: number;
-  height: number;
-  printDensity: PrintDensity;
-  diagnostics: ZplDiagnostic[];
-  highlightRegions: HighlightRegion[];
-  canvas?: TSurface;
+  readonly raster: MonochromeRaster;
+  readonly width: number;
+  readonly height: number;
+  readonly printDensity: PrintDensity;
+  readonly diagnostics: readonly ZplDiagnostic[];
+  readonly highlightRegions: readonly HighlightRegion[];
+  readonly canvas: TSurface;
 }
 
 export interface RenderJobResult<TSurface = never> {
-  document: ZplDocument;
-  labels: RenderedLabel<TSurface>[];
-  diagnostics: ZplDiagnostic[];
+  readonly document: ZplDocument;
+  readonly labels: readonly RenderedLabel<TSurface>[];
+  readonly diagnostics: readonly ZplDiagnostic[];
 }
 
 export interface ZplRenderSession<TSurface = never> {

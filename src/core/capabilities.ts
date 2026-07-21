@@ -14,7 +14,7 @@ type CapabilitySeed = Pick<
   "name" | "category" | "effect" | "scope" | "status" | "limitations"
 >;
 
-const supported: Readonly<Record<string, CapabilitySeed>> = {
+const capabilitySeeds: Readonly<Record<string, CapabilitySeed>> = {
   "^A": raster("Scalable/Bitmapped Font", "text", "field"),
   "^A@": raster("Font by Name", "text", "field"),
   "^B0": raster("Aztec Bar Code", "barcode", "field"),
@@ -52,7 +52,14 @@ const supported: Readonly<Record<string, CapabilitySeed>> = {
   "^CD": job("Change Delimiter", "format", "session"),
   "~CD": job("Change Delimiter", "format", "session"),
   "^CF": raster("Change Default Font", "text", "session"),
-  "^CI": raster("Change International Font/Encoding", "text", "session"),
+  "^CI": partial(
+    "Change International Font/Encoding",
+    "text",
+    "session",
+    [
+      "Table-specific EUC-CN and non-GB18030 ^CI16/^CI26 variants are not inferred without a compatible downloaded mapping; standard Unicode, Western, Shift-JIS, EUC-JP, and GB18030 paths are implemented.",
+    ]
+  ),
   "^CV": raster("Code Validation", "barcode", "session"),
   "^CM": job("Change Memory Letter Designation", "storage", "session"),
   "^CT": job("Change Tilde", "format", "session"),
@@ -65,19 +72,49 @@ const supported: Readonly<Record<string, CapabilitySeed>> = {
   "~DS": job("Download Intellifont", "storage", "session"),
   "~DT": job("Download Bounded TrueType Font", "storage", "session"),
   "~DU": job("Download Unbounded TrueType Font", "storage", "session"),
-  "~DY": job("Download Object", "storage", "session"),
+  "~DY": partial(
+    "Download Object",
+    "storage",
+    "session",
+    [
+      "Legacy BAR-ONE AR-compressed (C) payloads are diagnosed but not decoded.",
+      "Image decoding covers non-interlaced 1/2/4/8-bit grayscale or indexed PNG plus 8-bit-per-channel grayscale-alpha, RGB, or RGBA PNG; Windows BMP and OS/2 1.x core-header BMP; and 1-bit planar, 8-bit indexed/grayscale, or 24-bit RGB PCX.",
+    ],
+    "job"
+  ),
   "~EG": job("Erase Download Graphics", "storage", "session"),
   "^FB": raster("Field Block", "text", "field"),
-  "^FC": raster("Field Clock", "text", "field"),
+  "^FC": partial(
+    "Field Clock",
+    "text",
+    "field",
+    [
+      "Localized weekday and month names use host Intl locale data; numeric clock fields remain deterministic, but localized wording can vary by runtime and printer firmware.",
+    ]
+  ),
   "^FD": raster("Field Data", "text", "field"),
   "^FE": raster("Field End", "text", "field"),
   "^FH": raster("Field Hexadecimal Indicator", "text", "field"),
   "^FN": raster("Field Number", "storage", "field"),
   "^FO": raster("Field Origin", "format", "field"),
-  "^FP": raster("Field Parameter", "text", "field"),
+  "^FP": partial(
+    "Field Parameter",
+    "text",
+    "field",
+    [
+      "Vertical and reverse layout operates on Unicode code points rather than firmware combining semantic clusters.",
+    ]
+  ),
   "^FR": raster("Field Reverse Print", "format", "field"),
   "^FS": raster("Field Separator", "format", "field"),
-  "^FT": raster("Field Typeset", "format", "field"),
+  "^FT": partial(
+    "Field Typeset",
+    "format",
+    "field",
+    [
+      "Explicit text origins and text justification are modeled; omitted-coordinate continuation and printer-specific baseline/justification interactions for every field type are not fully reproduced.",
+    ]
+  ),
   "^FV": raster("Field Variable", "text", "field"),
   "^FL": job("Font Linking", "text", "session"),
   "^FM": raster("Multiple Field Origin Locations", "format", "field"),
@@ -87,13 +124,36 @@ const supported: Readonly<Record<string, CapabilitySeed>> = {
   "^GC": raster("Graphic Circle", "graphic", "field"),
   "^GD": raster("Graphic Diagonal Line", "graphic", "field"),
   "^GE": raster("Graphic Ellipse", "graphic", "field"),
-  "^GF": raster("Graphic Field", "graphic", "field"),
+  "^GF": partial(
+    "Graphic Field",
+    "graphic",
+    "field",
+    ["Zebra compressed-binary (C) payloads are diagnosed but not decoded."]
+  ),
   "^GS": raster("Graphic Symbol", "graphic", "field"),
   "^ID": job("Object Delete", "storage", "session"),
   "^IL": raster("Image Load", "graphic", "field"),
-  "^KL": job("Define Language", "text", "session"),
+  "^KL": partial(
+    "Define Language",
+    "text",
+    "session",
+    [
+      "Localized weekday and month names use host Intl locale data and can vary by runtime and printer firmware.",
+    ],
+    "job"
+  ),
   "^IM": raster("Image Move", "graphic", "field"),
   "^IS": job("Image Save", "storage", "session"),
+  "^JM": {
+    name: "Set Dots per Millimeter",
+    category: "format",
+    effect: "job",
+    scope: "session",
+    status: "unsupported",
+    limitations: [
+      "Changing printhead resolution inside a ZPL job is not modeled; select printDensity in the render options.",
+    ],
+  },
   "^LH": raster("Label Home", "format", "session"),
   "^LL": raster("Label Length", "format", "session"),
   "^LR": raster("Label Reverse Print", "format", "session"),
@@ -104,18 +164,53 @@ const supported: Readonly<Record<string, CapabilitySeed>> = {
   "^MN": raster("Media Tracking", "format", "session"),
   "^MU": raster("Set Units of Measurement", "format", "session"),
   "^PM": raster("Printing Mirror Image", "format", "format"),
-  "^PA": raster("Advanced Text Properties", "text", "session"),
+  "^PA": partial(
+    "Advanced Text Properties",
+    "text",
+    "session",
+    [
+      "Bidirectional ordering and Arabic shaping use a deterministic subset rather than a full Unicode/OpenType layout engine; the default-glyph switch is not modeled.",
+    ]
+  ),
   "^PO": raster("Print Orientation", "format", "session"),
   "^PQ": job("Print Quantity", "format", "format"),
   "^PW": raster("Print Width", "format", "session"),
   "^SE": raster("Select Encoding Table", "text", "session"),
-  "^SF": raster("Serialization Field", "text", "field"),
-  "^SL": raster("Set Mode and Language", "text", "session"),
+  "^SF": partial(
+    "Serialization Field",
+    "text",
+    "field",
+    [
+      "Serialization is Unicode-code-point based; newer printer-firmware combining-cluster and control/bidirectional-character behavior is not modeled.",
+    ]
+  ),
+  "^SL": partial(
+    "Set Mode and Language",
+    "text",
+    "session",
+    [
+      "Localized weekday and month names use host Intl locale data and can vary by runtime and printer firmware.",
+    ]
+  ),
   "^SN": raster("Serialization Data", "text", "field"),
   "^SO": raster("Set Offset", "text", "session"),
   "^ST": job("Set Date and Time", "text", "session"),
-  "^SZ": job("Set ZPL Version", "format", "session"),
-  "^TB": raster("Text Blocks", "text", "field"),
+  "^SZ": {
+    name: "Set ZPL Version",
+    category: "format",
+    effect: "job",
+    scope: "session",
+    status: "unsupported",
+    limitations: ["ZPL mode 1 compatibility semantics are not modeled."],
+  },
+  "^TB": partial(
+    "Text Blocks",
+    "text",
+    "field",
+    [
+      "Rotation, bounds, wrapping, truncation, and literal << escapes are modeled; other firmware complex-layout escape instructions are skipped.",
+    ]
+  ),
   "^TO": job("Transfer Object", "storage", "session"),
   "^XA": job("Start Format", "format", "format"),
   "^XF": job("Recall Format", "storage", "field"),
@@ -242,14 +337,7 @@ function partial(
   limitations: readonly string[],
   effect: CommandEffect = "raster"
 ): CapabilitySeed {
-  return {
-    name,
-    category,
-    effect,
-    scope,
-    status: "partial",
-    limitations,
-  };
+  return { name, category, effect, scope, status: "partial", limitations };
 }
 
 function canonicalCapability(
@@ -289,7 +377,7 @@ const allCanonical = new Set([...zplCommands, ...networkCommands, ...rfidCommand
 export const commandCapabilities: readonly CommandCapability[] = [
   ...allCanonical,
 ].map((canonical) => {
-  const seed = supported[canonical];
+  const seed = capabilitySeeds[canonical];
   if (seed) return canonicalCapability(canonical, seed);
   if (networkCommands.includes(canonical)) {
     return defaultCapability(canonical, "network", "non-rendering");
@@ -325,24 +413,13 @@ const capabilityMap = new Map(
   commandCapabilities.map((capability) => [capability.canonical, capability])
 );
 
-const codeMap = new Map<string, CommandCapability | undefined>();
-for (const capability of commandCapabilities) {
-  if (!codeMap.has(capability.code)) codeMap.set(capability.code, capability);
-  else codeMap.set(capability.code, undefined);
-}
-
-/**
- * Looks up a canonical command such as ^FO or ~DG. Code-only lookup is retained
- * through 0.2 when that code has exactly one documented prefix.
- */
+/** Look up a canonical command identity such as ^FO or ~DG. */
 export function getCommandCapability(
   command: string
 ): CommandCapability | undefined {
   const normalized = command.trim().toUpperCase();
-  if (normalized.startsWith("^") || normalized.startsWith("~")) {
-    return capabilityMap.get(normalized);
-  }
-  return codeMap.get(normalized);
+  if (!normalized.startsWith("^") && !normalized.startsWith("~")) return undefined;
+  return capabilityMap.get(normalized);
 }
 
 export function getCommandCapabilityStatus(

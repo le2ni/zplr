@@ -1,5 +1,29 @@
 import { unzlibSync } from "fflate";
 
+function uint32(data: Uint8Array, offset: number): number {
+  return (
+    data[offset] * 0x1000000 +
+    (data[offset + 1] << 16) +
+    (data[offset + 2] << 8) +
+    data[offset + 3]
+  );
+}
+
+function adler32(data: Uint8Array): number {
+  let first = 1;
+  let second = 0;
+  for (let offset = 0; offset < data.length; offset += 2_655) {
+    const end = Math.min(offset + 2_655, data.length);
+    for (let index = offset; index < end; index++) {
+      first += data[index];
+      second += first;
+    }
+    first %= 65_521;
+    second %= 65_521;
+  }
+  return ((second << 16) | first) >>> 0;
+}
+
 export interface DecodedGraphic {
   data: Uint8Array;
   bytesPerRow: number;
@@ -12,6 +36,46 @@ export class GraphicDecodeError extends Error {
     super(message);
     this.name = "GraphicDecodeError";
   }
+}
+
+export function validateGraphicGeometry(
+  bytesPerRow: number,
+  expectedBytes: number,
+  maxBytes: number
+): { width: number; height: number } {
+  if (
+    !Number.isSafeInteger(bytesPerRow) ||
+    !Number.isSafeInteger(expectedBytes) ||
+    bytesPerRow <= 0 ||
+    expectedBytes <= 0
+  ) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_DIMENSIONS",
+      "Graphic byte count and bytes per row must be positive safe integers."
+    );
+  }
+  const width = bytesPerRow * 8;
+  const height = Math.ceil(expectedBytes / bytesPerRow);
+  const rasterBytes = bytesPerRow * height;
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(rasterBytes)) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_DIMENSIONS",
+      "Graphic row geometry exceeds the supported integer range."
+    );
+  }
+  if (expectedBytes > maxBytes || rasterBytes > maxBytes) {
+    throw new GraphicDecodeError(
+      "GRAPHIC_LIMIT_EXCEEDED",
+      `Graphic raster requires ${rasterBytes} bytes, exceeding the ${maxBytes}-byte limit.`
+    );
+  }
+  if (expectedBytes % bytesPerRow !== 0) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_DIMENSIONS",
+      "Graphic byte count must contain a whole number of rows."
+    );
+  }
+  return { width, height };
 }
 
 function repeatCount(character: string): number | undefined {
@@ -31,6 +95,8 @@ function decodeCompressedHex(
   let row = "";
   let repeats = 0;
 
+  const decodedNibbles = () => rows.length * rowNibbles + row.length;
+
   const ensureWithinLimit = (additionalNibbles = 0) => {
     if (rows.length * rowNibbles + row.length + additionalNibbles > expectedNibbles) {
       throw new GraphicDecodeError(
@@ -47,20 +113,34 @@ function decodeCompressedHex(
     row = "";
   };
 
-  for (const character of source.replace(/\s+/g, "")) {
+  for (const character of source) {
+    if (/\s/.test(character)) continue;
+    if (decodedNibbles() >= expectedNibbles) break;
     const count = repeatCount(character);
     if (count !== undefined) {
       repeats += count;
       continue;
     }
     if (character === "," || character === "!") {
+      if (repeats > 0) {
+        throw new GraphicDecodeError(
+          "INVALID_GRAPHIC_COMPRESSION",
+          "A graphic repeat count must be followed by a hexadecimal value."
+        );
+      }
       row = row.padEnd(rowNibbles, character === "," ? "0" : "F");
       finishRow();
-      repeats = 0;
       continue;
     }
     if (character === ":") {
+      if (repeats > 0) {
+        throw new GraphicDecodeError(
+          "INVALID_GRAPHIC_COMPRESSION",
+          "A graphic repeat count must be followed by a hexadecimal value."
+        );
+      }
       finishRow();
+      if (decodedNibbles() >= expectedNibbles) break;
       if (rows.length === 0) {
         throw new GraphicDecodeError(
           "INVALID_GRAPHIC_COMPRESSION",
@@ -69,7 +149,6 @@ function decodeCompressedHex(
       }
       ensureWithinLimit(rowNibbles);
       rows.push(rows[rows.length - 1]);
-      repeats = 0;
       continue;
     }
     if (!/[0-9A-Fa-f]/.test(character)) {
@@ -78,8 +157,10 @@ function decodeCompressedHex(
         `Graphic data contains invalid character ${JSON.stringify(character)}.`
       );
     }
-    const countToAppend = repeats || 1;
-    ensureWithinLimit(countToAppend);
+    const countToAppend = Math.min(
+      repeats || 1,
+      expectedNibbles - decodedNibbles()
+    );
     row += character.repeat(countToAppend);
     repeats = 0;
     while (row.length >= rowNibbles) {
@@ -87,27 +168,57 @@ function decodeCompressedHex(
       row = row.slice(rowNibbles);
     }
   }
+  if (repeats > 0 && decodedNibbles() < expectedNibbles) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_COMPRESSION",
+      "A graphic repeat count must be followed by a hexadecimal value."
+    );
+  }
   finishRow();
   return rows.join("");
 }
 
 function decodeBase64(value: string): Uint8Array {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  const normalized = value.replace(/\s+/g, "").replace(/=+$/, "");
+  const compact = value.replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_BASE64",
+      "Graphic Base64 data is invalid."
+    );
+  }
+  const padding = compact.length - compact.replace(/=+$/, "").length;
+  const normalized = compact.slice(0, compact.length - padding);
+  const remainder = normalized.length % 4;
+  const expectedPadding = remainder === 2 ? 2 : remainder === 3 ? 1 : 0;
+  if (
+    remainder === 1 ||
+    (padding > 0 &&
+      (compact.length % 4 !== 0 || padding !== expectedPadding))
+  ) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_BASE64",
+      "Graphic Base64 padding or length is invalid."
+    );
+  }
   const bytes: number[] = [];
   let buffer = 0;
   let bits = 0;
   for (const character of normalized) {
     const index = alphabet.indexOf(character);
-    if (index < 0) {
-      throw new GraphicDecodeError("INVALID_GRAPHIC_BASE64", "Graphic Base64 data is invalid.");
-    }
     buffer = (buffer << 6) | index;
     bits += 6;
     if (bits >= 8) {
       bits -= 8;
       bytes.push((buffer >> bits) & 0xff);
+      buffer &= bits === 0 ? 0 : (1 << bits) - 1;
     }
+  }
+  if (buffer !== 0) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_BASE64",
+      "Graphic Base64 data contains non-zero trailing bits."
+    );
   }
   return Uint8Array.from(bytes);
 }
@@ -148,7 +259,11 @@ function decodeWrappedData(
     return undefined;
   }
   const encodedText = match[2].replace(/\s+/g, "");
-  const maximumEncodedLength = Math.ceil((maxBytes * 4) / 3) + 1024;
+  const maximumDecodedInput =
+    match[1] === "B64"
+      ? expectedBytes
+      : maxBytes + Math.ceil(maxBytes / 16_384) * 5 + 64;
+  const maximumEncodedLength = 4 * Math.ceil(maximumDecodedInput / 3);
   if (encodedText.length > maximumEncodedLength) {
     throw new GraphicDecodeError(
       "GRAPHIC_LIMIT_EXCEEDED",
@@ -176,6 +291,17 @@ function decodeWrappedData(
       "Z64 graphic data could not be decompressed."
     );
   }
+  if (
+    match[1] === "Z64" &&
+    decoded.length === expectedBytes &&
+    (encoded.length < 6 ||
+      adler32(decoded) !== uint32(encoded, encoded.length - 4))
+  ) {
+    throw new GraphicDecodeError(
+      "INVALID_GRAPHIC_ZLIB",
+      "Z64 graphic data has an invalid checksum."
+    );
+  }
   return decoded;
 }
 
@@ -185,20 +311,11 @@ export function decodeGraphic(
   expectedBytes: number,
   maxBytes: number
 ): DecodedGraphic {
-  bytesPerRow = Math.trunc(bytesPerRow);
-  expectedBytes = Math.trunc(expectedBytes);
-  if (bytesPerRow <= 0 || expectedBytes <= 0) {
-    throw new GraphicDecodeError(
-      "INVALID_GRAPHIC_DIMENSIONS",
-      "Graphic byte count and bytes per row must be positive integers."
-    );
-  }
-  if (expectedBytes > maxBytes) {
-    throw new GraphicDecodeError(
-      "GRAPHIC_LIMIT_EXCEEDED",
-      `Graphic requires ${expectedBytes} bytes, exceeding the ${maxBytes}-byte limit.`
-    );
-  }
+  const dimensions = validateGraphicGeometry(
+    bytesPerRow,
+    expectedBytes,
+    maxBytes
+  );
 
   const wrapped = decodeWrappedData(source, expectedBytes, maxBytes);
   const hex =
@@ -219,8 +336,7 @@ export function decodeGraphic(
   return {
     data,
     bytesPerRow,
-    width: bytesPerRow * 8,
-    height: Math.ceil(expectedBytes / bytesPerRow),
+    ...dimensions,
   };
 }
 
@@ -245,7 +361,7 @@ function binaryBytes(source: string, count: number): Uint8Array {
   return data;
 }
 
-/** Decodes ^GFB raw bytes and ^GFC zlib/DEFLATE-compressed binary bytes. */
+/** Decodes ^GFB raw bytes. Zebra's proprietary ^GFC encoding is not decoded. */
 export function decodeBinaryGraphic(
   source: string,
   bytesPerRow: number,
@@ -254,31 +370,31 @@ export function decodeBinaryGraphic(
   compressed: boolean,
   maxBytes: number
 ): DecodedGraphic {
-  bytesPerRow = Math.trunc(bytesPerRow);
-  transmittedBytes = Math.trunc(transmittedBytes);
-  expectedBytes = Math.trunc(expectedBytes);
-  if (bytesPerRow <= 0 || transmittedBytes < 0 || expectedBytes <= 0) {
+  const dimensions = validateGraphicGeometry(
+    bytesPerRow,
+    expectedBytes,
+    maxBytes
+  );
+  if (!Number.isSafeInteger(transmittedBytes) || transmittedBytes < 0) {
     throw new GraphicDecodeError(
       "INVALID_GRAPHIC_DIMENSIONS",
-      "Graphic byte counts and bytes per row must be valid positive integers."
+      "The transmitted graphic byte count must be a non-negative safe integer."
     );
   }
-  if (transmittedBytes > maxBytes || expectedBytes > maxBytes) {
+  if (transmittedBytes > maxBytes) {
     throw new GraphicDecodeError(
       "GRAPHIC_LIMIT_EXCEEDED",
       `Graphic exceeds the ${maxBytes}-byte graphic budget.`
     );
   }
-  const input = binaryBytes(source, transmittedBytes);
-  let data: Uint8Array;
-  try {
-    data = compressed ? unzlibSync(input) : input;
-  } catch {
+  if (compressed) {
     throw new GraphicDecodeError(
-      "INVALID_GRAPHIC_ZLIB",
-      "Compressed binary graphic data could not be decompressed."
+      "UNSUPPORTED_GRAPHIC_FORMAT",
+      "Zebra compressed-binary ^GFC payloads are not supported."
     );
   }
+  const input = binaryBytes(source, transmittedBytes);
+  const data = input;
   if (data.length !== expectedBytes) {
     throw new GraphicDecodeError(
       "GRAPHIC_BYTE_COUNT_MISMATCH",
@@ -288,8 +404,7 @@ export function decodeBinaryGraphic(
   return {
     data,
     bytesPerRow,
-    width: bytesPerRow * 8,
-    height: Math.ceil(expectedBytes / bytesPerRow),
+    ...dimensions,
   };
 }
 
@@ -298,8 +413,13 @@ export function decodeDownloadData(
   expectedBytes: number,
   maxBytes: number
 ): Uint8Array {
-  expectedBytes = Math.trunc(expectedBytes);
-  if (expectedBytes < 0 || expectedBytes > maxBytes) {
+  if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0) {
+    throw new GraphicDecodeError(
+      "OBJECT_BYTE_COUNT_MISMATCH",
+      `Downloaded object declares an invalid byte count: ${expectedBytes}.`
+    );
+  }
+  if (expectedBytes > maxBytes) {
     throw new GraphicDecodeError(
       "GRAPHIC_LIMIT_EXCEEDED",
       `Downloaded object requires ${expectedBytes} bytes, exceeding the ${maxBytes}-byte limit.`
@@ -308,16 +428,43 @@ export function decodeDownloadData(
   const wrapped = decodeWrappedData(source, expectedBytes, maxBytes);
   let data = wrapped;
   if (!data) {
-    const hex = source.replace(/\s+/g, "");
-    if (hex.length % 2 !== 0 || !/^[0-9A-Fa-f]*$/.test(hex)) {
+    data = new Uint8Array(expectedBytes);
+    let highNibble: number | undefined;
+    let offset = 0;
+    for (const character of source) {
+      if (/\s/.test(character)) continue;
+      const nibble = Number.parseInt(character, 16);
+      if (!/^[0-9A-Fa-f]$/.test(character) || !Number.isFinite(nibble)) {
+        throw new GraphicDecodeError(
+          "INVALID_OBJECT_DATA",
+          "Downloaded object data must be hexadecimal, B64, or Z64 encoded."
+        );
+      }
+      if (highNibble === undefined) {
+        highNibble = nibble;
+        continue;
+      }
+      if (offset >= expectedBytes) {
+        throw new GraphicDecodeError(
+          "OBJECT_BYTE_COUNT_MISMATCH",
+          `Object declared ${expectedBytes} bytes but supplied more data.`
+        );
+      }
+      data[offset++] = (highNibble << 4) | nibble;
+      highNibble = undefined;
+    }
+    if (highNibble !== undefined) {
       throw new GraphicDecodeError(
         "INVALID_OBJECT_DATA",
-        "Downloaded object data must be hexadecimal, B64, or Z64 encoded."
+        "Downloaded object hexadecimal data must contain complete byte pairs."
       );
     }
-    data = Uint8Array.from(
-      hex.match(/.{2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? []
-    );
+    if (offset !== expectedBytes) {
+      throw new GraphicDecodeError(
+        "OBJECT_BYTE_COUNT_MISMATCH",
+        `Object declared ${expectedBytes} bytes but decoded ${offset}.`
+      );
+    }
   }
   if (data.length !== expectedBytes) {
     throw new GraphicDecodeError(
