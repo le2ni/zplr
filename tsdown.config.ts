@@ -10,8 +10,11 @@ export default [
     sourcemap: true,
     hash: false,
     clean: true,
+    fixedExtension: false,
     // Keep native modules external
-    external: ["skia-canvas"],
+    deps: {
+      neverBundle: ["skia-canvas"],
+    },
     target: "node18",
   }),
   // Web/Browser build
@@ -25,6 +28,9 @@ export default [
     platform: "browser",
     target: "es2020",
     // Bundle all dependencies for the browser
-    noExternal: ["qrcode", "jsbarcode"],
+    deps: {
+      alwaysBundle: ["qrcode", "jsbarcode"],
+      onlyBundle: ["qrcode", "jsbarcode", "dijkstrajs"],
+    },
   }),
 ];

@@ -1,5 +1,5 @@
 import QRCode, { type GeneratedQRCodeSegment } from "qrcode";
-import toSJIS from "qrcode/helper/to-sjis";
+import toSJIS from "qrcode/helper/to-sjis.js";
 import type {
   QrInputSegment,
   QrLayoutField,

@@ -7,6 +7,8 @@ export default defineConfig({
   build: {
     // Keep the playground artifact separate from the publishable library.
     outDir: "dist-playground",
+    // The playground intentionally embeds the renderer and deterministic fonts.
+    chunkSizeWarningLimit: 2_000,
   },
   resolve: {
     alias: {

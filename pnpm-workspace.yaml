@@ -1,3 +1,9 @@
+packages:
+  - "."
+
+overrides:
+  follow-redirects: ^1.15.12
+
 allowBuilds:
   '@tailwindcss/oxide': false
   esbuild: true

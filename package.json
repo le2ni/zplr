@@ -1,19 +1,25 @@
 {
   "name": "zplr",
   "version": "0.2.0",
+  "packageManager": "pnpm@11.15.0",
   "description": "TypeScript library for parsing and rendering ZPL label files",
   "main": "./dist/index.node.js",
   "module": "./dist/index.node.js",
   "types": "./dist/index.node.d.ts",
   "type": "module",
+  "sideEffects": false,
   "exports": {
+    ".": {
+      "types": "./dist/index.node.d.ts",
+      "import": "./dist/index.node.js"
+    },
     "./node": {
-      "import": "./dist/index.node.js",
-      "types": "./dist/index.node.d.ts"
+      "types": "./dist/index.node.d.ts",
+      "import": "./dist/index.node.js"
     },
     "./web": {
-      "import": "./dist/index.web.js",
-      "types": "./dist/index.web.d.ts"
+      "types": "./dist/index.web.d.ts",
+      "import": "./dist/index.web.js"
     }
   },
   "files": [
@@ -35,12 +41,16 @@
     "docs:support": "node --import tsx scripts/generate-support-docs.ts",
     "docs:support:check": "node --import tsx scripts/generate-support-docs.ts --check",
     "font:noto:generate": "node scripts/generate-font-assets.mjs",
+    "package:smoke": "node scripts/smoke-package.mjs",
+    "package:lint": "publint --strict",
+    "package:check": "pnpm run package:smoke && pnpm run package:lint && pnpm pack --dry-run",
+    "audit:prod": "pnpm audit --prod",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "build": "tsdown",
     "build:web": "vue-tsc --noEmit -p tsconfig.web.json && vite build",
     "preview:web": "vite preview",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
-    "verify": "pnpm test && pnpm run docs:support:check && pnpm run typecheck && pnpm run typecheck:web && pnpm run build && pnpm run build:web"
+    "verify": "pnpm test && pnpm run docs:support:check && pnpm run typecheck && pnpm run typecheck:web && pnpm run build && pnpm run package:check && pnpm run build:web"
   },
   "keywords": [
     "zpl",
@@ -66,15 +76,16 @@
     "esbuild-plugin-path-alias": "^1.0.7",
     "monaco-editor": "^0.54.0",
     "postcss": "^8.5.6",
+    "publint": "^0.3.21",
     "tailwindcss": "^4.1.14",
-    "tsdown": "^0.15.7",
+    "tsdown": "^0.22.12",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vite": "^7.1.10",
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.4",
     "vue": "^3.5.22",
-    "vue-tsc": "^3.1.1",
+    "vue-tsc": "^3.3.7",
     "wawoff2": "2.0.1"
   },
   "dependencies": {

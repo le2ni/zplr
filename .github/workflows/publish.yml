@@ -19,18 +19,17 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "pnpm"
+          cache-dependency-path: pnpm-lock.yaml
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
@@ -51,8 +50,14 @@ jobs:
       - name: Build package
         run: pnpm run build
 
+      - name: Smoke test package exports
+        run: pnpm run package:check
+
       - name: Build playground
         run: pnpm run build:web
+
+      - name: Audit production dependencies
+        run: pnpm run audit:prod
 
       - name: Publish to NPM
         run: |

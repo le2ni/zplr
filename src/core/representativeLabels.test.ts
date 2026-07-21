@@ -23,7 +23,7 @@ const FIXTURE_NAMES = [
 
 const EXPECTED_HASHES: Record<(typeof FIXTURE_NAMES)[number], string> = {
   "zplr.zpl":
-    "f14e01ed93ba506fbf2b12f51577eea1fbd027e5a25fc913c4aeecdf47890bc9",
+    "477d1bbd0643dc03d09663e0f906a367d29d5c063bdadf724e6a71a7c249fc51",
   "retail-upc-ean.zpl":
     "34dd676b55ae568fbb62a2b23076055ae1dbbafedb603e8fa9d8bfe3dd546b3a",
   "asset-matrix-pdf417.zpl":
@@ -118,15 +118,16 @@ describe("representative 0.2 labels", () => {
     expect(rasterHash(result.labels[0].raster)).toBe(EXPECTED_HASHES[name]);
   });
 
-  it("decodes both shipping-label barcodes", async () => {
+  it("decodes every barcode in the ZPLr sample", async () => {
     const [label] = (await renderZpl(await fixture("zplr.zpl"))).labels;
     const barcodes = label.highlightRegions.filter(({ type }) => type === "barcode");
-    expect(barcodes).toHaveLength(2);
+    expect(barcodes).toHaveLength(3);
     expect(decodeRegion(label, barcodes[0], BarcodeFormat.QR_CODE)).toBe(
-      "SHIP-DE-2026-00042"
+      "LENNART KOEBE"
     );
-    expect(decodeRegion(label, barcodes[1], BarcodeFormat.CODE_128)).toBe(
-      "00340434292135100142"
+    expect(decodeRegion(label, barcodes[1], BarcodeFormat.CODE_39)).toBe("1234");
+    expect(decodeRegion(label, barcodes[2], BarcodeFormat.CODE_128)).toBe(
+      "0123456789ABC"
     );
   });
 
@@ -173,8 +174,15 @@ describe("representative 0.2 labels", () => {
   it("pins selected border pixels as readable goldens", async () => {
     for (const name of FIXTURE_NAMES) {
       const [label] = (await renderZpl(await fixture(name))).labels;
-      const x = name === "zplr.zpl" ? 406 : name === "stored-resources.zpl" ? 200 : name === "retail-upc-ean.zpl" ? 400 : 450;
-      const y = name === "zplr.zpl" ? 30 : name === "stored-resources.zpl" ? 20 : 20;
+      const x =
+        name === "zplr.zpl"
+          ? 406
+          : name === "stored-resources.zpl"
+            ? 200
+            : name === "retail-upc-ean.zpl"
+              ? 400
+              : 450;
+      const y = 20;
       expect(getDot(label.raster, x, y), name).toBe(true);
       expect(getDot(label.raster, x, y + 12), name).toBe(false);
     }
