@@ -267,6 +267,10 @@ function selectAllSource(): void {
 
 function revealSourceRange(range: { start: number; end: number }): void {
   if (!editor || !model || !monaco) return;
+  // The source workbench can be revealed from the Designer after Monaco was
+  // laid out at zero width/height. Measure the now-visible container before
+  // calculating the centered scroll position.
+  editor.layout();
   const startOffset = Math.max(0, Math.min(model.getValueLength(), Math.trunc(range.start)));
   const endOffset = Math.max(startOffset, Math.min(model.getValueLength(), Math.trunc(range.end)));
   const start = model.getPositionAt(startOffset);
@@ -274,7 +278,7 @@ function revealSourceRange(range: { start: number; end: number }): void {
   const selection = new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
   editor.focus();
   editor.setSelection(selection);
-  editor.revealRangeInCenter(selection);
+  editor.revealRangeInCenter(selection, monaco.editor.ScrollType.Immediate);
 }
 
 function applySourceEdit(change: EditorSourceEdit): boolean {

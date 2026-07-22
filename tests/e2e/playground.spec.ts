@@ -176,6 +176,34 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
 });
 
+test("scrolls the source editor to a field revealed from the Designer", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("Meta+A");
+  const padding = Array.from({ length: 90 }, (_, index) => `^FX source padding ${index + 1}`).join("\n");
+  await page.keyboard.insertText(`^XA\n^PW812\n^LL1218\n${padding}\n^FO40,900^A0N,30,30^FDReveal target^FS\n^XZ`);
+  await page.keyboard.press("Control+Home");
+  await page.keyboard.press("Meta+ArrowUp");
+  await editorSurface.hover();
+  await page.mouse.wheel(0, -100_000);
+  await expect(editorSurface).toContainText("^XA");
+  await expect(editorSurface).not.toContainText("Reveal target");
+
+  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
+  await page.getByRole("button", { name: "Text at 40, 900", exact: true }).click();
+  await page.getByRole("button", { name: "Reveal field in ZPL", exact: true }).click();
+
+  await expect(page.getByTestId("zpl-editor")).toBeVisible();
+  await expect(editorSurface).toContainText("Reveal target");
+  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
+  await expect(page.locator(".monaco-editor .highlighted-command-inline")).toHaveCount(0);
+});
+
 test("offers quick fixes and configurable live preview", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });

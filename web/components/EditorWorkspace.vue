@@ -1175,7 +1175,14 @@ function revealVisualSpan(span?: SourceSpan): void {
   editorCursor.value = span.start;
   highlightRange.value = undefined;
   showMobilePane("code");
-  void nextTick(() => editorComponent.value?.revealSpan(span));
+  // v-show makes the source workbench visible on the next Vue tick, while
+  // Monaco's automatic layout follows on an animation frame. Reveal after
+  // both frames so the selected range is centered using the visible size.
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => editorComponent.value?.revealSpan(span));
+    });
+  });
 }
 
 async function selectRenderedField(event: MouseEvent): Promise<void> {
