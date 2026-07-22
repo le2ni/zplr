@@ -9,6 +9,8 @@ import {
   sourceEditForLayerSwap,
   sourceEditForMove,
   sourceEditForPaste,
+  sourceEditForResize,
+  visualResizeMode,
   visualBounds,
   type SourceEdit,
 } from "./visualEditorSource";
@@ -69,7 +71,7 @@ describe("visual editor source operations", () => {
     expect(moved).toContain("^FO11,22");
   });
 
-  it("updates plain and QR field content without losing the QR prefix", () => {
+  it("updates field data, field variables, and QR content without losing prefixes", () => {
     const source = "^XA^FO10,20^BQN,2,4^FDQA,old.example^FS^XZ";
     const origin = commandSpan(source, "^FO");
     const regions: HighlightRegion[] = [
@@ -80,6 +82,119 @@ describe("visual editor source operations", () => {
     expect(field.content).toMatchObject({ value: "old.example", prefix: "QA," });
     expect(applyEdit(source, sourceEditForContent(source, field.content!, "new.example")))
       .toContain("^FDQA,new.example^FS");
+
+    const variableSource = "^XA^FO10,20^A0N,30,30^FVold,value^FS^XZ";
+    const variableOrigin = commandSpan(variableSource, "^FO");
+    const variableField = collectVisualFields(variableSource, [
+      { type: "origin", sourceSpan: variableOrigin, x: 10, y: 20 },
+      {
+        type: "text",
+        sourceSpan: { start: variableOrigin.start, end: commandSpan(variableSource, "^FS").end },
+        x: 10,
+        y: 20,
+        width: 100,
+        height: 30,
+      },
+    ])[0]!;
+    expect(variableField.content).toMatchObject({ command: "^FV", value: "old,value" });
+    expect(applyEdit(variableSource, sourceEditForContent(variableSource, variableField.content!, "new,value")))
+      .toContain("^FVnew,value^FS");
+  });
+
+  it("resizes every source-backed scalable field type", () => {
+    const cases = [
+      {
+        source: "^XA^FO10,20^A0N,30,30^FDText^FS^XZ",
+        type: "text" as const,
+        bounds: { width: 60, height: 30 },
+        expected: "^A0N,60,60",
+        mode: "free",
+      },
+      {
+        source: "^XA^FO10,20^GB100,40,2,B,0^FS^XZ",
+        type: "box" as const,
+        bounds: { width: 100, height: 40 },
+        expected: "^GB200,80,2,B,0",
+        mode: "free",
+      },
+      {
+        source: "^XA^FO10,20^BY2,3,80^BCN,80,Y,N,N^FD123^FS^XZ",
+        type: "barcode" as const,
+        bounds: { width: 120, height: 80 },
+        expected: "^BY4,3,80^BCN,160,Y,N,N",
+        mode: "free",
+      },
+      {
+        source: "^XA^FO10,20^BQN,2,4^FDQA,hello^FS^XZ",
+        type: "barcode" as const,
+        bounds: { width: 84, height: 84 },
+        expected: "^BQN,2,8",
+        mode: "uniform",
+      },
+      {
+        source: "^XA^FO10,20^GC40,2,B^FS^XZ",
+        type: "circle" as const,
+        bounds: { width: 40, height: 40 },
+        expected: "^GC80,2,B",
+        mode: "uniform",
+      },
+      {
+        source: "^XA^FO10,20^GE60,30,2,B^FS^XZ",
+        type: "ellipse" as const,
+        bounds: { width: 60, height: 30 },
+        expected: "^GE120,60,2,B",
+        mode: "free",
+      },
+      {
+        source: "^XA^FO10,20^GSN,30,40^FDA^FS^XZ",
+        type: "box" as const,
+        bounds: { width: 40, height: 30 },
+        expected: "^GSN,60,80",
+        mode: "free",
+      },
+      {
+        source: "^XA^FO10,20^B0N,2,N,0,N,1,0^FDhello^FS^XZ",
+        type: "barcode" as const,
+        bounds: { width: 100, height: 100 },
+        expected: "^B0N,4,N,0,N,1,0",
+        mode: "uniform",
+      },
+    ];
+
+    for (const example of cases) {
+      const origin = commandSpan(example.source, "^FO");
+      const end = commandSpan(example.source, "^FS");
+      const field = collectVisualFields(example.source, [
+        { type: "origin", sourceSpan: origin, x: 10, y: 20 },
+        { type: example.type, sourceSpan: { start: origin.start, end: end.end }, x: 10, y: 20, ...example.bounds },
+      ])[0]!;
+      expect(visualResizeMode(field)).toBe(example.mode);
+      const resized = applyEdit(example.source, sourceEditForResize(example.source, field, {
+        x: 10,
+        y: 20,
+        width: example.bounds.width * 2,
+        height: example.bounds.height * 2,
+      }, 8));
+      expect(resized).toContain(example.expected);
+    }
+  });
+
+  it("treats rendered XG bitmap bounds as a scalable graphic", () => {
+    const source = "^XA^FO10,20^XGR:LOGO.GRF,1,1^FS^XZ";
+    const origin = commandSpan(source, "^FO");
+    const end = commandSpan(source, "^FS");
+    const field = collectVisualFields(source, [
+      { type: "origin", sourceSpan: origin, x: 10, y: 20 },
+      { type: "box", sourceSpan: { start: origin.start, end: end.end }, x: 10, y: 20, width: 50, height: 30 },
+    ])[0]!;
+    expect(field.kind).toBe("graphic");
+    expect(visualResizeMode(field)).toBe("free");
+    expect(applyEdit(source, sourceEditForResize(source, field, {
+      x: 10,
+      y: 20,
+      width: 100,
+      height: 60,
+    }, 8))).toContain("^XGR:LOGO.GRF,2,2");
   });
 
   it("inserts toolbox elements before the selected label terminator", () => {

@@ -7,14 +7,65 @@ import {
   type ZplCommandNode,
   type ZplLabelNode,
 } from "../src/index.web";
+import {
+  getZplCommandSignature,
+  getZplParameterValue,
+  replaceZplCommandParameter,
+} from "./zplLanguage";
+import type { ZplCommandSignature, ZplParameterDefinition } from "./zplCommandMetadata.generated";
+import { lockedVisualFieldStarts } from "./zplrFieldMetadata";
 
 export type VisualElementKind = "text" | "barcode" | "qr" | "box" | "line";
+export type VisualFieldKind = "text" | "barcode" | "qr" | "box" | "circle" | "ellipse" | "graphic";
 
 export interface SourceEdit {
   start: number;
   end: number;
   text: string;
   selectOriginAt?: number;
+}
+
+export interface SourceEditTransaction {
+  edits: readonly SourceEdit[];
+  selectOriginAts?: readonly number[];
+  primarySelectOriginAt?: number;
+  selectKinds?: readonly VisualFieldKind[];
+}
+
+export type SourceChange = SourceEdit | SourceEditTransaction;
+
+export function sourceChangeEdits(change: SourceChange): readonly SourceEdit[] {
+  return "edits" in change ? change.edits : [change];
+}
+
+/** Build an atomic, non-overlapping source transaction. */
+export function sourceEditTransaction(
+  edits: readonly SourceEdit[],
+  selection: { origins?: readonly number[]; primary?: number; kinds?: readonly VisualFieldKind[] } = {},
+): SourceEditTransaction | undefined {
+  const ordered = [...edits]
+    .filter(({ start, end }) => Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end >= start)
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  if (ordered.length === 0) return undefined;
+  for (let index = 1; index < ordered.length; index++) {
+    if (ordered[index]!.start < ordered[index - 1]!.end) return undefined;
+  }
+  return {
+    edits: ordered,
+    selectOriginAts: selection.origins,
+    primarySelectOriginAt: selection.primary,
+    selectKinds: selection.kinds,
+  };
+}
+
+export function sourceOffsetAfterEdits(offset: number, edits: readonly SourceEdit[]): number {
+  let result = offset;
+  for (const edit of edits) {
+    if (edit.end <= offset || (edit.start === edit.end && edit.start === offset)) {
+      result += edit.text.length - (edit.end - edit.start);
+    }
+  }
+  return result;
 }
 
 export interface VisualBounds {
@@ -24,8 +75,11 @@ export interface VisualBounds {
   height: number;
 }
 
+export type VisualResizeMode = "free" | "uniform";
+
 export interface VisualFieldContent {
   value: string;
+  command: "^FD" | "^FV";
   prefix: string;
   commandSpan: SourceSpan;
 }
@@ -37,7 +91,7 @@ export interface VisualFieldOrigin {
 
 export interface VisualField {
   id: string;
-  kind: "text" | "barcode" | "qr" | "box" | "circle" | "ellipse" | "graphic";
+  kind: VisualFieldKind;
   labelIndex: number;
   region: HighlightRegion;
   bounds: VisualBounds;
@@ -46,6 +100,7 @@ export interface VisualField {
   origin?: VisualFieldOrigin;
   content?: VisualFieldContent;
   movable: boolean;
+  locked: boolean;
 }
 
 const zplDecimal = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
@@ -86,7 +141,7 @@ function fieldKind(region: HighlightRegion, commands: readonly ZplCommandNode[])
   if (region.type === "text") return "text";
   if (region.type === "box") {
     const graphicBox = commands.find(({ canonical }) => canonical === "^GB");
-    if (graphicBox && Number(graphicBox.parameters[1]) <= Math.max(1, Number(graphicBox.parameters[2]))) return "graphic";
+    if (!graphicBox || Number(graphicBox.parameters[1]) <= Math.max(1, Number(graphicBox.parameters[2]))) return "graphic";
     return "box";
   }
   if (region.type === "circle") return "circle";
@@ -95,13 +150,14 @@ function fieldKind(region: HighlightRegion, commands: readonly ZplCommandNode[])
 }
 
 function fieldContent(commands: readonly ZplCommandNode[], kind: VisualField["kind"]): VisualFieldContent | undefined {
-  const command = commands.find(({ canonical }) => canonical === "^FD");
+  const command = commands.find(({ canonical }) => canonical === "^FD" || canonical === "^FV");
   if (!command) return undefined;
   const raw = command.rawParameters;
   const prefixMatch = kind === "qr" ? raw.match(/^(?:QA|QM),/i) : undefined;
   const prefix = prefixMatch?.[0] ?? "";
   return {
     value: raw.slice(prefix.length),
+    command: command.canonical as "^FD" | "^FV",
     prefix,
     commandSpan: { ...command.span },
   };
@@ -128,6 +184,7 @@ export function visualBounds(region: HighlightRegion): VisualBounds {
 export function collectVisualFields(source: string, regions: readonly HighlightRegion[]): VisualField[] {
   const labels = allLabelsWithIndexes(source);
   const origins = regions.filter(({ type }) => type === "origin");
+  const lockedStarts = lockedVisualFieldStarts(source);
 
   return regions.flatMap((region, regionIndex) => {
     if (region.type === "origin") return [];
@@ -157,6 +214,7 @@ export function collectVisualFields(source: string, regions: readonly HighlightR
       origin: editableOrigin,
       content: fieldContent(commands, kind),
       movable: editableOrigin !== undefined,
+      locked: lockedStarts.has(region.sourceSpan.start),
     }];
   });
 }
@@ -284,6 +342,262 @@ export function sourceEditForMove(
   };
 }
 
+const graphicResizeCommands = new Set(["^GB", "^GC", "^GD", "^GE", "^GS", "^XG"]);
+
+function barcodeCommand(field: VisualField): ZplCommandNode | undefined {
+  return field.commands.find(({ canonical }) => canonical.startsWith("^B") && canonical !== "^BY" && canonical !== "^BQ");
+}
+
+function parameterNamed(signature: ZplCommandSignature, pattern: RegExp): ZplParameterDefinition | undefined {
+  return signature.parameters.find((parameter) => pattern.test(`${parameter.key} ${parameter.name}`));
+}
+
+/** Describe whether a source-backed visual field can be resized freely or proportionally. */
+export function visualResizeMode(field: VisualField): VisualResizeMode | undefined {
+  if (field.kind === "text") return "free";
+  if (field.kind === "qr" && field.commands.some(({ canonical }) => canonical === "^BQ")) return "uniform";
+  if (field.commands.some(({ canonical }) => canonical === "^GC")) return "uniform";
+  if (field.commands.some(({ canonical }) => ["^GB", "^GD", "^GE", "^GS", "^XG"].includes(canonical))) return "free";
+  if (field.kind !== "barcode") return undefined;
+  const command = barcodeCommand(field);
+  const signature = command && getZplCommandSignature(command);
+  if (!command || !signature) return undefined;
+  const scalarSize = parameterNamed(signature, /(?:magnification factor|dimensional height of individual symbol elements)/i);
+  if (scalarSize && !signature.parameters.some((parameter) => parameter !== scalarSize && /height/i.test(parameter.name))) return "uniform";
+  if (parameterNamed(signature, /height/i)) return "free";
+  return scalarSize || parameterNamed(signature, /module width/i) ? "uniform" : undefined;
+}
+
+interface CommandParameterUpdate {
+  parameter: ZplParameterDefinition;
+  value: string;
+}
+
+interface SourceReplacement {
+  start: number;
+  end: number;
+  text: string;
+}
+
+function commandWithReplacement(command: ZplCommandNode, replacement: string): ZplCommandNode {
+  const rawParameters = replacement.slice(command.prefix.length + command.code.length);
+  return {
+    ...command,
+    rawParameters,
+    parameters: rawParameters.length === 0 ? [] : rawParameters.split(command.delimiter),
+    span: { start: command.span.start, end: command.span.start + replacement.length },
+  };
+}
+
+function replaceCommandParameters(
+  command: ZplCommandNode,
+  signature: ZplCommandSignature,
+  updates: readonly CommandParameterUpdate[],
+): string {
+  let current = command;
+  let replacement = `${command.prefix}${command.code}${command.rawParameters}`;
+  for (const update of updates) {
+    replacement = replaceZplCommandParameter(current, signature, update.parameter, update.value);
+    current = commandWithReplacement(current, replacement);
+  }
+  return replacement;
+}
+
+function boundedResizeRatio(value: number): number {
+  return Number.isFinite(value) ? Math.max(0.01, Math.min(100, value)) : 1;
+}
+
+function scaledParameterValue(
+  command: ZplCommandNode,
+  signature: ZplCommandSignature,
+  parameter: ZplParameterDefinition,
+  ratio: number,
+  fallback: number,
+): string {
+  const current = numericParameter(getZplParameterValue(command, signature, parameter)) ?? fallback;
+  let next = Math.max(0.001, current * boundedResizeRatio(ratio));
+  if (parameter.range?.min !== undefined) next = Math.max(parameter.range.min, next);
+  if (parameter.range?.max !== undefined) next = Math.min(parameter.range.max, next);
+  return formatCoordinate(next);
+}
+
+function commandOrientation(command: ZplCommandNode, signature: ZplCommandSignature): string {
+  const orientation = signature.parameters.find(({ key, name }) => key === "o" || /orientation/i.test(name));
+  return orientation ? getZplParameterValue(command, signature, orientation).trim().toUpperCase() : "N";
+}
+
+function appendCommandUpdate(
+  replacements: SourceReplacement[],
+  command: ZplCommandNode,
+  updates: readonly CommandParameterUpdate[],
+): void {
+  const signature = getZplCommandSignature(command);
+  if (!signature || updates.length === 0) return;
+  const text = replaceCommandParameters(command, signature, updates);
+  if (text !== `${command.prefix}${command.code}${command.rawParameters}`) {
+    replacements.push({ start: command.span.start, end: command.span.end, text });
+  }
+}
+
+function combineFieldReplacements(
+  source: string,
+  field: VisualField,
+  replacements: readonly SourceReplacement[],
+): SourceEdit | undefined {
+  const applicable = replacements
+    .filter(({ start, end }) => start >= field.sourceSpan.start && end <= field.sourceSpan.end && end >= start)
+    .sort((left, right) => right.start - left.start || right.end - left.end);
+  if (applicable.length === 0) return undefined;
+  let text = source.slice(field.sourceSpan.start, field.sourceSpan.end);
+  for (const replacement of applicable) {
+    const start = replacement.start - field.sourceSpan.start;
+    const end = replacement.end - field.sourceSpan.start;
+    text = `${text.slice(0, start)}${replacement.text}${text.slice(end)}`;
+  }
+  const original = source.slice(field.sourceSpan.start, field.sourceSpan.end);
+  if (text === original) return undefined;
+  const originOffset = (field.origin?.command.span.start ?? field.sourceSpan.start) - field.sourceSpan.start;
+  return {
+    start: field.sourceSpan.start,
+    end: field.sourceSpan.end,
+    text,
+    selectOriginAt: field.sourceSpan.start + originOffset,
+  };
+}
+
+/** Create one undoable edit that resizes a field and, for north/west handles, moves its origin. */
+export function sourceEditForResize(
+  source: string,
+  field: VisualField,
+  target: VisualBounds,
+  printDensity: PrintDensity,
+): SourceEdit | undefined {
+  if (!visualResizeMode(field) || target.width < 1 || target.height < 1) return undefined;
+  const label = parseDocument(source).labels[field.labelIndex];
+  if (!label) return undefined;
+  const replacements: SourceReplacement[] = [];
+  const widthRatio = boundedResizeRatio(target.width / Math.max(1, field.bounds.width));
+  const heightRatio = boundedResizeRatio(target.height / Math.max(1, field.bounds.height));
+
+  if (field.origin && (target.x !== field.bounds.x || target.y !== field.bounds.y)) {
+    const move = sourceEditForMove(
+      source,
+      field.origin.command.span,
+      target.x - field.bounds.x,
+      target.y - field.bounds.y,
+      printDensity,
+    );
+    if (move) replacements.push(move);
+  }
+
+  const addUpdates = (command: ZplCommandNode, updates: CommandParameterUpdate[]) =>
+    appendCommandUpdate(replacements, command, updates);
+
+  const graphic = field.commands.find(({ canonical }) => graphicResizeCommands.has(canonical));
+  if (graphic) {
+    const signature = getZplCommandSignature(graphic);
+    if (signature) {
+      const updates: CommandParameterUpdate[] = [];
+      const orientation = graphic.canonical === "^GS" ? commandOrientation(graphic, signature) : "N";
+      const rotated = orientation === "R" || orientation === "B";
+      const logicalWidthRatio = rotated ? heightRatio : widthRatio;
+      const logicalHeightRatio = rotated ? widthRatio : heightRatio;
+      const width = signature.parameters.find(({ key }) => key === "w");
+      const height = signature.parameters.find(({ key }) => key === "h");
+      const diameter = signature.parameters.find(({ key, name }) => key === "d" && /diameter/i.test(name));
+      const xScale = signature.parameters.find(({ name }) => /(?:magnification.*x-axis|x-axis.*magnification)/i.test(name));
+      const yScale = signature.parameters.find(({ name }) => /(?:magnification.*y-axis|y-axis.*magnification)/i.test(name));
+      if (width) updates.push({ parameter: width, value: scaledParameterValue(graphic, signature, width, logicalWidthRatio, field.bounds.width) });
+      if (height) updates.push({ parameter: height, value: scaledParameterValue(graphic, signature, height, logicalHeightRatio, field.bounds.height) });
+      if (diameter) {
+        const ratio = (widthRatio + heightRatio) / 2;
+        updates.push({ parameter: diameter, value: scaledParameterValue(graphic, signature, diameter, ratio, Math.min(field.bounds.width, field.bounds.height)) });
+      }
+      if (xScale) updates.push({ parameter: xScale, value: scaledParameterValue(graphic, signature, xScale, logicalWidthRatio, 1) });
+      if (yScale) updates.push({ parameter: yScale, value: scaledParameterValue(graphic, signature, yScale, logicalHeightRatio, 1) });
+      addUpdates(graphic, updates);
+    }
+  } else if (field.kind === "text") {
+    const font = field.commands.find(({ canonical }) => canonical === "^A" || canonical === "^A@");
+    const signature = font && getZplCommandSignature(font);
+    if (font && signature) {
+      const orientation = commandOrientation(font, signature);
+      const rotated = orientation === "R" || orientation === "B";
+      const height = signature.parameters.find(({ key }) => key === "h");
+      const width = signature.parameters.find(({ key }) => key === "w");
+      const updates: CommandParameterUpdate[] = [];
+      if (height) updates.push({ parameter: height, value: scaledParameterValue(font, signature, height, rotated ? widthRatio : heightRatio, field.bounds.height) });
+      if (width) updates.push({ parameter: width, value: scaledParameterValue(font, signature, width, rotated ? heightRatio : widthRatio, field.bounds.height) });
+      addUpdates(font, updates);
+    } else {
+      const data = field.commands.find(({ canonical }) => canonical === "^FD" || canonical === "^FV");
+      if (data) {
+        const scale = conversionScale(label, data.index, printDensity);
+        const height = Math.max(10, field.bounds.height / scale * heightRatio);
+        const width = Math.max(10, field.bounds.height / scale * widthRatio);
+        replacements.push({
+          start: data.span.start,
+          end: data.span.start,
+          text: `${data.prefix}A0N${data.delimiter}${formatCoordinate(height)}${data.delimiter}${formatCoordinate(width)}`,
+        });
+      }
+    }
+  } else if (field.kind === "qr") {
+    const qr = field.commands.find(({ canonical }) => canonical === "^BQ");
+    const signature = qr && getZplCommandSignature(qr);
+    const magnification = signature && parameterNamed(signature, /magnification factor/i);
+    if (qr && signature && magnification) {
+      addUpdates(qr, [{
+        parameter: magnification,
+        value: scaledParameterValue(qr, signature, magnification, (widthRatio + heightRatio) / 2, 1),
+      }]);
+    }
+  } else if (field.kind === "barcode") {
+    const barcode = barcodeCommand(field);
+    const signature = barcode && getZplCommandSignature(barcode);
+    if (barcode && signature) {
+      const orientation = commandOrientation(barcode, signature);
+      const rotated = orientation === "R" || orientation === "B";
+      const logicalWidthRatio = rotated ? heightRatio : widthRatio;
+      const logicalHeightRatio = rotated ? widthRatio : heightRatio;
+      const scalarSize = parameterNamed(signature, /(?:magnification factor|dimensional height of individual symbol elements)/i);
+      const height = signature.parameters.find((parameter) => parameter !== scalarSize && /height/i.test(parameter.name));
+      const barcodeUpdates: CommandParameterUpdate[] = [];
+      if (scalarSize) barcodeUpdates.push({
+        parameter: scalarSize,
+        value: scaledParameterValue(barcode, signature, scalarSize, (logicalWidthRatio + logicalHeightRatio) / 2, 1),
+      });
+      if (height) barcodeUpdates.push({
+        parameter: height,
+        value: scaledParameterValue(barcode, signature, height, logicalHeightRatio, field.bounds.height),
+      });
+      addUpdates(barcode, barcodeUpdates);
+
+      const defaults = field.commands.find(({ canonical }) => canonical === "^BY");
+      if (defaults && !scalarSize) {
+        const defaultsSignature = getZplCommandSignature(defaults);
+        if (defaultsSignature) {
+          const moduleWidth = defaultsSignature.parameters.find(({ key }) => key === "w");
+          const defaultHeight = defaultsSignature.parameters.find(({ key }) => key === "h");
+          const updates: CommandParameterUpdate[] = [];
+          if (moduleWidth) updates.push({ parameter: moduleWidth, value: scaledParameterValue(defaults, defaultsSignature, moduleWidth, logicalWidthRatio, 2) });
+          if (!height && defaultHeight) updates.push({ parameter: defaultHeight, value: scaledParameterValue(defaults, defaultsSignature, defaultHeight, logicalHeightRatio, field.bounds.height) });
+          addUpdates(defaults, updates);
+        }
+      } else if (!scalarSize) {
+        const moduleWidth = Math.max(1, Math.min(10, 2 * logicalWidthRatio));
+        replacements.push({
+          start: barcode.span.start,
+          end: barcode.span.start,
+          text: `${barcode.prefix}BY${formatCoordinate(moduleWidth)}`,
+        });
+      }
+    }
+  }
+
+  return combineFieldReplacements(source, field, replacements);
+}
+
 export function sourceEditForContent(
   source: string,
   content: VisualFieldContent,
@@ -292,8 +606,8 @@ export function sourceEditForContent(
   const document = parseDocument(source);
   const command = document.labels
     .flatMap(({ commands }) => commands)
-    .find((candidate) => candidate.span.start === content.commandSpan.start && candidate.span.end === content.commandSpan.end);
-  if (!command || command.canonical !== "^FD") return undefined;
+    .find((candidate) => candidate.span.start === content.commandSpan.start && candidate.canonical === content.command);
+  if (!command || (command.canonical !== "^FD" && command.canonical !== "^FV")) return undefined;
   const singleLineValue = value.replace(/[\r\n]+/g, " ");
   return {
     start: command.span.start,
@@ -316,6 +630,23 @@ export function sourceEditForDelete(source: string, span: SourceSpan): SourceEdi
   if (span.start < 0 || span.end <= span.start || span.end > source.length) return undefined;
   const expanded = expandedFieldSpan(source, span);
   return { start: expanded.start, end: expanded.end, text: "" };
+}
+
+export function sourceTransactionForDeleteFields(
+  source: string,
+  fields: readonly VisualField[],
+): SourceEditTransaction | undefined {
+  const spans = fields
+    .map(({ sourceSpan }) => expandedFieldSpan(source, sourceSpan))
+    .sort((left, right) => left.start - right.start || left.end - right.end);
+  if (spans.length === 0) return undefined;
+  const merged: SourceSpan[] = [];
+  for (const span of spans) {
+    const previous = merged.at(-1);
+    if (previous && span.start <= previous.end) previous.end = Math.max(previous.end, span.end);
+    else merged.push({ ...span });
+  }
+  return sourceEditTransaction(merged.map((span) => ({ ...span, text: "" })));
 }
 
 function offsetFieldSource(
@@ -376,6 +707,45 @@ export function sourceEditForPaste(
     text: `${leading}${copy.text}${trailing}`,
     selectOriginAt: insertionPoint + leading.length + copy.originOffset,
   };
+}
+
+/** Paste multiple copied fields as one undoable insertion while preserving their relative layout. */
+export function sourceEditForPasteFields(
+  targetSource: string,
+  targetLabelIndex: number,
+  copiedSource: string,
+  copiedFields: readonly VisualField[],
+  printDensity: PrintDensity,
+  offset = 20,
+  primaryFieldId?: string,
+): SourceEditTransaction | undefined {
+  if (copiedFields.length === 0) return undefined;
+  const copies = copiedFields.map((field) => offsetFieldSource(copiedSource, field, printDensity, offset));
+  if (copies.some((copy) => !copy)) return undefined;
+  const targetLabel = parseDocument(targetSource).labels[targetLabelIndex];
+  if (!targetLabel) return undefined;
+  const endCommand = targetLabel.commands.findLast(({ canonical }) => canonical === "^XZ");
+  const insertionPoint = endCommand?.span.start ?? targetLabel.span.end;
+  const leading = insertionPoint > 0 && targetSource[insertionPoint - 1] !== "\n" ? "\n" : "";
+  const trailing = targetSource[insertionPoint] === "\n" ? "" : "\n";
+  let body = "";
+  const relativeOrigins: number[] = [];
+  for (const copy of copies as Array<{ text: string; originOffset: number }>) {
+    if (body) body += "\n";
+    relativeOrigins.push(leading.length + body.length + copy.originOffset);
+    body += copy.text;
+  }
+  const text = `${leading}${body}${trailing}`;
+  const origins = relativeOrigins.map((relative) => insertionPoint + relative);
+  const primaryIndex = Math.max(0, copiedFields.findIndex(({ id }) => id === primaryFieldId));
+  return sourceEditTransaction(
+    [{ start: insertionPoint, end: insertionPoint, text }],
+    {
+      origins,
+      primary: origins[primaryIndex] ?? origins.at(-1),
+      kinds: copiedFields.map(({ kind }) => kind),
+    },
+  );
 }
 
 /**

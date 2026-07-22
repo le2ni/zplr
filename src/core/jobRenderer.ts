@@ -36,6 +36,7 @@ import type {
   ZplSyntaxState,
 } from "@/types/ZplDocument";
 import { zplDpiConversion } from "./zplNumbers";
+import { parseFieldNumber } from "./fieldNumber";
 
 const PERSISTENT_COMMANDS = new Set([
   "BY",
@@ -506,6 +507,7 @@ function dynamicLabel(
   label: ZplLabelNode,
   state: SessionState,
   options: RenderJobOptions,
+  fieldValues: ReadonlyMap<string, string>,
   serialStep: number,
   labelStart: Date,
   commitRtc: boolean
@@ -520,6 +522,9 @@ function dynamicLabel(
   let lastDataIndex = -1;
   let firstFieldOriginSeen = false;
   let queuedTime: Date | undefined;
+  let pendingFieldValue:
+    | { command: ZplCommandNode; value: string; resolved: boolean }
+    | undefined;
 
   const fieldClock = (): Date => {
     if (rtc.fixed) return new Date(rtc.fixed.getTime());
@@ -532,6 +537,24 @@ function dynamicLabel(
       : new Date(labelStart.getTime());
   };
 
+  const finishPendingFieldValue = () => {
+    if (!pendingFieldValue || pendingFieldValue.resolved) {
+      pendingFieldValue = undefined;
+      return;
+    }
+    const value = indicators
+      ? formatRtcField(
+          pendingFieldValue.value,
+          indicators,
+          rtc,
+          fieldClock()
+        )
+      : pendingFieldValue.value;
+    output.push(replacementDataCommand(pendingFieldValue.command, value));
+    lastDataIndex = output.length - 1;
+    pendingFieldValue = undefined;
+  };
+
   for (const original of label.commands) {
     const command = cloneCommand(original);
     if (command.capability !== "supported" && command.capability !== "partial") {
@@ -541,6 +564,15 @@ function dynamicLabel(
     if (command.code === "FO") firstFieldOriginSeen = true;
     if (command.code !== "SL" || !firstFieldOriginSeen) {
       applyRtcCommand(command, rtc, options);
+    }
+
+    if (command.code === "FN") {
+      finishPendingFieldValue();
+      const number = fieldNumber(command.parameters[0]);
+      const value = number ? fieldValues.get(number) : undefined;
+      pendingFieldValue = value === undefined
+        ? undefined
+        : { command, value, resolved: false };
     }
 
     const args = command.parameters;
@@ -559,10 +591,28 @@ function dynamicLabel(
       continue;
     }
     if (command.code === "FS") {
+      finishPendingFieldValue();
       indicators = undefined;
       lastDataIndex = -1;
       output.push(command);
       continue;
+    }
+
+    if (
+      pendingFieldValue &&
+      !pendingFieldValue.resolved &&
+      (command.code === "FD" || command.code === "FV" || command.code === "SN")
+    ) {
+      const value = indicators
+        ? formatRtcField(pendingFieldValue.value, indicators, rtc, fieldClock())
+        : pendingFieldValue.value;
+      output.push(replacementDataCommand(command, value));
+      pendingFieldValue.resolved = true;
+      lastDataIndex = output.length - 1;
+      continue;
+    }
+    if (command.code === "SF" && pendingFieldValue && !pendingFieldValue.resolved) {
+      finishPendingFieldValue();
     }
 
     if (command.code === "SN") {
@@ -609,6 +659,7 @@ function dynamicLabel(
     }
     output.push(command);
   }
+  finishPendingFieldValue();
   if (commitRtc) state.rtc = rtc;
   return cloneLabel(label, output);
 }
@@ -635,6 +686,29 @@ function limits(options: RenderJobOptions): RenderLimits {
   return resolveRenderLimits(options.limits);
 }
 
+function optionFieldValues(
+  options: RenderJobOptions,
+  diagnostics: ZplDiagnostic[]
+): ReadonlyMap<string, string> {
+  const values = new Map<string, string>();
+  for (const [requested, value] of Object.entries(options.fieldValues ?? {})) {
+    const number = fieldNumber(requested);
+    if (!number || typeof value !== "string") {
+      diagnostics.push(
+        semanticDiagnostic(
+          "INVALID_FIELD_VALUE_KEY",
+          `Render field value ${JSON.stringify(requested)} was ignored; keys must be integers from 0 through 9999 and values must be strings.`,
+          undefined,
+          "warning"
+        )
+      );
+      continue;
+    }
+    values.set(number, value);
+  }
+  return values;
+}
+
 function decimalInteger(value: string | undefined): number {
   const source = value?.trim() ?? "";
   if (!/^-?\d+$/.test(source)) return Number.NaN;
@@ -653,10 +727,7 @@ function boundedInteger(
 }
 
 function fieldNumber(value: string | undefined): string | undefined {
-  const source = value?.trim() ?? "";
-  if (!/^\d+$/.test(source)) return undefined;
-  const parsed = Number(source);
-  return parsed >= 0 && parsed <= 9999 ? String(parsed) : undefined;
+  return parseFieldNumber(value)?.number;
 }
 
 function cloneCommand(command: ZplCommandNode): ZplCommandNode {
@@ -852,9 +923,11 @@ function expandFormats(
   maxDepth: number,
   maxCommands: number,
   diagnostics: ZplDiagnostic[],
+  externalAssignments: ReadonlyMap<string, string>,
   onCommand?: (command: ZplCommandNode) => void
 ): ZplLabelNode {
   const assignments = fieldAssignments(label.commands);
+  for (const [number, value] of externalAssignments) assignments.set(number, value);
   const assignmentIndexes = invocationAssignmentIndexes(label.commands);
   let expandedCommands = 0;
   let commandLimitReached = false;
@@ -2322,6 +2395,7 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
   const documentId = state.nextDocumentId++;
   const renderLimits = limits(options);
   const jobDiagnostics = strictDiagnostics(document.diagnostics, options.strict);
+  const fieldValues = optionFieldValues(options, jobDiagnostics);
   const labels: DocumentRenderResult<TCanvas>[] = [];
   let sourceLabelIndex = 0;
   let generatedLabels = 0;
@@ -2376,6 +2450,7 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
       renderLimits.maxTemplateDepth,
       renderLimits.maxExpandedCommands,
       expansionDiagnostics,
+      fieldValues,
       resourceTimeline.onCommand
     );
     jobDiagnostics.push(
@@ -2438,6 +2513,7 @@ async function renderParsedDocument<TCanvas extends CanvasLike>(
         prepared,
         state,
         options,
+        fieldValues,
         serialStep,
         labelStart,
         copyIndex === quantity - 1

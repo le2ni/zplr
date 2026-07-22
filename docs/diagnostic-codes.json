@@ -12,6 +12,7 @@
   { "code": "INVALID_COMMAND", "phase": "parse", "meaning": "A command token is malformed." },
   { "code": "INVALID_COMMAND_PREFIX", "phase": "parse", "meaning": "A known command was used with the wrong ^ or ~ identity." },
   { "code": "INVALID_ENCODED_FIELD_DATA", "phase": "semantic", "meaning": "Field data cannot be decoded with the active encoding." },
+  { "code": "INVALID_FIELD_VALUE_KEY", "phase": "semantic", "meaning": "A per-render ^FN override used an invalid field number or a non-string value." },
   { "code": "INVALID_GRAPHIC_BASE64", "phase": "semantic", "meaning": "A B64 graphic wrapper contains invalid Base64." },
   { "code": "INVALID_GRAPHIC_BINARY", "phase": "semantic", "meaning": "A binary graphic contains non-byte characters or a truncated payload." },
   { "code": "INVALID_GRAPHIC_COMPRESSION", "phase": "semantic", "meaning": "ASCII graphic compression is malformed." },

@@ -48,6 +48,12 @@ export interface EditorSourceEdit {
   text: string;
 }
 
+export interface EditorSourceEditTransaction {
+  edits: readonly EditorSourceEdit[];
+}
+
+export type EditorSourceChange = EditorSourceEdit | EditorSourceEditTransaction;
+
 self.MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
@@ -296,23 +302,35 @@ function clearSourceSelection(): void {
   if (position) editor.setSelection(new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column));
 }
 
-function applySourceEdit(change: EditorSourceEdit): boolean {
+function applySourceEdit(change: EditorSourceChange): boolean {
   if (!editor || !model) return false;
-  const startOffset = Math.max(0, Math.min(model.getValueLength(), Math.trunc(change.start)));
-  const endOffset = Math.max(startOffset, Math.min(model.getValueLength(), Math.trunc(change.end)));
-  const start = model.getPositionAt(startOffset);
-  const end = model.getPositionAt(endOffset);
+  const requested = "edits" in change ? [...change.edits] : [change];
+  const normalized = requested
+    .map((edit) => {
+      const startOffset = Math.max(0, Math.min(model!.getValueLength(), Math.trunc(edit.start)));
+      const endOffset = Math.max(startOffset, Math.min(model!.getValueLength(), Math.trunc(edit.end)));
+      return { ...edit, startOffset, endOffset };
+    })
+    .sort((left, right) => left.startOffset - right.startOffset || left.endOffset - right.endOffset);
+  if (normalized.length === 0) return false;
+  for (let index = 1; index < normalized.length; index++) {
+    if (normalized[index]!.startOffset < normalized[index - 1]!.endOffset) return false;
+  }
   editor.pushUndoStop();
-  const applied = editor.executeEdits("zplr.visual-editor", [{
-    range: {
-      startLineNumber: start.lineNumber,
-      startColumn: start.column,
-      endLineNumber: end.lineNumber,
-      endColumn: end.column,
-    },
-    text: change.text,
-    forceMoveMarkers: true,
-  }]);
+  const applied = editor.executeEdits("zplr.visual-editor", normalized.map((edit) => {
+    const start = model!.getPositionAt(edit.startOffset);
+    const end = model!.getPositionAt(edit.endOffset);
+    return {
+      range: {
+        startLineNumber: start.lineNumber,
+        startColumn: start.column,
+        endLineNumber: end.lineNumber,
+        endColumn: end.column,
+      },
+      text: edit.text,
+      forceMoveMarkers: true,
+    };
+  }));
   editor.pushUndoStop();
   return applied;
 }

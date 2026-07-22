@@ -2,8 +2,8 @@
   "version": "0.3.0",
   "freeze": "0.3.x may add compatible functionality but may not remove or reinterpret this surface.",
   "declarationSha256": {
-    "node": "051a1989bad27219cd0e8cc14aa8bf285c4a325edb05e061266ff2cf0faedf44",
-    "web": "afca05a0d184229b7a7b7361038fde6f0fb3701ac825e93851604021db069acc"
+    "node": "262ece0864849712742e42ad561b4e05a01b3e8f833374c4a55425dd427a2573",
+    "web": "19a8d44ac3a84694068ab69daefb3060d3d13682d5e7a14605ea5064fc43e25f"
   },
   "runtimeExports": [
     "commandCapabilities",
@@ -23,6 +23,7 @@
     "CommandEffect",
     "CommandPersistenceScope",
     "DownloadedFontSource",
+    "FieldValueMap",
     "FontProvider",
     "HighlightRegion",
     "HighlightRegionType",

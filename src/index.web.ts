@@ -85,6 +85,7 @@ export type {
 } from "./types/ZplDocument";
 export type {
   DownloadedFontSource,
+  FieldValueMap,
   FontProvider,
   MonochromeRaster,
   PrintDensity,

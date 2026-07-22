@@ -36,6 +36,7 @@ import {
   type StructuredPdf417Part,
 } from "./pdf417Structured";
 import { zplDotConversion, zplNumber } from "./zplNumbers";
+import { parseFieldNumber } from "./fieldNumber";
 
 const MAX_FIELD_BLOCK_DATA = 3 * 1024;
 
@@ -232,12 +233,7 @@ function trimmed(value: string | undefined): string {
 }
 
 function fieldNumber(value: string | undefined): string | undefined {
-  const normalized = trimmed(value);
-  if (!/^\d+$/.test(normalized)) return undefined;
-  const number = Number(normalized);
-  return Number.isSafeInteger(number) && number <= 9999
-    ? String(number)
-    : undefined;
+  return parseFieldNumber(value)?.number;
 }
 
 function numberValue(

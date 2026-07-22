@@ -114,7 +114,7 @@ test("keeps code and WYSIWYG content and selection synchronized", async ({ page 
   await expect(visualField).toHaveClass(/selected/);
 
   await visualField.click();
-  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
+  await expect(page.locator(".designer-root footer")).toContainText("selected");
   const content = page.getByRole("textbox", { name: "Field content", exact: true });
   await content.fill("Visual sync");
   await expect(editorSurface).toContainText("Visual sync");
@@ -154,6 +154,7 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await page.keyboard.press("Control+N");
 
   const canvas = page.getByTestId("visual-label-canvas");
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await expect(canvas).toBeVisible();
   await expect(page.getByTestId("zpl-editor")).toBeVisible();
   await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
@@ -168,8 +169,24 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   const textField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
   await expect(textField).toBeVisible();
   await textField.click();
-  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
+  await expect(page.locator(".designer-root footer")).toContainText("selected");
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toHaveValue("40");
+  await expect(canvas.locator("[data-resize-handle]")).toHaveCount(0);
+  const textBounds = await textField.boundingBox();
+  expect(textBounds).not.toBeNull();
+  await page.mouse.move(textBounds!.x + textBounds!.width - 1, textBounds!.y + textBounds!.height / 2);
+  await expect.poll(() => textField.evaluate((element) => getComputedStyle(element).cursor)).toBe("ew-resize");
+  await page.mouse.move(textBounds!.x + textBounds!.width / 2, textBounds!.y + textBounds!.height / 2);
+  await expect.poll(() => textField.evaluate((element) => getComputedStyle(element).cursor)).toBe("grab");
+
+  await textField.dblclick();
+  const inlineText = page.getByRole("textbox", { name: "Edit text inline", exact: true });
+  await expect(inlineText).toBeVisible();
+  await expect(page.locator(".designer-inline-text")).toHaveCount(0);
+  await inlineText.fill("Inline label");
+  await expect(editorSurface).toContainText("Inline label");
+  await inlineText.press("Enter");
+  await expect(inlineText).toBeHidden();
 
   await page.locator(".designer-viewport").click({ position: { x: 5, y: 5 } });
   await expect(page.getByRole("tab", { name: "Layers", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -204,6 +221,15 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await boxHeight.fill("120");
   await boxHeight.press("Tab");
   await expect(boxHeight).toHaveValue("120");
+  const resizeBounds = await box.boundingBox();
+  expect(resizeBounds).not.toBeNull();
+  await page.mouse.move(resizeBounds!.x + resizeBounds!.width - 1, resizeBounds!.y + resizeBounds!.height - 1);
+  await expect.poll(() => box.evaluate((element) => getComputedStyle(element).cursor)).toBe("nwse-resize");
+  await page.mouse.down();
+  await page.mouse.move(resizeBounds!.x + resizeBounds!.width + 20, resizeBounds!.y + resizeBounds!.height + 12, { steps: 5 });
+  await page.mouse.up();
+  await expect.poll(async () => Number(await boxWidth.inputValue())).toBeGreaterThan(240);
+  await expect.poll(async () => Number(await boxHeight.inputValue())).toBeGreaterThan(120);
   const bounds = await box.boundingBox();
   expect(bounds).not.toBeNull();
   await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
@@ -246,12 +272,77 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await expect(page.getByText("The Code 39 barcode is the standard for many industries, including the US Department of Defense.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Reveal field in ZPL", exact: true }).click();
 
-  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await expect(editorSurface).toContainText("Visual label");
   await expect(editorSurface).toContainText("^GB");
   await expect(editorSurface).toContainText("^B3");
   await expect(page.locator(".monaco-editor .highlighted-command-inline")).toHaveCount(0);
-  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
+  await expect(page.locator(".designer-root footer")).toContainText("selected");
+});
+
+test("uses distinct snapline colors for the label and other objects", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const canvas = page.getByTestId("visual-label-canvas");
+  await page.getByRole("button", { name: "Add box", exact: true }).click();
+  let box = page.getByRole("button", { name: "Box at 360, 580", exact: true });
+  await expect(box).toBeVisible();
+
+  const canvasBounds = await canvas.boundingBox();
+  const initialBoxBounds = await box.boundingBox();
+  expect(canvasBounds).not.toBeNull();
+  expect(initialBoxBounds).not.toBeNull();
+  await page.mouse.move(
+    initialBoxBounds!.x + initialBoxBounds!.width / 2,
+    initialBoxBounds!.y + initialBoxBounds!.height / 2,
+  );
+  await page.mouse.down();
+  let labelGuideColor = "";
+  try {
+    await page.mouse.move(
+      canvasBounds!.x + canvasBounds!.width / 2,
+      initialBoxBounds!.y + initialBoxBounds!.height / 2,
+      { steps: 8 },
+    );
+    const labelGuide = canvas.locator('.designer-smart-guide[data-snap-kind="label"]');
+    await expect(labelGuide).toBeVisible();
+    labelGuideColor = await labelGuide.evaluate((element) => getComputedStyle(element).backgroundColor);
+  } finally {
+    await page.mouse.up();
+  }
+
+  box = canvas.locator('[data-visual-kind="box"]');
+  await expect(box).toHaveCount(1);
+  await expect(box).toBeVisible();
+  const text = canvas.locator('[data-visual-kind="text"]');
+  await expect(text).toHaveCount(1);
+  const snappedBoxBounds = await box.boundingBox();
+  const textBounds = await text.boundingBox();
+  expect(snappedBoxBounds).not.toBeNull();
+  expect(textBounds).not.toBeNull();
+  await page.mouse.move(
+    snappedBoxBounds!.x + snappedBoxBounds!.width / 2,
+    snappedBoxBounds!.y + snappedBoxBounds!.height / 2,
+  );
+  await page.mouse.down();
+  let objectGuideColor = "";
+  try {
+    await page.mouse.move(
+      textBounds!.x + snappedBoxBounds!.width / 2,
+      snappedBoxBounds!.y + snappedBoxBounds!.height / 2,
+      { steps: 8 },
+    );
+    const objectGuide = canvas.locator('.designer-smart-guide[data-snap-kind="object"]');
+    await expect(objectGuide).toBeVisible();
+    objectGuideColor = await objectGuide.evaluate((element) => getComputedStyle(element).backgroundColor);
+  } finally {
+    await page.mouse.up();
+  }
+
+  expect(labelGuideColor).toContain("59, 130, 246");
+  expect(objectGuideColor).toContain("16, 185, 129");
+  expect(labelGuideColor).not.toBe(objectGuideColor);
 });
 
 test("scrolls the code editor to a field revealed from WYSIWYG", async ({ page }) => {
@@ -277,7 +368,7 @@ test("scrolls the code editor to a field revealed from WYSIWYG", async ({ page }
   await expect(page.getByTestId("zpl-editor")).toBeVisible();
   await expect(editorSurface).toContainText("Reveal");
   await expect(editorSurface).toContainText("target");
-  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
+  await expect(page.locator(".designer-root footer")).toContainText("selected");
   await expect(page.locator(".monaco-editor .highlighted-command-inline")).toHaveCount(0);
 });
 
@@ -392,6 +483,106 @@ test("completes parameter values and offers parameter quick fixes", async ({ pag
   await page.keyboard.press("Alt+Enter");
   await expect(page.locator(".actionList")).toBeVisible();
   await expect(page.locator(".actionList")).toContainText("Change rotate field to N");
+});
+
+test("arranges, locks, and hides a multi-layer visual selection", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  const canvas = page.getByTestId("visual-label-canvas");
+  const textField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
+  await expect(textField).toBeVisible();
+  await page.getByRole("button", { name: "Add box", exact: true }).click();
+  const box = page.getByRole("button", { name: "Box at 360, 580", exact: true });
+  await expect(box).toBeVisible();
+
+  await textField.click();
+  await box.click({ modifiers: ["Shift"] });
+  const visualFooter = page.locator(".designer-root footer");
+  await expect(visualFooter).toContainText("2 layers selected");
+  await page.getByLabel("WYSIWYG grid snap").selectOption("10");
+  await box.press("ArrowRight");
+  await expect(page.getByRole("button", { name: "Text at 50, 40", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Box at 370, 580", exact: true })).toBeVisible();
+
+  const arrange = page.locator("details.designer-arrange").filter({ has: page.getByText("Arrange", { exact: true }) });
+  await arrange.locator("summary").click();
+  await arrange.getByRole("button", { name: "Left", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Box at 50, 580", exact: true })).toBeVisible();
+  await arrange.getByRole("button", { name: "Lock", exact: true }).click();
+  await expect(editorSurface).toContainText("ZPLR-LOCK-1");
+  await expect(visualFooter).toContainText("locked");
+
+  await arrange.locator("summary").click();
+  await arrange.getByRole("button", { name: "Unlock", exact: true }).click();
+  await arrange.locator("summary").click();
+  await arrange.getByRole("button", { name: "Hide from output", exact: true }).click();
+  await expect(canvas.locator("[data-visual-kind]")).toHaveCount(0);
+  await expect(editorSurface).toContainText("ZPLR-HIDDEN-1");
+  await expect(page.getByRole("region", { name: "Hidden layers", exact: true })).toBeVisible();
+
+  await page.getByLabel("Horizontal ruler").dblclick({ position: { x: 120, y: 6 } });
+  await expect(canvas.locator(".designer-manual-guide")).toHaveCount(1);
+});
+
+test("binds visual text to live variable-data records", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  await page.getByTitle("Variable data and batch preview").click();
+  const dataDialog = page.getByRole("dialog", { name: "Variable data", exact: true });
+  await expect(dataDialog).toBeVisible();
+  await dataDialog.locator(".data-welcome").getByRole("button", { name: "New dataset", exact: true }).click();
+  await dataDialog.getByLabel("Field 1 for Record 1", { exact: true }).fill("Ada Lovelace");
+  await dataDialog.getByTitle("Close variable data").click();
+
+  await page.getByRole("button", { name: "Text at 40, 40", exact: true }).click();
+  await page.getByRole("combobox", { name: "Field binding", exact: true }).selectOption("1");
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await expect(editorSurface).toContainText("^FN1");
+  await expect(page.getByLabel("Record 1 value", { exact: true })).toHaveValue("Ada Lovelace");
+  await page.getByLabel("Record 1 value", { exact: true }).fill("Grace Hopper");
+
+  await page.getByTitle("Variable data and batch preview").click();
+  await expect(dataDialog.getByLabel("Field 1 for Record 1", { exact: true })).toHaveValue("Grace Hopper");
+  await dataDialog.getByRole("button", { name: "Add record", exact: true }).click();
+  await dataDialog.getByLabel("Field 1 for Record 2", { exact: true }).fill("Lord Byron");
+  await expect(dataDialog.getByRole("button", { name: "Batch PNGs", exact: true })).toBeEnabled();
+  await dataDialog.getByTitle("Close variable data").click();
+
+  await expect(page.getByLabel("Variable-data record navigator")).toBeVisible();
+  await expect(page.getByLabel("Record 2 value", { exact: true })).toHaveValue("Lord Byron");
+  await page.getByTitle("Previous record").click();
+  await expect(page.getByLabel("Record 1 value", { exact: true })).toHaveValue("Grace Hopper");
+});
+
+test("imports, places, and atomically renames an image resource", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  await page.getByTitle("Import and manage images and fonts").click();
+  const resourceDialog = page.getByRole("dialog", { name: "Images & fonts", exact: true });
+  await expect(resourceDialog).toBeVisible();
+  await resourceDialog.locator('input[type="file"][accept="image/*,.svg"]').setInputFiles("web/assets/logo.svg");
+  await expect(resourceDialog.getByText("R:LOGO.GRF", { exact: false })).toBeVisible({ timeout: 30_000 });
+  await resourceDialog.getByRole("button", { name: "Import and place image", exact: true }).click();
+
+  const resource = resourceDialog.getByRole("button", { name: /R:LOGO\.GRF/ });
+  await expect(resource).toBeVisible();
+  await resource.click();
+  await resourceDialog.getByLabel("Resource name", { exact: true }).fill("brand");
+  await resourceDialog.getByRole("button", { name: "Rename everywhere", exact: true }).click();
+  await expect(resourceDialog.getByRole("button", { name: /R:BRAND\.GRF/ })).toBeVisible();
+  await expect(resourceDialog.getByRole("button", { name: /logo\.svg.*download/ })).toBeVisible();
+  await resourceDialog.getByTitle("Close resource manager").click();
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await expect(editorSurface).toContainText("R:BRAND.GRF");
+  await expect(page.getByTestId("visual-label-canvas").locator('[data-visual-kind="graphic"]')).toHaveCount(1);
 });
 
 test("has no serious automated accessibility violations", async ({ page }) => {

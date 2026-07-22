@@ -38,6 +38,19 @@ const url = URL.createObjectURL(png);
 
 The browser entry returns `HTMLCanvasElement` and `Blob` values and never references the Node Canvas peer.
 
+## Variable fields
+
+Supply values for numbered `^FN` fields without rewriting the source. Keys may be plain numbers or canonical names such as `1`, `FN1`, or `^FN1`:
+
+```ts
+const source = "^XA^FO20,20^A0N,36,24^FN1\"Customer name\"^FS^XZ";
+const job = await renderZpl(source, {
+  fieldValues: { 1: "Ada Lovelace" },
+});
+```
+
+Per-render values also override matching `^FN` values inside recalled stored formats. Invalid field keys produce a structured diagnostic rather than mutating printer state.
+
 ## Parsed documents and sessions
 
 ```ts

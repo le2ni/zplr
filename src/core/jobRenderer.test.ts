@@ -235,6 +235,36 @@ describe("modern render jobs", () => {
     );
   });
 
+  it("applies per-render field values to named fields and stored formats", async () => {
+    const direct = await renderZpl(
+      '^XA^PW80^LL30^FO1,1^A0N,12,8^FN001"Name"^FDDEFAULT^FS^XZ',
+      { fieldValues: { "1": "B" } }
+    );
+    const expected = await renderZpl(
+      "^XA^PW80^LL30^FO1,1^A0N,12,8^FDB^FS^XZ"
+    );
+    expect(direct.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+
+    const stored = await renderZpl(
+      '^XA^DFR:F.ZPL^FO1,1^A0N,12,8^FN1"Name"^FDDEFAULT^FS^XZ' +
+        "^XA^PW80^LL30^XFR:F.ZPL^XZ",
+      { fieldValues: { "001": "B" } }
+    );
+    expect(stored.labels[0].raster.data).toEqual(expected.labels[0].raster.data);
+  });
+
+  it("keeps option field values opaque and reports invalid keys", async () => {
+    const result = await renderZpl(
+      "^XA^PW100^LL30^FO1,1^A0N,12,8^FN1^FS^XZ",
+      { fieldValues: { "1": "VALUE^XZ~JA", nope: "ignored" } }
+    );
+    expect(result.labels).toHaveLength(1);
+    expect(result.labels[0].raster.data.some((byte) => byte !== 0)).toBe(true);
+    expect(result.diagnostics.map(({ code }) => code)).toContain(
+      "INVALID_FIELD_VALUE_KEY"
+    );
+  });
+
   it("resolves stored formats after preceding in-format resource commands", async () => {
     const definition =
       "^XA^DFR:CARD.ZPL^FO1,1^GB2,2,1^FS^XZ";

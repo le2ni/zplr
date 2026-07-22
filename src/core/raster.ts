@@ -117,12 +117,17 @@ function insideRoundedRect(
   if (px < 0 || py < 0 || px >= width || py >= height) return false;
   if (radius <= 0) return true;
   const r = Math.min(radius, width / 2, height / 2);
-  if (px >= r && px < width - r) return true;
-  if (py >= r && py < height - r) return true;
-  const centerX = px < r ? r : width - r;
-  const centerY = py < r ? r : height - r;
-  const dx = px - centerX;
-  const dy = py - centerY;
+  // Test pixel centers against the continuous rounded rectangle. Testing the
+  // integer indexes made the right and bottom arcs differ by one dot from
+  // their left and top mirrors, most visibly at the lower-right corner.
+  const sampleX = px + 0.5;
+  const sampleY = py + 0.5;
+  if (sampleX >= r && sampleX <= width - r) return true;
+  if (sampleY >= r && sampleY <= height - r) return true;
+  const centerX = sampleX < r ? r : width - r;
+  const centerY = sampleY < r ? r : height - r;
+  const dx = sampleX - centerX;
+  const dy = sampleY - centerY;
   return dx * dx + dy * dy <= r * r;
 }
 

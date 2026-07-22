@@ -20,6 +20,7 @@ The codes below are stable for the 0.3 API freeze: a 0.3.x release may add a cod
 | `INVALID_COMMAND` | parse | A command token is malformed. |
 | `INVALID_COMMAND_PREFIX` | parse | A known command was used with the wrong ^ or ~ identity. |
 | `INVALID_ENCODED_FIELD_DATA` | semantic | Field data cannot be decoded with the active encoding. |
+| `INVALID_FIELD_VALUE_KEY` | semantic | A per-render ^FN override used an invalid field number or a non-string value. |
 | `INVALID_GRAPHIC_BASE64` | semantic | A B64 graphic wrapper contains invalid Base64. |
 | `INVALID_GRAPHIC_BINARY` | semantic | A binary graphic contains non-byte characters or a truncated payload. |
 | `INVALID_GRAPHIC_COMPRESSION` | semantic | ASCII graphic compression is malformed. |

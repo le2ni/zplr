@@ -8,6 +8,9 @@ import type {
 
 export type PrintDensity = 6 | 8 | 12 | 24;
 
+/** Per-render values for numbered `^FN` fields. Keys are integers from 0 through 9999. */
+export type FieldValueMap = Readonly<Record<string, string>>;
+
 export interface MonochromeRaster {
   readonly width: number;
   readonly height: number;
@@ -76,6 +79,11 @@ export interface RenderJobOptions
   extends ParseDocumentOptions,
     RenderDocumentOptions {
   fontProvider?: FontProvider;
+  /**
+   * Override numbered `^FN` fields for this render without rewriting source.
+   * Values remain field data even when they contain active ZPL command prefixes.
+   */
+  fieldValues?: FieldValueMap;
   /** RTC source used by ^FC. Date components are read in UTC for deterministic output. */
   clock?: Date | (() => Date);
 }

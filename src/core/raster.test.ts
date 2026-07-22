@@ -6,6 +6,7 @@ import {
   getDot,
   rasterToRgba,
   setDot,
+  strokeRoundedRect,
   transformRaster,
 } from "./raster";
 
@@ -44,6 +45,26 @@ describe("monochrome raster", () => {
     expect(new Set(rgba.filter((_, index) => index % 4 === 3))).toEqual(
       new Set([255])
     );
+  });
+
+  it("keeps every rounded-box corner pixel-perfectly symmetric", () => {
+    for (const [width, height, thickness, rounding] of [
+      [31, 19, 2, 8],
+      [32, 20, 3, 6],
+      [47, 24, 5, 4],
+      [70, 10, 10, 4],
+    ] as const) {
+      const raster = createMonochromeRaster(width + 6, height + 8);
+      strokeRoundedRect(raster, 3, 4, width, height, thickness, rounding);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const dot = getDot(raster, x + 3, y + 4);
+          expect(getDot(raster, width - 1 - x + 3, y + 4)).toBe(dot);
+          expect(getDot(raster, x + 3, height - 1 - y + 4)).toBe(dot);
+        }
+      }
+    }
   });
 
   it("blits rotations and applies label transforms deterministically", () => {

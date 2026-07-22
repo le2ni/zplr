@@ -25,6 +25,28 @@
       </div>
 
       <div class="ml-auto flex items-center gap-0.5 sm:gap-1">
+        <div v-if="activeDataset" class="record-navigator hidden items-center sm:flex" aria-label="Variable-data record navigator">
+          <button type="button" title="Previous record" aria-label="Previous record" :disabled="activeRecordIndex <= 0" @click="activateRelativeRecord(-1)">
+            <IconChevronLeft aria-hidden="true" />
+          </button>
+          <div class="record-select-wrap">
+            <select :value="activeRecord?.id" aria-label="Preview record" @change="selectActiveRecord">
+              <option v-for="(record, index) in activeDataset.records" :key="record.id" :value="record.id">{{ index + 1 }} · {{ record.name }}</option>
+            </select>
+            <IconChevronDown class="record-select-icon" aria-hidden="true" />
+          </div>
+          <button type="button" title="Next record" aria-label="Next record" :disabled="activeRecordIndex < 0 || activeRecordIndex >= activeDataset.records.length - 1" @click="activateRelativeRecord(1)">
+            <IconChevronRight aria-hidden="true" />
+          </button>
+        </div>
+        <button class="toolbar-button inline-flex" type="button" title="Variable data and batch preview" @click="dataManagerOpen = true">
+          <span class="text-[11px] font-semibold">Data</span>
+          <span v-if="activeDataset" class="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[9px] dark:bg-white/10">{{ activeRecordIndex + 1 }}/{{ activeDataset.records.length }}</span>
+        </button>
+        <button class="toolbar-button hidden sm:inline-flex" type="button" title="Import and manage images and fonts" @click="resourceManagerOpen = true">
+          <span class="text-[11px] font-semibold">Assets</span>
+          <span v-if="activeDocument.assets.length" class="rounded-full bg-zinc-100 px-1.5 py-0.5 text-[9px] dark:bg-white/10">{{ activeDocument.assets.length }}</span>
+        </button>
         <button class="toolbar-button inline-flex" type="button" title="Editor and printer settings (⌘,)" @click="settingsOpen = true">
           <IconCogOutline class="size-4" aria-hidden="true" />
           <span class="sr-only">Editor and printer settings</span>
@@ -252,7 +274,7 @@
             @activate:workspace-document="activateDocument"
             @update:cursor-position="editorCursor = $event"
             @update:cursor-state="cursorState = $event"
-            @update:focused="codeFocused = $event"
+            @update:focused="updateCodeFocus"
           />
         </div>
 
@@ -306,15 +328,24 @@
           :label="activeLabel"
           :preview-url="previewUrl"
           :rendering="rendering"
+          :show-render-loading="showRenderLoading"
           :render-failure="renderFailure"
           :active-label-index="activeLabelIndex"
           :label-count="labels.length"
           :print-density="printDensity"
-          :selected-source-offset="codeFocused ? editorCursor : undefined"
+          :selected-source-offset="codeFocused && !visualInteractionActive ? editorCursor : undefined"
+          :source-selection-active="codeFocused && !visualInteractionActive"
+          :variable-columns="activeDataset?.columns ?? []"
+          :field-values="activeFieldValues"
+          :active-record-label="activeRecord?.name"
+          :guides="activeDocument.guides"
           :stale="previewStale"
           @edit="applyVisualEdit"
           @select-source="revealVisualSpan"
           @sync-source-selection="syncVisualSelection"
+          @update-field-value="updateActiveFieldValue"
+          @open-data-manager="dataManagerOpen = true"
+          @update:guides="activeDocument.guides = $event"
           @render="renderNow"
           @download-png="downloadPng"
           @download-all-pngs="downloadAllPngs"
@@ -322,6 +353,29 @@
         />
       </section>
     </div>
+
+    <VariableDataPanel
+      v-if="dataManagerOpen"
+      :model-value="activeDocument.variableData"
+      :detected-bindings="zplFieldBindings"
+      @update:model-value="updateVariableData"
+      @batch-preview="downloadBatchPngs"
+      @close="dataManagerOpen = false"
+    />
+
+    <ResourceManager
+      v-if="resourceManagerOpen"
+      :source="source"
+      :active-label-index="activeLabelIndex"
+      :assets="activeDocument.assets"
+      :selected-field-span="visualSelectedSpan"
+      @edit="applyVisualEdit"
+      @store-asset="storeOriginalAsset"
+      @download-asset="downloadOriginalAsset"
+      @delete-asset="deleteOriginalAsset"
+      @rename-asset="renameOriginalAsset"
+      @close="resourceManagerOpen = false"
+    />
 
     <div v-if="settingsOpen" class="fixed inset-0 z-40 flex justify-end bg-zinc-950/15 backdrop-blur-[1px]" @mousedown.self="settingsOpen = false">
       <section class="m-3 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/20 dark:border-white/10 dark:bg-zinc-950" role="dialog" aria-modal="true" aria-labelledby="editor-settings-title">
@@ -442,7 +496,7 @@
       <span class="ml-3 flex items-center gap-1 text-emerald-300 dark:text-emerald-700"><span class="size-1.5 rounded-full bg-current"></span> Local-only</span>
     </footer>
 
-    <input ref="fileInput" class="sr-only" type="file" accept=".zpl,.prn,text/plain" multiple aria-label="Open ZPL files" @change="handleFileInput" />
+    <input ref="fileInput" class="sr-only" type="file" accept=".zpl,.prn,.zip,text/plain,application/zip" multiple aria-label="Open ZPL files or a ZPLr workspace" @change="handleFileInput" />
   </div>
 </template>
 
@@ -452,6 +506,8 @@ import {
   IconAlertCircleOutline,
   IconBookOpenVariant,
   IconCheckCircleOutline,
+  IconChevronDown,
+  IconChevronLeft,
   IconChevronRight,
   IconClose,
   IconCodeTags,
@@ -467,7 +523,7 @@ import {
   IconPlus,
   IconVectorSquareEdit,
 } from "@iconify-prerendered/vue-mdi";
-import { zipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import shippingSample from "../../fixtures/zplr.zpl?raw";
 import retailSample from "../../fixtures/retail-upc-ean.zpl?raw";
 import assetSample from "../../fixtures/asset-matrix-pdf417.zpl?raw";
@@ -485,7 +541,24 @@ import {
 } from "../../src/index.web";
 import type MonacoEditorComponent from "./MonacoEditor.vue";
 import type { EditorCursorState, EditorPreferences } from "./MonacoEditor.vue";
-import type { SourceEdit } from "../visualEditorSource";
+import { sourceChangeEdits, type SourceChange } from "../visualEditorSource";
+import type { ManualGuide } from "../visualEditorLayout";
+import {
+  activeVariableDataset,
+  activeVariableRecord,
+  collectZplFieldBindings,
+  emptyVariableData,
+  fieldValuesForVariableData,
+  normalizeVariableData,
+  variableDatasetToCsv,
+  type DocumentVariableData,
+} from "../variableData";
+import {
+  deleteWorkspaceAsset,
+  getWorkspaceAsset,
+  putWorkspaceAsset,
+  type WorkspaceAssetMetadata,
+} from "../workspaceAssets";
 import {
   getZplCommandDefinition,
   validateZplParameters,
@@ -494,6 +567,8 @@ import {
 
 const MonacoEditor = defineAsyncComponent(() => import("./MonacoEditor.vue"));
 const VisualEditor = defineAsyncComponent(() => import("./VisualEditor.vue"));
+const VariableDataPanel = defineAsyncComponent(() => import("./VariableDataPanel.vue"));
+const ResourceManager = defineAsyncComponent(() => import("./ResourceManager.vue"));
 type MonacoEditorApi = InstanceType<typeof MonacoEditorComponent>;
 type SampleId = (typeof samples)[number]["id"];
 type StoredEditorView = "source" | "visual";
@@ -511,16 +586,32 @@ interface WorkspaceDocument {
   source: string;
   savedSource: string;
   cursorPosition: number;
+  variableData: DocumentVariableData;
+  guides: ManualGuide[];
+  assets: WorkspaceAssetMetadata[];
   sampleId?: SampleId;
 }
 
 interface StoredWorkspace {
-  version: 2;
+  version: 2 | 3;
   activeDocumentId: string;
   documents: WorkspaceDocument[];
   view?: StoredEditorView;
   preferences?: EditorPreferences;
   preview?: PreviewPreferences;
+}
+
+interface WorkspaceArchiveAsset extends WorkspaceAssetMetadata {
+  archivePath?: string;
+}
+
+interface WorkspaceArchiveDocument {
+  id: string;
+  filename: string;
+  sourcePath: string;
+  variableData: DocumentVariableData;
+  guides: ManualGuide[];
+  assets: WorkspaceArchiveAsset[];
 }
 
 interface PreviewPreferences {
@@ -547,7 +638,8 @@ const defaultPreviewPreferences: PreviewPreferences = {
   width: 812,
   height: 1218,
 };
-const workspaceKey = "zplr.editor.workspace.v2";
+const workspaceKey = "zplr.editor.workspace.v3";
+const previousWorkspaceKey = "zplr.editor.workspace.v2";
 const legacyWorkspaceKey = "zplr.editor.workspace.v1";
 const initialWorkspace = restoreWorkspace();
 const documents = ref<WorkspaceDocument[]>(initialWorkspace?.documents ?? [
@@ -584,6 +676,8 @@ const renderDiagnostics = shallowRef<readonly ZplDiagnostic[]>([]);
 const activeLabelIndex = ref(0);
 const previewUrl = ref<string>();
 const rendering = ref(false);
+const renderInFlight = ref(false);
+const recentRenderDurations = ref<readonly number[]>([]);
 const renderFailure = ref<string>();
 const editorCursor = computed<number>({
   get: () => activeDocument.value.cursorPosition,
@@ -591,7 +685,9 @@ const editorCursor = computed<number>({
 });
 const cursorState = ref<EditorCursorState>({ line: 1, column: 1, selectionLength: 0 });
 const highlightRange = ref<SourceSpan>();
+const visualSelectedSpan = ref<SourceSpan>();
 const codeFocused = ref(false);
+const visualInteractionActive = ref(false);
 const problemsOpen = ref(false);
 const sidebarMode = ref<"files" | "commands">("files");
 const sidebarSections = ref({ editors: true, examples: true, outline: false });
@@ -600,14 +696,19 @@ const selectedCommand = ref<string>();
 const mobilePane = ref<"code" | "visual">("code");
 const splitPercent = ref(42);
 const settingsOpen = ref(false);
+const dataManagerOpen = ref(false);
+const resourceManagerOpen = ref(false);
 const previewStale = ref(false);
 const editorComponent = ref<MonacoEditorApi | null>(null);
 const workbench = ref<HTMLElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 let renderTimer: number | undefined;
 let renderSequence = 0;
+const renderDurationWindow = 5;
+const renderLoadingThresholdMs = 250;
 let saveTimer: number | undefined;
 let resizeCleanup: (() => void) | undefined;
+let codeFocusFrame: number | undefined;
 
 const editorLimits = {
   maxDimension: 8_192,
@@ -619,8 +720,20 @@ const editorLimits = {
   maxLabels: 5,
 } as const;
 
+const averageRenderDuration = computed(() => recentRenderDurations.value.length === 0
+  ? 0
+  : recentRenderDurations.value.reduce((total, duration) => total + duration, 0) / recentRenderDurations.value.length);
+const showRenderLoading = computed(() =>
+  rendering.value && renderInFlight.value && averageRenderDuration.value > renderLoadingThresholdMs
+);
+
 const isDirty = computed(() => source.value !== activeDocument.value.savedSource);
 const activeLabel = computed(() => labels.value[activeLabelIndex.value]);
+const activeDataset = computed(() => activeVariableDataset(activeDocument.value.variableData));
+const activeRecord = computed(() => activeVariableRecord(activeDataset.value));
+const activeRecordIndex = computed(() => activeDataset.value?.records.findIndex(({ id }) => id === activeRecord.value?.id) ?? -1);
+const activeFieldValues = computed(() => fieldValuesForVariableData(activeDocument.value.variableData));
+const zplFieldBindings = computed(() => collectZplFieldBindings(source.value));
 const languageDiagnostics = computed<readonly ZplDiagnostic[]>(() =>
   validateZplParameters(source.value).map((diagnostic) => ({
     code: diagnostic.code,
@@ -691,7 +804,15 @@ function createDocumentId(): string {
 function createWorkspaceDocument(
   documentSource: string,
   documentFilename: string,
-  options: { id?: string; savedSource?: string; cursorPosition?: number; sampleId?: SampleId } = {},
+  options: {
+    id?: string;
+    savedSource?: string;
+    cursorPosition?: number;
+    sampleId?: SampleId;
+    variableData?: unknown;
+    guides?: unknown;
+    assets?: unknown;
+  } = {},
 ): WorkspaceDocument {
   return {
     id: options.id ?? createDocumentId(),
@@ -699,8 +820,46 @@ function createWorkspaceDocument(
     source: documentSource,
     savedSource: options.savedSource ?? documentSource,
     cursorPosition: options.cursorPosition ?? 0,
+    variableData: normalizeVariableData(options.variableData ?? emptyVariableData()),
+    guides: normalizeGuides(options.guides),
+    assets: normalizeAssets(options.assets),
     sampleId: options.sampleId,
   };
+}
+
+function normalizeAssets(value: unknown): WorkspaceAssetMetadata[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const asset = candidate as Partial<WorkspaceAssetMetadata>;
+    if (
+      typeof asset.id !== "string" || !asset.id ||
+      typeof asset.resourceName !== "string" ||
+      typeof asset.filename !== "string" ||
+      typeof asset.mimeType !== "string" ||
+      typeof asset.size !== "number" || !Number.isFinite(asset.size) || asset.size < 0 ||
+      (asset.kind !== "image" && asset.kind !== "font")
+    ) return [];
+    return [{
+      id: asset.id,
+      resourceName: asset.resourceName,
+      filename: asset.filename,
+      mimeType: asset.mimeType,
+      size: asset.size,
+      kind: asset.kind,
+      importedAt: typeof asset.importedAt === "string" ? asset.importedAt : new Date(0).toISOString(),
+    }];
+  });
+}
+
+function normalizeGuides(value: unknown): ManualGuide[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate, index) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const guide = candidate as Partial<ManualGuide>;
+    if ((guide.axis !== "x" && guide.axis !== "y") || typeof guide.position !== "number" || !Number.isFinite(guide.position)) return [];
+    return [{ id: typeof guide.id === "string" && guide.id ? guide.id : `guide-${index}`, axis: guide.axis, position: Math.max(0, guide.position) }];
+  });
 }
 
 function normalizeEditorPreferences(value: unknown): EditorPreferences {
@@ -734,10 +893,10 @@ function normalizePreviewPreferences(value: unknown): PreviewPreferences {
 
 function restoreWorkspace(): StoredWorkspace | undefined {
   try {
-    const value = window.localStorage.getItem(workspaceKey);
+    const value = window.localStorage.getItem(workspaceKey) ?? window.localStorage.getItem(previousWorkspaceKey);
     if (value) {
       const parsed = JSON.parse(value) as Partial<StoredWorkspace>;
-      if (parsed.version === 2 && Array.isArray(parsed.documents) && parsed.documents.length > 0) {
+      if ((parsed.version === 2 || parsed.version === 3) && Array.isArray(parsed.documents) && parsed.documents.length > 0) {
         const restoredDocuments = parsed.documents.flatMap((candidate) => {
           if (!candidate || typeof candidate !== "object") return [];
           const document = candidate as Partial<WorkspaceDocument>;
@@ -747,6 +906,9 @@ function restoreWorkspace(): StoredWorkspace | undefined {
             id: document.id,
             savedSource: typeof document.savedSource === "string" ? document.savedSource : document.source,
             cursorPosition: typeof document.cursorPosition === "number" ? document.cursorPosition : 0,
+            variableData: document.variableData,
+            guides: document.guides,
+            assets: document.assets,
             sampleId,
           })];
         });
@@ -755,7 +917,7 @@ function restoreWorkspace(): StoredWorkspace | undefined {
             ? parsed.activeDocumentId!
             : restoredDocuments[0]!.id;
           return {
-            version: 2,
+            version: 3,
             activeDocumentId,
             documents: restoredDocuments,
             view: parsed.view === "visual" ? "visual" : "source",
@@ -773,7 +935,7 @@ function restoreWorkspace(): StoredWorkspace | undefined {
     const matchingSample = samples.find((sample) => sample.source === legacy.source);
     const document = createWorkspaceDocument(legacy.source, legacy.filename, { sampleId: matchingSample?.id });
     return {
-      version: 2,
+      version: 3,
       activeDocumentId: document.id,
       documents: [document],
       view: "source",
@@ -790,7 +952,7 @@ function persistWorkspace(): void {
   saveTimer = window.setTimeout(() => {
     try {
       const workspace: StoredWorkspace = {
-        version: 2,
+        version: 3,
         activeDocumentId: activeDocumentId.value,
         documents: documents.value,
         view: "visual",
@@ -880,9 +1042,20 @@ function renameDocument(documentId: string): void {
     : sanitized;
 }
 
-function duplicateDocument(documentId: string): void {
+async function duplicateDocument(documentId: string): Promise<void> {
   const document = documents.value.find(({ id }) => id === documentId);
-  if (document) addDocument(document.source, document.filename);
+  if (!document) return;
+  const duplicate = createWorkspaceDocument(document.source, availableFilename(document.filename), {
+    variableData: document.variableData,
+    guides: document.guides,
+    assets: document.assets,
+  });
+  documents.value.push(duplicate);
+  activateDocument(duplicate.id);
+  for (const asset of document.assets) {
+    const blob = await getWorkspaceAsset(document.id, asset.id);
+    if (blob) await putWorkspaceAsset(duplicate.id, asset, new Uint8Array(await blob.arrayBuffer()));
+  }
 }
 
 function openFilePicker(): void {
@@ -890,11 +1063,116 @@ function openFilePicker(): void {
 }
 
 async function openFile(file: File): Promise<void> {
+  if (/\.zip$/i.test(file.name) || /^(?:application\/(?:zip|x-zip-compressed)|multipart\/x-zip)$/i.test(file.type)) {
+    await openWorkspaceArchive(file);
+    return;
+  }
   if (file.size > 8_000_000) {
     window.alert("This editor accepts ZPL files up to 8 MB.");
     return;
   }
   addDocument(await file.text(), file.name || "label.zpl");
+}
+
+async function openWorkspaceArchive(file: File): Promise<void> {
+  if (file.size > 64_000_000) {
+    window.alert("ZPLr workspace archives are limited to 64 MB.");
+    return;
+  }
+  try {
+    let expandedBytes = 0;
+    const entries = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+      filter: ({ originalSize }) => {
+        expandedBytes += originalSize;
+        if (originalSize > 32_000_000 || expandedBytes > 64_000_000) {
+          throw new Error("The workspace expands beyond the 64 MB safety limit.");
+        }
+        return true;
+      },
+    });
+    const manifestBytes = entries["zplr-workspace.json"];
+    if (!manifestBytes) throw new Error("This ZIP does not contain zplr-workspace.json.");
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as {
+      version?: unknown;
+      activeDocumentId?: unknown;
+      documents?: unknown;
+    };
+    if (manifest.version !== 3 || !Array.isArray(manifest.documents) || manifest.documents.length === 0) {
+      throw new Error("This is not a supported ZPLr workspace archive.");
+    }
+    if (manifest.documents.length > 100) throw new Error("A workspace may contain at most 100 labels.");
+
+    const reservedNames = new Set(documents.value.map(({ filename: openFilename }) => openFilename));
+    const uniqueImportedFilename = (requested: string): string => {
+      const normalized = requested.trim().replace(/[\\/]/g, "-") || "label.zpl";
+      if (!reservedNames.has(normalized)) {
+        reservedNames.add(normalized);
+        return normalized;
+      }
+      const extensionIndex = normalized.lastIndexOf(".");
+      const stem = extensionIndex > 0 ? normalized.slice(0, extensionIndex) : normalized;
+      const extension = extensionIndex > 0 ? normalized.slice(extensionIndex) : "";
+      let index = 2;
+      while (reservedNames.has(`${stem}-${index}${extension}`)) index += 1;
+      const available = `${stem}-${index}${extension}`;
+      reservedNames.add(available);
+      return available;
+    };
+
+    const imported: Array<{
+      previousId: string;
+      document: WorkspaceDocument;
+      originals: Array<{ metadata: WorkspaceAssetMetadata; bytes: Uint8Array }>;
+    }> = [];
+    for (const [index, value] of manifest.documents.entries()) {
+      if (!value || typeof value !== "object") throw new Error(`Workspace label ${index + 1} is invalid.`);
+      const archived = value as Partial<WorkspaceArchiveDocument>;
+      if (typeof archived.sourcePath !== "string" || !archived.sourcePath) {
+        throw new Error(`Workspace label ${index + 1} has no source path.`);
+      }
+      const sourceBytes = entries[archived.sourcePath];
+      if (!sourceBytes) throw new Error(`Workspace source ${archived.sourcePath} is missing.`);
+      if (sourceBytes.byteLength > 8_000_000) throw new Error(`Workspace source ${archived.sourcePath} exceeds 8 MB.`);
+      const sourceText = new TextDecoder().decode(sourceBytes);
+      const archivedAssets = normalizeAssets(archived.assets);
+      const rawAssets = Array.isArray(archived.assets) ? archived.assets : [];
+      const originals = archivedAssets.flatMap((metadata) => {
+        const raw = rawAssets.find((candidate) => candidate && typeof candidate === "object" && (candidate as { id?: unknown }).id === metadata.id) as Partial<WorkspaceArchiveAsset> | undefined;
+        const fallbackName = metadata.filename.replace(/[\\/]/g, "-") || metadata.id;
+        const fallbackId = metadata.id.replace(/[^a-z0-9_-]+/gi, "-") || "asset";
+        const archivePath = typeof raw?.archivePath === "string" && raw.archivePath
+          ? raw.archivePath
+          : `assets/${index + 1}-${fallbackId}-${fallbackName}`;
+        const bytes = entries[archivePath];
+        return bytes ? [{ metadata, bytes }] : [];
+      });
+      const importedDocument = createWorkspaceDocument(
+        sourceText,
+        uniqueImportedFilename(typeof archived.filename === "string" ? archived.filename : archived.sourcePath.split("/").at(-1) ?? "label.zpl"),
+        {
+          variableData: archived.variableData,
+          guides: archived.guides,
+          assets: archivedAssets,
+        },
+      );
+      imported.push({
+        previousId: typeof archived.id === "string" ? archived.id : `archive-document-${index}`,
+        document: importedDocument,
+        originals,
+      });
+    }
+
+    documents.value.push(...imported.map(({ document }) => document));
+    const requestedActiveId = typeof manifest.activeDocumentId === "string" ? manifest.activeDocumentId : undefined;
+    const selected = imported.find(({ previousId }) => previousId === requestedActiveId) ?? imported[0]!;
+    activateDocument(selected.document.id);
+    for (const item of imported) {
+      for (const original of item.originals) await putWorkspaceAsset(item.document.id, original.metadata, original.bytes);
+    }
+    persistWorkspace();
+  } catch (error) {
+    window.alert(error instanceof Error ? `The workspace could not be opened: ${error.message}` : "The workspace could not be opened.");
+  }
 }
 
 function handleFileInput(event: Event): void {
@@ -925,14 +1203,48 @@ function downloadZpl(): void {
   persistWorkspace();
 }
 
-function downloadWorkspace(): void {
+async function downloadWorkspace(): Promise<void> {
   const entries: Record<string, Uint8Array> = {};
-  documents.value.forEach((document, index) => {
+  const manifestDocuments: Array<{
+    id: string;
+    filename: string;
+    sourcePath: string;
+    variableData: DocumentVariableData;
+    guides: ManualGuide[];
+    assets: WorkspaceArchiveAsset[];
+  }> = [];
+  for (const [index, document] of documents.value.entries()) {
     let archiveName = document.filename.replace(/[\\/]/g, "-") || `label-${index + 1}.zpl`;
     if (entries[archiveName]) archiveName = `${index + 1}-${archiveName}`;
     entries[archiveName] = new TextEncoder().encode(document.source);
+    for (const dataset of document.variableData.datasets) {
+      const dataName = dataset.name.replace(/[^a-z0-9_-]+/gi, "-") || "dataset";
+      entries[`data/${index + 1}-${dataName}.csv`] = new TextEncoder().encode(variableDatasetToCsv(dataset));
+    }
+    const manifestAssets: WorkspaceArchiveAsset[] = [];
+    for (const asset of document.assets) {
+      const blob = await getWorkspaceAsset(document.id, asset.id);
+      const safeName = asset.filename.replace(/[\\/]/g, "-") || asset.id;
+      const safeId = asset.id.replace(/[^a-z0-9_-]+/gi, "-") || "asset";
+      const archivePath = `assets/${index + 1}-${safeId}-${safeName}`;
+      if (blob) entries[archivePath] = new Uint8Array(await blob.arrayBuffer());
+      manifestAssets.push({ ...asset, archivePath: blob ? archivePath : undefined });
+    }
+    manifestDocuments.push({
+      id: document.id,
+      filename: document.filename,
+      sourcePath: archiveName,
+      variableData: document.variableData,
+      guides: document.guides,
+      assets: manifestAssets,
+    });
     document.savedSource = document.source;
-  });
+  }
+  entries["zplr-workspace.json"] = new TextEncoder().encode(JSON.stringify({
+    version: 3,
+    activeDocumentId: activeDocumentId.value,
+    documents: manifestDocuments,
+  }, null, 2));
   const zipped = zipSync(entries, { level: 6 });
   const buffer = new ArrayBuffer(zipped.byteLength);
   new Uint8Array(buffer).set(zipped);
@@ -966,7 +1278,51 @@ async function downloadAllPngs(): Promise<void> {
   downloadBlob(new Blob([buffer], { type: "application/zip" }), `${baseName}-labels.zip`);
 }
 
+async function downloadBatchPngs(): Promise<void> {
+  const dataset = activeDataset.value;
+  if (!dataset?.records.length) return;
+  if (dataset.records.length > 500) {
+    window.alert("Batch preview is limited to 500 records per export.");
+    return;
+  }
+  const entries: Record<string, Uint8Array> = {};
+  const usedNames = new Set<string>();
+  try {
+    for (const [recordIndex, record] of dataset.records.entries()) {
+      const fieldValues = Object.fromEntries(dataset.columns.map((column) => [column.fieldNumber, record.values[column.id] ?? ""]));
+      const result = await renderZpl(source.value, {
+        printDensity: printDensity.value,
+        strict: strictMode.value,
+        width: sizeMode.value === "custom" ? safeDimension(overrideWidth.value, 812) : undefined,
+        height: sizeMode.value === "custom" ? safeDimension(overrideHeight.value, 1218) : undefined,
+        limits: editorLimits,
+        fieldValues,
+      });
+      for (const [labelIndex, label] of result.labels.entries()) {
+        const blob = await canvasToPng(label.canvas);
+        if (!blob) continue;
+        const recordName = record.name.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-|-$/g, "") || `record-${recordIndex + 1}`;
+        let name = `${String(recordIndex + 1).padStart(3, "0")}-${recordName}${result.labels.length > 1 ? `-${labelIndex + 1}` : ""}.png`;
+        let duplicate = 2;
+        while (usedNames.has(name)) name = `${String(recordIndex + 1).padStart(3, "0")}-${recordName}-${duplicate++}.png`;
+        usedNames.add(name);
+        entries[name] = new Uint8Array(await blob.arrayBuffer());
+      }
+    }
+    if (!Object.keys(entries).length) throw new Error("No labels could be rendered for this dataset.");
+    const zipped = zipSync(entries, { level: 6 });
+    const buffer = new ArrayBuffer(zipped.byteLength);
+    new Uint8Array(buffer).set(zipped);
+    const name = dataset.name.replace(/[^a-z0-9_-]+/gi, "-") || "batch-preview";
+    downloadBlob(new Blob([buffer], { type: "application/zip" }), `${name}-pngs.zip`);
+  } catch (error) {
+    window.alert(error instanceof Error ? error.message : "Batch preview failed.");
+  }
+}
+
 async function updatePreview(sequence: number): Promise<void> {
+  const startedAt = performance.now();
+  if (sequence === renderSequence) renderInFlight.value = true;
   try {
     const result = await renderZpl(source.value, {
       printDensity: printDensity.value,
@@ -974,6 +1330,7 @@ async function updatePreview(sequence: number): Promise<void> {
       width: sizeMode.value === "custom" ? safeDimension(overrideWidth.value, 812) : undefined,
       height: sizeMode.value === "custom" ? safeDimension(overrideHeight.value, 1218) : undefined,
       limits: editorLimits,
+      fieldValues: activeFieldValues.value,
     });
     if (sequence !== renderSequence) return;
     labels.value = result.labels;
@@ -987,7 +1344,10 @@ async function updatePreview(sequence: number): Promise<void> {
     previewUrl.value = undefined;
     renderFailure.value = error instanceof Error ? error.message : "The local renderer failed.";
   } finally {
+    const duration = performance.now() - startedAt;
+    recentRenderDurations.value = [...recentRenderDurations.value, duration].slice(-renderDurationWindow);
     if (sequence === renderSequence) {
+      renderInFlight.value = false;
       rendering.value = false;
       previewStale.value = false;
     }
@@ -1002,6 +1362,7 @@ function schedulePreview(delay = 120): void {
   if (renderTimer !== undefined) window.clearTimeout(renderTimer);
   const sequence = ++renderSequence;
   rendering.value = true;
+  renderInFlight.value = false;
   renderFailure.value = undefined;
   renderTimer = window.setTimeout(() => void updatePreview(sequence), delay);
 }
@@ -1023,16 +1384,84 @@ function formatDocument(): void {
   void editorComponent.value?.formatDocument();
 }
 
-function applyVisualEdit(edit: SourceEdit): void {
+function applyVisualEdit(edit: SourceChange): void {
   const appliedByEditor = editorComponent.value?.applySourceEdit(edit) ?? false;
   if (!appliedByEditor) {
-    const start = Math.max(0, Math.min(source.value.length, Math.trunc(edit.start)));
-    const end = Math.max(start, Math.min(source.value.length, Math.trunc(edit.end)));
-    source.value = `${source.value.slice(0, start)}${edit.text}${source.value.slice(end)}`;
+    let next = source.value;
+    const edits = [...sourceChangeEdits(edit)].sort((left, right) => right.start - left.start || right.end - left.end);
+    for (const replacement of edits) {
+      const start = Math.max(0, Math.min(next.length, Math.trunc(replacement.start)));
+      const end = Math.max(start, Math.min(next.length, Math.trunc(replacement.end)));
+      next = `${next.slice(0, start)}${replacement.text}${next.slice(end)}`;
+    }
+    source.value = next;
   }
   // WYSIWYG operations always refresh immediately, even when manual preview
   // rendering is selected, so the visual surface remains authoritative.
   void nextTick(() => schedulePreview(0));
+}
+
+function updateVariableData(value: DocumentVariableData): void {
+  activeDocument.value.variableData = normalizeVariableData(value);
+}
+
+function selectActiveRecord(event: Event): void {
+  const id = (event.currentTarget as HTMLSelectElement).value;
+  if (activeDataset.value?.records.some((record) => record.id === id)) activeDataset.value.activeRecordId = id;
+}
+
+function activateRelativeRecord(direction: number): void {
+  const dataset = activeDataset.value;
+  if (!dataset?.records.length) return;
+  const next = Math.max(0, Math.min(dataset.records.length - 1, activeRecordIndex.value + direction));
+  dataset.activeRecordId = dataset.records[next]!.id;
+}
+
+function updateActiveFieldValue(fieldNumber: string, value: string): void {
+  const dataset = activeDataset.value;
+  const record = activeRecord.value;
+  const normalized = fieldNumber.replace(/^0+(?=\d)/, "");
+  const column = dataset?.columns.find((candidate) => candidate.fieldNumber.replace(/^0+(?=\d)/, "") === normalized);
+  if (!column || !record) return;
+  record.values[column.id] = value;
+}
+
+async function storeOriginalAsset(asset: { metadata: WorkspaceAssetMetadata; bytes: Uint8Array }): Promise<void> {
+  const document = activeDocument.value;
+  const existing = document.assets.findIndex(({ id }) => id === asset.metadata.id);
+  if (existing >= 0) document.assets[existing] = asset.metadata;
+  else document.assets.push(asset.metadata);
+  try {
+    await putWorkspaceAsset(document.id, asset.metadata, asset.bytes);
+  } catch (error) {
+    window.alert(error instanceof Error
+      ? `The original asset is available for this session but could not be persisted: ${error.message}`
+      : "The original asset is available for this session but could not be persisted.");
+  }
+}
+
+async function downloadOriginalAsset(assetId: string): Promise<void> {
+  const document = activeDocument.value;
+  const metadata = document.assets.find(({ id }) => id === assetId);
+  if (!metadata) return;
+  const blob = await getWorkspaceAsset(document.id, assetId);
+  if (blob) downloadBlob(blob, metadata.filename);
+  else window.alert("The original file is not available in this browser storage.");
+}
+
+async function deleteOriginalAsset(assetId: string): Promise<void> {
+  const document = activeDocument.value;
+  document.assets = document.assets.filter(({ id }) => id !== assetId);
+  try {
+    await deleteWorkspaceAsset(document.id, assetId);
+  } catch {
+    // Metadata removal is enough to keep the workspace consistent if IndexedDB is unavailable.
+  }
+}
+
+function renameOriginalAsset(assetId: string, resourceName: string): void {
+  const asset = activeDocument.value.assets.find(({ id }) => id === assetId);
+  if (asset) asset.resourceName = resourceName;
 }
 
 function resetSettings(): void {
@@ -1059,6 +1488,7 @@ function focusSpan(span?: SourceSpan): void {
 
 function revealVisualSpan(span?: SourceSpan): void {
   if (!span) return;
+  visualInteractionActive.value = false;
   editorCursor.value = span.start;
   highlightRange.value = undefined;
   showMobilePane("code");
@@ -1074,8 +1504,33 @@ function revealVisualSpan(span?: SourceSpan): void {
 
 function syncVisualSelection(span?: SourceSpan): void {
   highlightRange.value = undefined;
+  // A visual click can arrive one microtask before Monaco reports its blur.
+  // Stop feeding the previous Monaco cursor back into the Designer while the
+  // visual selection is synchronizing, otherwise the old field wins the race.
+  codeFocused.value = false;
+  visualInteractionActive.value = true;
+  visualSelectedSpan.value = span ? { ...span } : undefined;
   if (span) editorComponent.value?.syncSpan(span);
   else editorComponent.value?.clearSelection();
+}
+
+function updateCodeFocus(focused: boolean): void {
+  if (codeFocusFrame !== undefined) window.cancelAnimationFrame(codeFocusFrame);
+  codeFocusFrame = undefined;
+  if (!focused) {
+    codeFocused.value = false;
+    return;
+  }
+  // Monaco can report its previous focus while a visual pointer interaction
+  // is still transferring focus. Confirm the active DOM owner on the next
+  // frame so that stale cursor state cannot reselect a visual layer.
+  codeFocusFrame = window.requestAnimationFrame(() => {
+    codeFocusFrame = undefined;
+    const activeElement = document.activeElement;
+    const sourceOwnsFocus = activeElement instanceof Element && activeElement.closest('[data-testid="zpl-editor"]') !== null;
+    codeFocused.value = sourceOwnsFocus;
+    if (sourceOwnsFocus) visualInteractionActive.value = false;
+  });
 }
 
 function diagnosticKey(diagnostic: ZplDiagnostic, index: number): string {
@@ -1231,9 +1686,12 @@ watch(source, () => {
   requestPreview();
 });
 watch(documents, persistWorkspace, { deep: true });
+watch(activeFieldValues, () => requestPreview(0));
 watch(editorPreferences, persistWorkspace, { deep: true });
 watch(activeDocumentId, () => {
   highlightRange.value = undefined;
+  visualSelectedSpan.value = undefined;
+  visualInteractionActive.value = false;
   activeLabelIndex.value = 0;
   persistWorkspace();
   if (autoRender.value) schedulePreview(0);
@@ -1269,6 +1727,7 @@ onBeforeUnmount(() => {
   renderSequence++;
   if (renderTimer !== undefined) window.clearTimeout(renderTimer);
   if (saveTimer !== undefined) window.clearTimeout(saveTimer);
+  if (codeFocusFrame !== undefined) window.cancelAnimationFrame(codeFocusFrame);
   resizeCleanup?.();
   window.removeEventListener("keydown", handleKeyboardShortcut, true);
   window.removeEventListener("resize", applySplit);
@@ -1298,6 +1757,21 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
   opacity: 0.4;
 }
+
+.record-navigator {
+  height: 2rem;
+  overflow: hidden;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.5rem;
+  background: rgb(250 250 250);
+}
+.record-navigator button { display: inline-flex; width: 1.75rem; height: 100%; flex: 0 0 auto; align-items: center; justify-content: center; color: rgb(82 82 91); line-height: 0; }
+.record-navigator button svg { width: 1rem; height: 1rem; }
+.record-navigator button:hover:not(:disabled) { background: rgb(228 228 231 / 0.7); }
+.record-navigator button:disabled { opacity: 0.3; }
+.record-select-wrap { position: relative; height: 100%; max-width: 10rem; border-inline: 1px solid rgb(228 228 231); background: white; }
+.record-navigator select { width: 100%; max-width: 10rem; height: 100%; appearance: none; border: 0; background: transparent; padding: 0 1.75rem 0 0.65rem; color: rgb(82 82 91); font-size: 0.65rem; }
+.record-select-icon { position: absolute; top: 50%; right: 0.45rem; width: 0.9rem; height: 0.9rem; transform: translateY(-50%); pointer-events: none; color: rgb(82 82 91); }
 
 .toolbar-button:focus-visible,
 .icon-button-small:focus-visible,
@@ -1643,6 +2117,9 @@ kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radiu
 
 @media (prefers-color-scheme: dark) {
   .toolbar-button { color: rgb(161 161 170); }
+  .record-navigator { border-color: rgb(255 255 255 / 0.1); background: rgb(24 24 27); }
+  .record-select-wrap { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); }
+  .record-navigator select, .record-select-icon { color: rgb(212 212 216); }
   .toolbar-button:hover:not(:disabled), .icon-button-small:hover { background: rgb(255 255 255 / 0.06); color: white; }
   .mobile-pane-tab.active { background: rgb(39 39 42); color: white; }
   .sidebar-tab.active { border-bottom-color: white; color: white; }

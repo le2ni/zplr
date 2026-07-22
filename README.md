@@ -45,6 +45,10 @@ document.body.append(job.labels[0].canvas);
 
 Every label contains resolved dimensions, print density, an MSB-first packed raster, diagnostics, source-linked highlight regions, and a required `Canvas`/`HTMLCanvasElement`. `renderZplPNG()` returns `Buffer[]` in Node and `Blob[]` in browsers.
 
+## Code and WYSIWYG editor
+
+The local `/editor` workbench keeps Monaco source and a selectable label canvas synchronized. It supports multi-layer layout, variable-data records, imported graphics and TrueType fonts, and portable workspace archives without hiding the generated ZPL. See the [editor guide](./docs/EDITOR.md) for workflows and shortcuts.
+
 ## Parse and navigate source
 
 ```ts
