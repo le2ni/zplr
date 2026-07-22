@@ -268,6 +268,93 @@
             <p v-if="selectedField.content.prefix" class="mt-1 font-mono text-[9px] text-zinc-500">ZPL prefix {{ selectedField.content.prefix }} is preserved.</p>
           </section>
 
+          <section v-if="selectedBarcodeCommand" class="designer-property-section">
+            <h4>Barcode</h4>
+            <label class="designer-property-control" for="visual-barcode-type">
+              <span>Barcode type</span>
+              <select
+                id="visual-barcode-type"
+                :value="selectedBarcodeCommand.canonical"
+                title="Choose a barcode symbology. Command parameters reset to its documented defaults."
+                @change="commitBarcodeType"
+                @keydown.stop
+              >
+                <option v-for="barcodeType in visualBarcodeTypes" :key="barcodeType.canonical" :value="barcodeType.canonical">
+                  {{ barcodeType.title }} ({{ barcodeType.canonical }})
+                </option>
+              </select>
+            </label>
+            <p class="designer-property-note">Changing the symbology resets its command-specific fields to the documented defaults. Field data is preserved.</p>
+          </section>
+
+          <section
+            v-for="group in propertyGroups"
+            :key="group.id"
+            class="designer-property-section designer-command-properties"
+            :aria-labelledby="`${group.id}-title`"
+          >
+            <div class="designer-command-header">
+              <div class="min-w-0">
+                <h4 :id="`${group.id}-title`">{{ group.definition.title }}</h4>
+                <code>{{ group.command.canonical }}</code>
+              </div>
+              <a
+                class="designer-doc-link"
+                :href="group.definition.reference"
+                target="_blank"
+                rel="noreferrer"
+                :aria-label="`Open official documentation for ${group.definition.title}`"
+                title="Open official Zebra documentation"
+              ><IconOpenInNew class="size-3.5" aria-hidden="true" /></a>
+            </div>
+            <p class="designer-command-summary">{{ group.definition.summary }}</p>
+
+            <div class="designer-property-controls">
+              <div v-for="property in group.parameters" :key="property.id" class="designer-property-control">
+                <label :for="property.id">
+                  <span>{{ property.label }}</span>
+                  <small aria-hidden="true">{{ property.definition.required ? "Required" : property.definition.key }}</small>
+                </label>
+                <select
+                  v-if="property.inputKind === 'select'"
+                  :id="property.id"
+                  :value="property.value"
+                  :required="property.definition.required"
+                  :aria-describedby="`${property.id}-help`"
+                  :title="property.definition.documentation"
+                  @change="commitVisualProperty(property, $event)"
+                  @keydown.stop
+                >
+                  <option v-if="!property.definition.required" value="">Default / inherited</option>
+                  <option v-for="option in property.options" :key="option" :value="option">{{ option }}</option>
+                </select>
+                <input
+                  v-else
+                  :id="property.id"
+                  :value="property.value"
+                  :type="property.inputKind"
+                  :min="property.min"
+                  :max="property.max"
+                  :step="property.step"
+                  :required="property.definition.required"
+                  :placeholder="property.definition.required ? 'Required' : 'Default / inherited'"
+                  :list="property.inputKind === 'text' && property.suggestions.length ? `${property.id}-choices` : undefined"
+                  :aria-describedby="`${property.id}-help`"
+                  :title="property.definition.documentation"
+                  @change="commitVisualProperty(property, $event)"
+                  @keydown.stop
+                />
+                <datalist v-if="property.inputKind === 'text' && property.suggestions.length" :id="`${property.id}-choices`">
+                  <option v-for="choice in property.suggestions" :key="choice" :value="choice"></option>
+                </datalist>
+                <details class="designer-property-help">
+                  <summary><IconInformationOutline class="size-3.5" aria-hidden="true" /> Parameter info</summary>
+                  <p :id="`${property.id}-help`">{{ property.definition.documentation }}</p>
+                </details>
+              </div>
+            </div>
+          </section>
+
           <section class="designer-property-section">
             <h4>Source</h4>
             <button class="designer-secondary-action" type="button" @click="emit('selectSource', selectedField.sourceSpan)">
@@ -328,11 +415,13 @@ import {
   IconDrag,
   IconFormatText,
   IconGrid,
+  IconInformationOutline,
   IconKeyboardOutline,
   IconLayersOutline,
   IconLockOutline,
   IconMagnifyMinusOutline,
   IconMagnifyPlusOutline,
+  IconOpenInNew,
   IconQrcode,
   IconSelection,
   IconSelectionDrag,
@@ -356,6 +445,14 @@ import {
   type VisualElementKind,
   type VisualField,
 } from "../visualEditorSource";
+import {
+  sourceEditForBarcodeType,
+  sourceEditForVisualProperty,
+  visualBarcodeCommand,
+  visualBarcodeTypes,
+  visualPropertyGroups,
+  type VisualPropertyParameter,
+} from "../visualEditorProperties";
 
 const props = defineProps<{
   source: string;
@@ -422,6 +519,8 @@ const selectedField = computed(() => fields.value.find((field) =>
   (field.origin?.command.span.start ?? field.sourceSpan.start) === selectionAnchor.value &&
   field.kind === selectionKind.value
 ));
+const propertyGroups = computed(() => visualPropertyGroups(selectedField.value));
+const selectedBarcodeCommand = computed(() => visualBarcodeCommand(selectedField.value));
 const selectedPosition = computed(() => ({
   x: Math.round(selectedField.value?.origin?.region.x ?? selectedField.value?.bounds.x ?? 0),
   y: Math.round(selectedField.value?.origin?.region.y ?? selectedField.value?.bounds.y ?? 0),
@@ -830,6 +929,23 @@ function commitContent(event: Event): void {
   if (edit) emit("edit", edit);
 }
 
+function commitVisualProperty(property: VisualPropertyParameter, event: Event): void {
+  const control = event.currentTarget as HTMLInputElement | HTMLSelectElement;
+  if (control.value === property.value) return;
+  const edit = sourceEditForVisualProperty(props.source, property, control.value);
+  if (edit) emit("edit", edit);
+  else control.value = property.value;
+}
+
+function commitBarcodeType(event: Event): void {
+  const control = event.currentTarget as HTMLSelectElement;
+  const command = selectedBarcodeCommand.value;
+  if (!command || control.value === command.canonical) return;
+  const edit = sourceEditForBarcodeType(props.source, command.span, control.value);
+  if (edit) emit("edit", edit);
+  else control.value = command.canonical;
+}
+
 function duplicateSelected(): void {
   const field = selectedField.value;
   if (!field) return;
@@ -1122,7 +1238,7 @@ onBeforeUnmount(() => {
 .designer-property-section h4 { margin-bottom: 0.55rem; color: rgb(113 113 122); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 
 .designer-property-label { color: rgb(82 82 91); font-size: 0.65rem; font-weight: 600; }
-.designer-property-label > span { float: right; color: rgb(161 161 170); font-size: 0.55rem; font-weight: 400; }
+.designer-property-label > span { float: right; color: rgb(113 113 122); font-size: 0.55rem; font-weight: 400; }
 .designer-property-label input {
   display: block;
   width: 100%;
@@ -1138,6 +1254,99 @@ onBeforeUnmount(() => {
   outline: none;
 }
 .designer-property-label input:focus, .designer-content-input:focus { border-color: rgb(59 130 246); box-shadow: 0 0 0 2px rgb(59 130 246 / 0.12); }
+
+.designer-property-note, .designer-command-summary {
+  margin-top: 0.45rem;
+  color: rgb(113 113 122);
+  font-size: 0.6rem;
+  line-height: 0.95rem;
+}
+
+.designer-command-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.designer-command-header h4 { margin-bottom: 0.15rem; color: rgb(82 82 91); }
+.designer-command-header code { color: rgb(37 99 235); font-size: 0.6rem; }
+.designer-doc-link {
+  display: inline-flex;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.4rem;
+  color: rgb(113 113 122);
+}
+.designer-doc-link:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
+.designer-command-summary { margin-top: 0.55rem; }
+.designer-property-controls { margin-top: 0.75rem; }
+.designer-property-control + .designer-property-control {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgb(244 244 245);
+}
+.designer-property-control > label,
+label.designer-property-control > span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: rgb(82 82 91);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.designer-property-control > label small {
+  flex: 0 0 auto;
+  color: rgb(161 161 170);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.55rem;
+  font-weight: 400;
+}
+.designer-property-control > input,
+.designer-property-control > select {
+  display: block;
+  width: 100%;
+  min-height: 2rem;
+  margin-top: 0.3rem;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.45rem;
+  background: white;
+  padding-inline: 0.5rem;
+  color: rgb(39 39 42);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.68rem;
+  outline: none;
+}
+.designer-property-control > input:focus,
+.designer-property-control > select:focus {
+  border-color: rgb(59 130 246);
+  box-shadow: 0 0 0 2px rgb(59 130 246 / 0.12);
+}
+.designer-property-help { margin-top: 0.3rem; color: rgb(113 113 122); font-size: 0.58rem; }
+.designer-property-help summary {
+  display: inline-flex;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 0.25rem;
+  color: rgb(113 113 122);
+  font-weight: 600;
+}
+.designer-property-help summary::-webkit-details-marker { display: none; }
+.designer-property-help summary:hover { color: rgb(37 99 235); }
+.designer-property-help p {
+  margin-top: 0.35rem;
+  border-left: 2px solid rgb(191 219 254);
+  padding-left: 0.5rem;
+  color: rgb(82 82 91);
+  font-size: 0.58rem;
+  line-height: 0.95rem;
+}
 
 .designer-content-input {
   width: 100%;
@@ -1226,6 +1435,10 @@ onBeforeUnmount(() => {
   outline: 2px solid rgb(59 130 246);
   outline-offset: 2px;
 }
+.designer-doc-link:focus-visible, .designer-property-help summary:focus-visible {
+  outline: 2px solid rgb(59 130 246);
+  outline-offset: 2px;
+}
 
 @media (min-width: 1024px) {
   .designer-inspector,
@@ -1263,7 +1476,13 @@ onBeforeUnmount(() => {
   .designer-layer-row.selected .designer-layer-icon { background: rgb(59 130 246 / 0.15); color: rgb(147 197 253); }
   .designer-layer-row small, .designer-layer-index { color: rgb(161 161 170); }
   .designer-property-section { border-color: rgb(255 255 255 / 0.1); }
-  .designer-property-label input, .designer-content-input { border-color: rgb(255 255 255 / 0.1); background: rgb(24 24 27); color: rgb(244 244 245); }
+  .designer-property-label > span { color: rgb(161 161 170); }
+  .designer-property-label input, .designer-content-input, .designer-property-control > input, .designer-property-control > select { border-color: rgb(255 255 255 / 0.1); background: rgb(24 24 27); color: rgb(244 244 245); }
+  .designer-command-header h4, .designer-property-control > label, label.designer-property-control > span, .designer-property-help p { color: rgb(212 212 216); }
+  .designer-property-control + .designer-property-control { border-color: rgb(255 255 255 / 0.06); }
+  .designer-doc-link { border-color: rgb(255 255 255 / 0.1); color: rgb(161 161 170); }
+  .designer-doc-link:hover { background: rgb(255 255 255 / 0.08); color: white; }
+  .designer-property-help p { border-color: rgb(59 130 246 / 0.45); }
   .designer-secondary-action { border-color: rgb(255 255 255 / 0.1); color: rgb(212 212 216); }
   .designer-secondary-action:hover:not(:disabled) { background: rgb(255 255 255 / 0.08); color: white; }
   .designer-danger-action { border-color: rgb(244 63 94 / 0.25); color: rgb(253 164 175); }

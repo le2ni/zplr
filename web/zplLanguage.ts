@@ -276,7 +276,7 @@ function signatureDiscriminator(command: string, signature: ZplCommandSignature)
   return signature.syntax.slice(command.length, firstParameterStart);
 }
 
-function signatureForCommand(command: ZplCommandNode): ZplCommandSignature | undefined {
+export function getZplCommandSignature(command: ZplCommandNode): ZplCommandSignature | undefined {
   const definition = getZplCommandDefinition(command.canonical);
   if (!definition) return undefined;
   if (definition.signatures.length === 1) return definition.signatures[0];
@@ -285,6 +285,8 @@ function signatureForCommand(command: ZplCommandNode): ZplCommandSignature | und
     normalizedParameters.startsWith(signatureDiscriminator(command.canonical, signature))
   ) ?? definition.signatures[0];
 }
+
+const signatureForCommand = getZplCommandSignature;
 
 function commandDisplayLabel(command: string, signature: ZplCommandSignature): string {
   const firstParameterStart = signature.parameters
@@ -368,6 +370,71 @@ function componentBounds(
     }
   }
   return { start: bounds.start + start, end: bounds.start + Math.max(start, end) };
+}
+
+/** Read one formal parameter, including adjacent components such as ^A font + orientation. */
+export function getZplParameterValue(
+  command: ZplCommandNode,
+  signature: ZplCommandSignature,
+  parameter: ZplParameterDefinition,
+): string {
+  const rawParameters = editableRawParameters(command);
+  const bounds = componentBounds(command, signature, parameter);
+  return rawParameters.slice(bounds.start, bounds.end);
+}
+
+function commandWithRawParameters(command: ZplCommandNode, rawParameters: string): ZplCommandNode {
+  return {
+    ...command,
+    rawParameters,
+    parameters: rawParameters.length === 0 ? [] : rawParameters.split(command.delimiter),
+  };
+}
+
+/**
+ * Replace one documented parameter while preserving the command's active
+ * prefix, delimiter, surrounding parameters, and trailing source whitespace.
+ */
+export function replaceZplCommandParameter(
+  command: ZplCommandNode,
+  signature: ZplCommandSignature,
+  parameter: ZplParameterDefinition,
+  value: string,
+): string {
+  const slotParameters = parametersInSlot(signature, parameter.slot);
+  const targetIndex = slotParameters.findIndex((candidate) => candidate === parameter);
+  if (targetIndex < 0) return `${command.prefix}${command.code}${command.rawParameters}`;
+
+  const editable = editableRawParameters(command);
+  const trailingWhitespace = command.rawParameters.slice(editable.length);
+  const slots = editable.length === 0 ? [""] : editable.split(command.delimiter);
+  while (slots.length <= parameter.slot) slots.push("");
+  let rawParameters = slots.join(command.delimiter);
+
+  // Adjacent components cannot skip a preceding selector. For example,
+  // setting ^A orientation requires a font selector before it. Use the same
+  // first documented choice that IntelliSense offers when that component is
+  // currently omitted.
+  for (let index = 0; index < targetIndex; index++) {
+    const preceding = slotParameters[index]!;
+    const currentCommand = commandWithRawParameters(command, rawParameters);
+    const bounds = componentBounds(currentCommand, signature, preceding);
+    if (rawParameters.slice(bounds.start, bounds.end).length > 0) continue;
+    const fallback = preceding.choices[0] ?? "";
+    if (!fallback) continue;
+    rawParameters = `${rawParameters.slice(0, bounds.start)}${fallback}${rawParameters.slice(bounds.end)}`;
+  }
+
+  const currentCommand = commandWithRawParameters(command, rawParameters);
+  const bounds = componentBounds(currentCommand, signature, parameter);
+  // Removing an earlier adjacent component must also remove the components
+  // after it; otherwise ^A0N with an omitted font would become ^AN and shift
+  // the orientation selector into the font position.
+  if (value.length === 0 && targetIndex < slotParameters.length - 1) {
+    bounds.end = slotBounds(rawParameters, command.delimiter, parameter.slot).end;
+  }
+  rawParameters = `${rawParameters.slice(0, bounds.start)}${value}${rawParameters.slice(bounds.end)}`;
+  return `${command.prefix}${command.code}${rawParameters}${trailingWhitespace}`;
 }
 
 export interface ZplParameterContext {

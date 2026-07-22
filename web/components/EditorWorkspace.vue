@@ -453,7 +453,7 @@
       :label-count="labels.length"
       :print-density="printDensity"
       @edit="applyVisualEdit"
-      @select-source="focusSpan"
+      @select-source="revealVisualSpan"
       @update:active-label-index="activeLabelIndex = $event"
     />
 
@@ -1165,6 +1165,15 @@ function focusSpan(span?: SourceSpan): void {
   editorView.value = "source";
   editorCursor.value = span.start;
   highlightRange.value = { ...span };
+  showMobilePane("code");
+  void nextTick(() => editorComponent.value?.revealSpan(span));
+}
+
+function revealVisualSpan(span?: SourceSpan): void {
+  if (!span) return;
+  editorView.value = "source";
+  editorCursor.value = span.start;
+  highlightRange.value = undefined;
   showMobilePane("code");
   void nextTick(() => editorComponent.value?.revealSpan(span));
 }

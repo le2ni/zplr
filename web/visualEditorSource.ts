@@ -42,6 +42,7 @@ export interface VisualField {
   region: HighlightRegion;
   bounds: VisualBounds;
   sourceSpan: SourceSpan;
+  commands: readonly ZplCommandNode[];
   origin?: VisualFieldOrigin;
   content?: VisualFieldContent;
   movable: boolean;
@@ -152,6 +153,7 @@ export function collectVisualFields(source: string, regions: readonly HighlightR
       region,
       bounds: visualBounds(region),
       sourceSpan: { ...region.sourceSpan },
+      commands,
       origin: editableOrigin,
       content: fieldContent(commands, kind),
       movable: editableOrigin !== undefined,

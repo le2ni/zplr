@@ -109,6 +109,23 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   await page.getByRole("button", { name: "Add box", exact: true }).click();
   const box = page.getByRole("button", { name: "Box at 360, 580", exact: true });
   await expect(box).toBeVisible();
+  const boxWidth = page.getByRole("spinbutton", { name: "Box width (in dots)", exact: true });
+  const boxHeight = page.getByRole("spinbutton", { name: "Box height (in dots)", exact: true });
+  await expect(boxWidth).toHaveValue("200");
+  await expect(boxHeight).toHaveValue("100");
+  await expect(page.getByText("The ^GB command is used to draw boxes and lines as part of a label format.", { exact: true })).toBeVisible();
+  const graphicBoxProperties = page.locator(".designer-command-properties").filter({ hasText: "Graphic Box" });
+  await expect(graphicBoxProperties.getByRole("link", { name: "Open official documentation for Graphic Box", exact: true }))
+    .toHaveAttribute("href", /docs\.zebra\.com/);
+  const widthInfo = graphicBoxProperties.locator(".designer-property-help").first();
+  await widthInfo.locator("summary").click();
+  await expect(widthInfo).toContainText("Values: value of t to 32000");
+  await boxWidth.fill("240");
+  await boxWidth.press("Tab");
+  await expect(boxWidth).toHaveValue("240");
+  await boxHeight.fill("120");
+  await boxHeight.press("Tab");
+  await expect(boxHeight).toHaveValue("120");
   const bounds = await box.boundingBox();
   expect(bounds).not.toBeNull();
   await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
@@ -144,13 +161,18 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   const barcode = canvas.locator('[data-visual-kind="barcode"]');
   await expect(barcode).toHaveCount(1);
   await barcode.click();
+  const barcodeType = page.getByRole("combobox", { name: "Barcode type", exact: true });
+  await expect(barcodeType).toHaveValue("^BC");
+  await barcodeType.selectOption("^B3");
+  await expect(barcodeType).toHaveValue("^B3");
+  await expect(page.getByText("The Code 39 barcode is the standard for many industries, including the US Department of Defense.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Reveal field in ZPL", exact: true }).click();
 
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await expect(editorSurface).toContainText("Visual label");
   await expect(editorSurface).toContainText("^GB");
-  await expect(editorSurface).toContainText("^BC");
-  await expect(page.locator(".monaco-editor .highlighted-command-inline")).not.toHaveCount(0);
+  await expect(editorSurface).toContainText("^B3");
+  await expect(page.locator(".monaco-editor .highlighted-command-inline")).toHaveCount(0);
   await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
 });
 
@@ -277,6 +299,15 @@ test("has no serious automated accessibility violations", async ({ page }) => {
 
   await page.getByRole("button", { name: "Designer", exact: true }).click();
   await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
+  results = await new AxeBuilder({ page })
+    .exclude(".monaco-editor")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.getByTestId("visual-layers").getByRole("button").first().click();
+  await page.getByRole("tab", { name: "Properties", exact: true }).click();
+  await expect(page.getByRole("tabpanel", { name: "Properties", exact: true })).toBeVisible();
   results = await new AxeBuilder({ page })
     .exclude(".monaco-editor")
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
