@@ -1229,7 +1229,13 @@ function handleKeyboardShortcut(event: KeyboardEvent): void {
     return;
   }
   if (!modifier) return;
-  if (event.key.toLowerCase() === "s") {
+  const fromSourceEditor = event.target instanceof Element
+    && event.target.closest('[data-testid="zpl-editor"]') !== null;
+  if (event.key.toLowerCase() === "a" && fromSourceEditor) {
+    event.preventDefault();
+    event.stopPropagation();
+    editorComponent.value?.selectAll();
+  } else if (event.key.toLowerCase() === "s") {
     event.preventDefault();
     if (event.shiftKey) downloadWorkspace();
     else downloadZpl();

@@ -104,6 +104,25 @@ test("offers quick fixes and configurable live preview", async ({ page }) => {
   await expect(page.getByText("360 × 180 dots · 203 dpi", { exact: true })).toBeVisible();
 });
 
+test("keeps source text selectable and selects everything with the platform shortcut", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "New", exact: true }).click();
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  const selectionStyles = await editorSurface.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return [style.userSelect, style.webkitUserSelect];
+  });
+  expect(selectionStyles).toContain("text");
+
+  await editorSurface.click({ position: { x: 100, y: 12 } });
+  await page.keyboard.press("Meta+A");
+  await page.keyboard.type("^XA^XZ");
+  await expect(editorSurface).toContainText("^XA");
+  await expect(editorSurface).not.toContainText("New label");
+});
+
 test("offers command-aware completion, snippets, and formatting", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });

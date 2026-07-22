@@ -184,6 +184,13 @@ function applyCursor(position: number | undefined): void {
   editor.revealPositionInCenterIfOutsideViewport(resolved);
 }
 
+function applyExternalCursor(position: number | undefined): void {
+  if (!editor || !model || position === undefined) return;
+  const currentPosition = editor.getPosition();
+  if (currentPosition && model.getOffsetAt(currentPosition) === position) return;
+  applyCursor(position);
+}
+
 function applyHighlight(range: { start: number; end: number } | undefined): void {
   if (!editor || !monaco || !model) return;
   decorationIds = editor.deltaDecorations(decorationIds, []);
@@ -243,6 +250,13 @@ function insertSnippet(snippet: string): void {
     return;
   }
   editor.trigger("zplr", "editor.action.insertSnippet", { snippet });
+}
+
+function selectAllSource(): void {
+  const activeModel = editor?.getModel();
+  if (!editor || !activeModel) return;
+  editor.focus();
+  editor.setSelection(activeModel.getFullModelRange());
 }
 
 function emitCursorState(): void {
@@ -357,6 +371,7 @@ onMounted(async () => {
   editor = monaco.editor.create(editorContainer.value, {
     model,
     theme: resolvedTheme(),
+    extraEditorClassName: "zpl-user-select",
     automaticLayout: true,
     ariaLabel: "ZPL source editor",
     fontSize: props.preferences.fontSize,
@@ -396,12 +411,16 @@ onMounted(async () => {
     fixedOverflowWidgets: true,
     tabSize: 2,
   });
-
   editor.addAction({
     id: "zplr.format-document",
     label: "Format ZPL Document",
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF],
     run: () => editor?.getAction("editor.action.formatDocument")?.run(),
+  });
+  editor.addAction({
+    id: "zplr.select-all-source",
+    label: "ZPL: Select All Source",
+    run: selectAllSource,
   });
   editor.addAction({
     id: "zplr.insert-label",
@@ -439,7 +458,7 @@ onMounted(async () => {
   emit("ready");
 });
 
-watch(() => props.cursorPosition, applyCursor);
+watch(() => props.cursorPosition, applyExternalCursor);
 watch(() => props.highlightRange, applyHighlight, { immediate: true });
 watch(() => props.diagnostics, applyDiagnostics, { deep: true });
 watch(() => props.documentId, switchDocument);
@@ -504,6 +523,7 @@ defineExpose({
   },
   undo: () => editor?.trigger("toolbar", "undo", null),
   redo: () => editor?.trigger("toolbar", "redo", null),
+  selectAll: selectAllSource,
   insertCommand: (command: string) => {
     const position = editor?.getPosition();
     const offset = position && model ? model.getOffsetAt(position) : 0;
@@ -513,6 +533,13 @@ defineExpose({
 </script>
 
 <style>
+.monaco-editor.zpl-user-select .lines-content,
+.monaco-editor.zpl-user-select .view-lines,
+.monaco-editor.zpl-user-select .view-line {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .monaco-editor .highlighted-command {
   background-color: rgb(24 24 27 / 0.1);
   border-left: 2px solid rgb(24 24 27 / 0.65);
