@@ -42,6 +42,12 @@ export interface EditorWorkspaceModel {
   source: string;
 }
 
+export interface EditorSourceEdit {
+  start: number;
+  end: number;
+  text: string;
+}
+
 self.MonacoEnvironment = {
   getWorker: () => new EditorWorker(),
 };
@@ -257,6 +263,27 @@ function selectAllSource(): void {
   if (!editor || !activeModel) return;
   editor.focus();
   editor.setSelection(activeModel.getFullModelRange());
+}
+
+function applySourceEdit(change: EditorSourceEdit): boolean {
+  if (!editor || !model) return false;
+  const startOffset = Math.max(0, Math.min(model.getValueLength(), Math.trunc(change.start)));
+  const endOffset = Math.max(startOffset, Math.min(model.getValueLength(), Math.trunc(change.end)));
+  const start = model.getPositionAt(startOffset);
+  const end = model.getPositionAt(endOffset);
+  editor.pushUndoStop();
+  const applied = editor.executeEdits("zplr.visual-editor", [{
+    range: {
+      startLineNumber: start.lineNumber,
+      startColumn: start.column,
+      endLineNumber: end.lineNumber,
+      endColumn: end.column,
+    },
+    text: change.text,
+    forceMoveMarkers: true,
+  }]);
+  editor.pushUndoStop();
+  return applied;
 }
 
 function emitCursorState(): void {
@@ -523,6 +550,7 @@ defineExpose({
   },
   undo: () => editor?.trigger("toolbar", "undo", null),
   redo: () => editor?.trigger("toolbar", "redo", null),
+  applySourceEdit,
   selectAll: selectAllSource,
   insertCommand: (command: string) => {
     const position = editor?.getPosition();

@@ -73,6 +73,50 @@ test("keeps multiple files, dirty state, and editor models independent", async (
   await expect(editorSurface).toContainText("Second file");
 });
 
+test("offers an optional WYSIWYG designer with visual source edits", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "Designer", exact: true }).click();
+
+  const canvas = page.getByTestId("visual-label-canvas");
+  await expect(canvas).toBeVisible();
+  const textField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
+  await expect(textField).toBeVisible();
+  await textField.click();
+  await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toHaveValue("40");
+
+  const content = page.getByRole("textbox", { name: "Field content", exact: true });
+  await content.fill("Visual label");
+  await page.getByRole("button", { name: "Toggle grid", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Field content", exact: true })).toHaveValue("Visual label");
+
+  await page.getByRole("button", { name: "Text at 40, 40", exact: true }).press("ArrowRight");
+  await expect(page.getByRole("button", { name: "Text at 41, 40", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add box", exact: true }).click();
+  const box = page.getByRole("button", { name: "Box at 360, 580", exact: true });
+  await expect(box).toBeVisible();
+  const bounds = await box.boundingBox();
+  expect(bounds).not.toBeNull();
+  await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bounds!.x + bounds!.width / 2 + 20, bounds!.y + bounds!.height / 2 + 10, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).not.toHaveValue("360");
+
+  await page.getByRole("button", { name: "Add barcode", exact: true }).dragTo(canvas, {
+    targetPosition: { x: 120, y: 180 },
+  });
+  await expect(canvas.locator('[data-visual-kind="barcode"]')).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await expect(editorSurface).toContainText("Visual label");
+  await expect(editorSurface).toContainText("^GB");
+  await expect(editorSurface).toContainText("^BC");
+});
+
 test("offers quick fixes and configurable live preview", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
@@ -193,6 +237,14 @@ test("has no serious automated accessibility violations", async ({ page }) => {
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
     .analyze();
   expect(results.violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
+  results = await new AxeBuilder({ page })
+    .exclude(".monaco-editor")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
 });
 
 test("remains usable at a narrow mobile viewport", async ({ page }) => {
@@ -208,5 +260,10 @@ test("remains usable at a narrow mobile viewport", async ({ page }) => {
 
   await page.getByRole("button", { name: /Preview/ }).click();
   await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+
+  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add text", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });

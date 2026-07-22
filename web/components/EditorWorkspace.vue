@@ -24,6 +24,15 @@
         </p>
       </div>
 
+      <div class="editor-view-switch ml-4 hidden md:inline-flex" aria-label="Editor view">
+        <button :class="{ active: editorView === 'source' }" type="button" :aria-pressed="editorView === 'source'" @click="showEditorView('source')">
+          <IconApplicationBraces class="size-3.5" aria-hidden="true" /> Source
+        </button>
+        <button :class="{ active: editorView === 'visual' }" type="button" :aria-pressed="editorView === 'visual'" @click="showEditorView('visual')">
+          <IconVectorSquareEdit class="size-3.5" aria-hidden="true" /> Designer
+        </button>
+      </div>
+
       <div class="ml-auto flex items-center gap-0.5 sm:gap-1">
         <button class="toolbar-button hidden md:inline-flex" type="button" title="New label" @click="newDocument">
           <IconFileOutline class="size-4" aria-hidden="true" />
@@ -74,16 +83,19 @@
     </header>
 
     <nav class="flex h-10 shrink-0 items-center border-b border-zinc-200 bg-zinc-50 px-2 md:hidden dark:border-white/10 dark:bg-zinc-900" aria-label="Editor panes">
-      <button class="mobile-pane-tab" :class="{ active: mobilePane === 'code' }" type="button" @click="showMobilePane('code')">
+      <button class="mobile-pane-tab" :class="{ active: editorView === 'source' && mobilePane === 'code' }" type="button" @click="showEditorSource">
         <IconCodeTags class="size-4" aria-hidden="true" /> Source
       </button>
-      <button class="mobile-pane-tab" :class="{ active: mobilePane === 'preview' }" type="button" @click="showMobilePane('preview')">
+      <button class="mobile-pane-tab" :class="{ active: editorView === 'visual' }" type="button" @click="showEditorView('visual')">
+        <IconVectorSquareEdit class="size-4" aria-hidden="true" /> Designer
+      </button>
+      <button class="mobile-pane-tab" :class="{ active: editorView === 'source' && mobilePane === 'preview' }" type="button" @click="showEditorPreview">
         <IconImageOutline class="size-4" aria-hidden="true" /> Preview
         <span v-if="errorCount" class="rounded-full bg-rose-100 px-1.5 text-[10px] text-rose-700 dark:bg-rose-400/15 dark:text-rose-300">{{ errorCount }}</span>
       </button>
     </nav>
 
-    <div ref="workbench" class="flex min-h-0 flex-1 overflow-hidden">
+    <div v-show="editorView === 'source'" ref="workbench" class="flex min-h-0 flex-1 overflow-hidden">
       <aside class="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/70 lg:flex dark:border-white/10 dark:bg-zinc-900/50" aria-label="Workspace sidebar">
         <div class="grid h-10 shrink-0 grid-cols-2 border-b border-zinc-200 px-2 dark:border-white/10">
           <button class="sidebar-tab" :class="{ active: sidebarMode === 'files' }" type="button" @click="sidebarMode = 'files'">Files</button>
@@ -429,6 +441,22 @@
       </aside>
     </div>
 
+    <VisualEditor
+      v-if="editorView === 'visual'"
+      :source="source"
+      :filename="filename"
+      :label="activeLabel"
+      :preview-url="previewUrl"
+      :rendering="rendering"
+      :render-failure="renderFailure"
+      :active-label-index="activeLabelIndex"
+      :label-count="labels.length"
+      :print-density="printDensity"
+      @edit="applyVisualEdit"
+      @select-source="focusSpan"
+      @update:active-label-index="activeLabelIndex = $event"
+    />
+
     <div v-if="settingsOpen" class="fixed inset-0 z-40 flex justify-end bg-zinc-950/15 backdrop-blur-[1px]" @mousedown.self="settingsOpen = false">
       <section class="m-3 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/20 dark:border-white/10 dark:bg-zinc-950" role="dialog" aria-modal="true" aria-labelledby="editor-settings-title">
         <header class="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4 dark:border-white/10">
@@ -481,6 +509,7 @@
               <dt>Format document</dt><dd><kbd>⌘ ⇧ F</kbd></dd>
               <dt>Render label</dt><dd><kbd>⌘ Enter</kbd></dd>
               <dt>Quick fix</dt><dd><kbd>⌥ Enter</kbd></dd>
+              <dt>Move designer field</dt><dd><kbd>← ↑ ↓ →</kbd> · <kbd>⇧</kbd> 10 dots</dd>
             </dl>
           </div>
         </div>
@@ -515,6 +544,7 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import {
   IconAlertCircleOutline,
+  IconApplicationBraces,
   IconBookOpenVariant,
   IconCheckCircleOutline,
   IconClose,
@@ -542,6 +572,7 @@ import {
   IconRedoVariant,
   IconTuneVariant,
   IconUndoVariant,
+  IconVectorSquareEdit,
 } from "@iconify-prerendered/vue-mdi";
 import { zipSync } from "fflate";
 import shippingSample from "../../fixtures/zplr.zpl?raw";
@@ -562,6 +593,7 @@ import {
 } from "../../src/index.web";
 import type MonacoEditorComponent from "./MonacoEditor.vue";
 import type { EditorCursorState, EditorPreferences } from "./MonacoEditor.vue";
+import type { SourceEdit } from "../visualEditorSource";
 import {
   getZplCommandDefinition,
   validateZplParameters,
@@ -569,8 +601,10 @@ import {
 } from "../zplLanguage";
 
 const MonacoEditor = defineAsyncComponent(() => import("./MonacoEditor.vue"));
+const VisualEditor = defineAsyncComponent(() => import("./VisualEditor.vue"));
 type MonacoEditorApi = InstanceType<typeof MonacoEditorComponent>;
 type SampleId = (typeof samples)[number]["id"];
+type EditorView = "source" | "visual";
 
 const samples = [
   { id: "shipping", name: "Shipping label", filename: "shipping-label.zpl", source: shippingSample },
@@ -592,6 +626,7 @@ interface StoredWorkspace {
   version: 2;
   activeDocumentId: string;
   documents: WorkspaceDocument[];
+  view?: EditorView;
   preferences?: EditorPreferences;
   preview?: PreviewPreferences;
 }
@@ -627,6 +662,7 @@ const documents = ref<WorkspaceDocument[]>(initialWorkspace?.documents ?? [
   createWorkspaceDocument(shippingSample, "shipping-label.zpl", { sampleId: "shipping" }),
 ]);
 const activeDocumentId = ref(initialWorkspace?.activeDocumentId ?? documents.value[0]!.id);
+const editorView = ref<EditorView>(initialWorkspace?.view ?? "source");
 const activeDocument = computed<WorkspaceDocument>(() =>
   documents.value.find((document) => document.id === activeDocumentId.value) ?? documents.value[0]!
 );
@@ -839,6 +875,7 @@ function restoreWorkspace(): StoredWorkspace | undefined {
             version: 2,
             activeDocumentId,
             documents: restoredDocuments,
+            view: parsed.view === "visual" ? "visual" : "source",
             preferences: normalizeEditorPreferences(parsed.preferences),
             preview: normalizePreviewPreferences(parsed.preview),
           };
@@ -856,6 +893,7 @@ function restoreWorkspace(): StoredWorkspace | undefined {
       version: 2,
       activeDocumentId: document.id,
       documents: [document],
+      view: "source",
       preferences: { ...defaultEditorPreferences },
       preview: { ...defaultPreviewPreferences },
     };
@@ -872,6 +910,7 @@ function persistWorkspace(): void {
         version: 2,
         activeDocumentId: activeDocumentId.value,
         documents: documents.value,
+        view: editorView.value,
         preferences: editorPreferences.value,
         preview: {
           printDensity: printDensity.value,
@@ -1101,6 +1140,18 @@ function formatDocument(): void {
   void editorComponent.value?.formatDocument();
 }
 
+function applyVisualEdit(edit: SourceEdit): void {
+  const appliedByEditor = editorComponent.value?.applySourceEdit(edit) ?? false;
+  if (!appliedByEditor) {
+    const start = Math.max(0, Math.min(source.value.length, Math.trunc(edit.start)));
+    const end = Math.max(start, Math.min(source.value.length, Math.trunc(edit.end)));
+    source.value = `${source.value.slice(0, start)}${edit.text}${source.value.slice(end)}`;
+  }
+  // Designer operations always refresh immediately, even when manual preview
+  // rendering is selected, so the visual surface remains authoritative.
+  void nextTick(() => schedulePreview(0));
+}
+
 function resetEditorPreferences(): void {
   editorPreferences.value = { ...defaultEditorPreferences };
 }
@@ -1111,6 +1162,7 @@ function insertCommand(command: string): void {
 
 function focusSpan(span?: SourceSpan): void {
   if (!span) return;
+  editorView.value = "source";
   editorCursor.value = span.start;
   highlightRange.value = { ...span };
   showMobilePane("code");
@@ -1165,8 +1217,22 @@ function showMobilePane(pane: "code" | "preview"): void {
   window.requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
 }
 
+function showEditorView(view: EditorView): void {
+  editorView.value = view;
+}
+
+function showEditorSource(): void {
+  editorView.value = "source";
+  showMobilePane("code");
+}
+
+function showEditorPreview(): void {
+  editorView.value = "source";
+  showMobilePane("preview");
+}
+
 function applySplit(): void {
-  if (!workbench.value) return;
+  if (!workbench.value || editorView.value !== "source") return;
   const sidebarWidth = window.innerWidth >= 1024 ? 240 : 0;
   const splitterWidth = 6;
   const available = Math.max(0, workbench.value.clientWidth - sidebarWidth - splitterWidth);
@@ -1251,6 +1317,10 @@ function handleKeyboardShortcut(event: KeyboardEvent): void {
   } else if (event.key.toLowerCase() === "p") {
     event.preventDefault();
     editorComponent.value?.commandPalette();
+  } else if (event.key.toLowerCase() === "z" && editorView.value === "visual") {
+    event.preventDefault();
+    if (event.shiftKey) editorComponent.value?.redo();
+    else editorComponent.value?.undo();
   } else if (event.key === ",") {
     event.preventDefault();
     settingsOpen.value = true;
@@ -1272,6 +1342,17 @@ watch(source, () => {
 });
 watch(documents, persistWorkspace, { deep: true });
 watch(editorPreferences, persistWorkspace, { deep: true });
+watch(editorView, (view) => {
+  persistWorkspace();
+  if (view === "visual") {
+    renderNow();
+  } else {
+    void nextTick(() => {
+      applySplit();
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
+});
 watch(activeDocumentId, () => {
   highlightRange.value = undefined;
   activeLabelIndex.value = 0;
@@ -1316,6 +1397,32 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.editor-view-switch {
+  height: 2rem;
+  align-items: center;
+  gap: 0.15rem;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.55rem;
+  background: rgb(250 250 250);
+  padding: 0.15rem;
+}
+
+.editor-view-switch button {
+  display: inline-flex;
+  height: 1.55rem;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 0.38rem;
+  padding-inline: 0.55rem;
+  color: rgb(113 113 122);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+
+.editor-view-switch button:hover { color: rgb(24 24 27); }
+.editor-view-switch button.active { background: white; color: rgb(24 24 27); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
+.editor-view-switch button:focus-visible { outline: 2px solid rgb(113 113 122); outline-offset: 1px; }
+
 .toolbar-button {
   align-items: center;
   justify-content: center;
@@ -1705,6 +1812,9 @@ kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radiu
 }
 
 @media (prefers-color-scheme: dark) {
+  .editor-view-switch { border-color: rgb(255 255 255 / 0.1); background: rgb(255 255 255 / 0.04); }
+  .editor-view-switch button:hover { color: white; }
+  .editor-view-switch button.active { background: rgb(255 255 255 / 0.1); color: white; box-shadow: none; }
   .toolbar-button { color: rgb(161 161 170); }
   .toolbar-button:hover:not(:disabled), .icon-button-small:hover { background: rgb(255 255 255 / 0.06); color: white; }
   .mobile-pane-tab.active { background: rgb(39 39 42); color: white; }
