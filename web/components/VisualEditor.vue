@@ -1,5 +1,9 @@
 <template>
-  <section class="designer-root relative flex min-h-0 flex-1 overflow-hidden bg-zinc-100 dark:bg-zinc-900" aria-label="Visual label designer">
+  <section
+    class="designer-root relative flex min-h-0 flex-1 overflow-hidden bg-zinc-100 dark:bg-zinc-900"
+    :class="{ embedded }"
+    aria-label="WYSIWYG label editor"
+  >
     <aside class="designer-toolbox hidden w-52 shrink-0 flex-col border-r border-zinc-200 bg-white lg:flex dark:border-white/10 dark:bg-zinc-950" aria-label="Add label elements">
       <div class="border-b border-zinc-200 px-3 py-3 dark:border-white/10">
         <h2 class="text-[11px] font-bold tracking-wide text-zinc-500 uppercase">Elements</h2>
@@ -36,13 +40,14 @@
         <div class="min-w-0">
           <h2 class="flex items-center gap-1.5 truncate text-xs font-semibold text-zinc-900 dark:text-white">
             <IconVectorSquareEdit class="size-4 text-zinc-500" aria-hidden="true" />
-            Designer
+            WYSIWYG
+            <span v-if="stale" class="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">Out of date</span>
           </h2>
-          <p v-if="label" class="truncate text-[10px] text-zinc-500">{{ filename }} · {{ label.width }} × {{ label.height }} dots</p>
+          <p v-if="label" class="truncate text-[10px] text-zinc-500">{{ filename }} · {{ label.width }} × {{ label.height }} dots · {{ dpi }} dpi</p>
           <p v-else class="truncate text-[10px] text-zinc-500">{{ filename }}</p>
         </div>
 
-        <div v-if="labelCount > 1" class="ml-2 hidden items-center gap-1 overflow-x-auto sm:flex" aria-label="Designer labels">
+        <div v-if="labelCount > 1" class="ml-2 hidden items-center gap-1 overflow-x-auto sm:flex" aria-label="WYSIWYG labels">
           <button
             v-for="index in labelCount"
             :key="index"
@@ -54,9 +59,18 @@
         </div>
 
         <div class="ml-auto flex items-center gap-1">
+          <button v-if="stale" class="designer-icon-button" type="button" title="Render updated source" @click="emit('render')">
+            <IconRefresh class="size-4" aria-hidden="true" /><span class="sr-only">Render updated source</span>
+          </button>
+          <button v-if="labelCount > 1" class="designer-icon-button" type="button" title="Download all labels as ZIP" @click="emit('downloadAllPngs')">
+            <IconDownloadMultipleOutline class="size-4" aria-hidden="true" /><span class="sr-only">Download all labels as ZIP</span>
+          </button>
+          <button class="designer-icon-button" type="button" :disabled="!label" title="Download PNG" @click="emit('downloadPng')">
+            <IconDownloadOutline class="size-4" aria-hidden="true" /><span class="sr-only">Download PNG</span>
+          </button>
           <label class="hidden items-center gap-1.5 text-[10px] text-zinc-500 sm:flex">
             Snap
-            <select v-model.number="snapSize" class="designer-select" aria-label="Designer grid snap">
+            <select v-model.number="snapSize" class="designer-select" aria-label="WYSIWYG grid snap">
               <option :value="1">Off</option>
               <option :value="5">5 dots</option>
               <option :value="10">10 dots</option>
@@ -80,14 +94,18 @@
         </div>
       </header>
 
-      <div class="flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-zinc-200 bg-white px-2 lg:hidden dark:border-white/10 dark:bg-zinc-950" aria-label="Add label elements">
+      <div class="designer-compact-tools flex h-12 shrink-0 items-center gap-2 overflow-x-auto border-b border-zinc-200 bg-white px-2 dark:border-white/10 dark:bg-zinc-950" aria-label="Add label elements">
         <button
           v-for="tool in tools"
           :key="tool.kind"
           class="designer-tool-compact"
           type="button"
+          draggable="true"
           :aria-label="`Add ${tool.name.toLowerCase()}`"
+          :title="`Drag ${tool.name.toLowerCase()} onto the label`"
           @click="addToolAtCenter(tool.kind)"
+          @dragstart="startToolDrag($event, tool.kind)"
+          @dragend="toolDragActive = false"
         >
           <component :is="tool.icon" class="size-4" aria-hidden="true" />
           {{ tool.name }}
@@ -142,12 +160,12 @@
           </div>
           <div v-else class="max-w-sm text-center text-xs leading-5 text-zinc-500">
             <IconVectorSquareEdit class="mx-auto mb-3 size-8 text-zinc-300 dark:text-zinc-700" aria-hidden="true" />
-            Add a complete <code>^XA</code>…<code>^XZ</code> label to use the visual designer.
+            Add a complete <code>^XA</code>…<code>^XZ</code> label to use the WYSIWYG editor.
           </div>
         </div>
 
         <div v-if="rendering" class="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-zinc-100/50 backdrop-blur-[1px] dark:bg-zinc-900/50" role="status" aria-live="polite">
-          <span class="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 shadow-sm dark:border-white/10 dark:bg-zinc-950">Updating designer…</span>
+          <span class="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 shadow-sm dark:border-white/10 dark:bg-zinc-950">Updating WYSIWYG…</span>
         </div>
 
         <div v-if="toolDragActive" class="pointer-events-none absolute inset-3 z-20 rounded-xl border-2 border-dashed border-blue-400 bg-blue-50/40 dark:bg-blue-400/5" aria-hidden="true">
@@ -164,9 +182,9 @@
       </footer>
     </div>
 
-    <aside class="designer-inspector w-72 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-950" :class="{ 'is-open': mobileSidebarOpen }" aria-label="Designer panels">
+    <aside class="designer-inspector w-72 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-950" :class="{ 'is-open': mobileSidebarOpen }" aria-label="WYSIWYG panels">
       <div class="designer-sidebar-tabs">
-        <div class="flex items-center gap-0.5" role="tablist" aria-label="Designer side panels">
+        <div class="flex items-center gap-0.5" role="tablist" aria-label="WYSIWYG side panels">
           <button class="designer-sidebar-tab" :class="{ active: sidebarTab === 'layers' }" type="button" role="tab" :aria-selected="sidebarTab === 'layers'" @click="sidebarTab = 'layers'">
             <IconLayersOutline class="size-4" aria-hidden="true" /> Layers
           </button>
@@ -174,8 +192,8 @@
             <IconTuneVariant class="size-4" aria-hidden="true" /> Properties
           </button>
         </div>
-        <button class="designer-icon-button ml-auto lg:hidden" type="button" title="Close designer panel" @click="mobileSidebarOpen = false">
-          <IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close designer panel</span>
+        <button class="designer-panel-close designer-icon-button ml-auto" type="button" title="Close WYSIWYG panel" @click="mobileSidebarOpen = false">
+          <IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close WYSIWYG panel</span>
         </button>
       </div>
 
@@ -262,7 +280,7 @@
               class="designer-content-input"
               rows="4"
               spellcheck="false"
-              @blur="commitContent"
+              @input="commitContent"
               @keydown.stop
             ></textarea>
             <p v-if="selectedField.content.prefix" class="mt-1 font-mono text-[9px] text-zinc-500">ZPL prefix {{ selectedField.content.prefix }} is preserved.</p>
@@ -383,7 +401,7 @@
       <section class="designer-shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="designer-shortcuts-title">
         <header class="flex h-12 items-center border-b border-zinc-200 px-4 dark:border-white/10">
           <IconKeyboardOutline class="mr-2 size-4 text-zinc-500" aria-hidden="true" />
-          <h2 id="designer-shortcuts-title" class="text-sm font-semibold">Designer shortcuts</h2>
+          <h2 id="designer-shortcuts-title" class="text-sm font-semibold">WYSIWYG shortcuts</h2>
           <button ref="shortcutCloseButton" class="designer-icon-button ml-auto" type="button" title="Close shortcuts" @click="closeShortcuts">
             <IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close shortcuts</span>
           </button>
@@ -412,6 +430,8 @@ import {
   IconContentCopy,
   IconCursorMove,
   IconDeleteOutline,
+  IconDownloadMultipleOutline,
+  IconDownloadOutline,
   IconDrag,
   IconFormatText,
   IconGrid,
@@ -423,6 +443,7 @@ import {
   IconMagnifyPlusOutline,
   IconOpenInNew,
   IconQrcode,
+  IconRefresh,
   IconSelection,
   IconSelectionDrag,
   IconShapeRectanglePlus,
@@ -464,11 +485,18 @@ const props = defineProps<{
   activeLabelIndex: number;
   labelCount: number;
   printDensity: PrintDensity;
+  selectedSourceOffset?: number;
+  stale?: boolean;
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
   edit: [edit: SourceEdit];
   selectSource: [span: SourceSpan];
+  syncSourceSelection: [span?: SourceSpan];
+  render: [];
+  downloadPng: [];
+  downloadAllPngs: [];
   "update:activeLabelIndex": [index: number];
 }>();
 
@@ -534,6 +562,7 @@ const canBringForward = computed(() => selectedField.value !== undefined && forw
   sourceEditForLayerSwap(props.source, selectedField.value, forwardLayer.value) !== undefined);
 const canSendBackward = computed(() => selectedField.value !== undefined && backwardLayer.value !== undefined &&
   sourceEditForLayerSwap(props.source, selectedField.value, backwardLayer.value) !== undefined);
+const dpi = computed(() => ({ 6: 150, 8: 203, 12: 300, 24: 600 })[props.printDensity]);
 
 const fitScale = computed(() => {
   if (!props.label || viewportWidth.value <= 0 || viewportHeight.value <= 0) return 1;
@@ -585,20 +614,39 @@ function selectField(field: VisualField, event?: Event): void {
   selectionKind.value = field.kind;
   sidebarTab.value = "properties";
   mobileSidebarOpen.value = true;
+  emit("syncSourceSelection", field.sourceSpan);
   focusInteractionTarget(event);
 }
 
 function selectLayer(field: VisualField, event?: Event): void {
   selectionAnchor.value = selectionOffset(field);
   selectionKind.value = field.kind;
+  emit("syncSourceSelection", field.sourceSpan);
   focusInteractionTarget(event);
 }
 
-function clearSelection(event?: Event): void {
+function clearSelection(event?: Event, syncSource = true): void {
   selectionAnchor.value = undefined;
   selectionKind.value = undefined;
   sidebarTab.value = "layers";
+  if (syncSource) emit("syncSourceSelection", undefined);
   if (event) void nextTick(() => surface.value?.focus({ preventScroll: true }));
+}
+
+function syncSelectionFromSource(): void {
+  const offset = props.selectedSourceOffset;
+  if (offset === undefined) return;
+  const field = fields.value
+    .filter(({ sourceSpan }) => offset >= sourceSpan.start && offset <= sourceSpan.end)
+    .sort((left, right) =>
+      (left.sourceSpan.end - left.sourceSpan.start) - (right.sourceSpan.end - right.sourceSpan.start)
+    )[0];
+  if (!field) {
+    clearSelection(undefined, false);
+    return;
+  }
+  selectionAnchor.value = selectionOffset(field);
+  selectionKind.value = field.kind;
 }
 
 function openSidebar(tab: "layers" | "properties"): void {
@@ -1019,6 +1067,7 @@ function updateViewportSize(): void {
 function restoreDesignerFocus(): void {
   if (!pendingDesignerFocus || props.rendering) return;
   void nextTick(() => {
+    if (selectedField.value) emit("syncSourceSelection", selectedField.value.sourceSpan);
     const target = pendingDesignerFocus === "selection"
       ? surface.value?.querySelector<HTMLElement>(".designer-field.selected")
       : surface.value;
@@ -1031,6 +1080,7 @@ function restoreDesignerFocus(): void {
 watch(() => [props.label?.width, props.label?.height], () => void nextTick(updateViewportSize));
 watch(() => props.activeLabelIndex, () => clearSelection());
 watch([selectedField, () => props.rendering], restoreDesignerFocus);
+watch([() => props.selectedSourceOffset, fields], syncSelectionFromSource, { immediate: true });
 
 onMounted(() => {
   updateViewportSize();
@@ -1096,6 +1146,8 @@ onBeforeUnmount(() => {
 }
 .designer-tool-compact:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
 
+.designer-root.embedded .designer-toolbox { display: none; }
+
 .designer-select {
   height: 1.75rem;
   border: 1px solid rgb(228 228 231);
@@ -1116,6 +1168,7 @@ onBeforeUnmount(() => {
 .designer-icon-button { width: 1.8rem; height: 1.8rem; }
 .designer-zoom-button { width: 1.75rem; height: 1.65rem; }
 .designer-icon-button:hover, .designer-icon-button.active, .designer-zoom-button:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
+.designer-icon-button:disabled { cursor: not-allowed; opacity: 0.35; }
 
 .designer-label-tab {
   border-radius: 0.35rem;
@@ -1440,7 +1493,24 @@ label.designer-property-control > span {
   outline-offset: 2px;
 }
 
+@media (min-width: 768px) {
+  .designer-root.embedded .designer-inspector {
+    position: static;
+    z-index: auto;
+    display: none;
+    width: min(16rem, 45%);
+    max-height: none;
+    overflow: visible;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .designer-root.embedded .designer-inspector.is-open { display: flex; }
+}
+
 @media (min-width: 1024px) {
+  .designer-compact-tools, .designer-panel-close { display: none; }
+
   .designer-inspector,
   .designer-inspector.is-open {
     position: static;
@@ -1452,6 +1522,9 @@ label.designer-property-control > span {
     border-radius: 0;
     box-shadow: none;
   }
+
+  .designer-root.embedded .designer-compact-tools { display: flex; }
+  .designer-root.embedded .designer-panel-close { display: inline-flex; }
 }
 
 @media (max-width: 640px) {

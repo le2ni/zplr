@@ -28,13 +28,12 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
   await expect(page.getByRole("heading", { name: "ZPL Editor" })).toBeVisible();
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByLabel("ZPL source editor")).toBeAttached();
-  await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
+  await expect(page.getByAltText("Editable rendered ZPL label")).toBeVisible();
   await expect(page.getByText("ZPL II", { exact: true })).toBeVisible();
-  await expect(page.getByText("223 commands · 630 parameters", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Problems: 0 errors, 0 warnings", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Retail UPC / EAN", exact: true }).click();
-  await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
-  await expect(page.getByText("No problems detected")).toBeVisible();
+  await expect(page.getByAltText("Editable rendered ZPL label")).toBeVisible();
 
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await expect(editorSurface).toBeVisible();
@@ -43,6 +42,7 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
   await page.keyboard.press("Meta+A");
   await page.keyboard.type("^XA^PW64^LL32^QZbad^XZ");
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /Problems: \d+ errors, \d+ warnings/ }).click();
   const diagnostic = page.getByRole("button", { name: /UNKNOWN_COMMAND/i });
   await expect(diagnostic).toBeVisible();
   await diagnostic.click();
@@ -53,9 +53,12 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
 test("keeps multiple files, dirty state, and editor models independent", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  for (const action of ["New", "Open", "Save", "Save all"]) {
+    await expect(page.getByRole("button", { name: action, exact: true })).toHaveCount(0);
+  }
 
   const tabs = page.getByLabel("Open editor tabs");
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.keyboard.press("Control+N");
   await expect(tabs.getByRole("button", { name: "untitled.zpl", exact: true })).toBeVisible();
   await expect(tabs.getByRole("button", { name: "shipping-label.zpl", exact: true })).toBeVisible();
 
@@ -67,22 +70,96 @@ test("keeps multiple files, dirty state, and editor models independent", async (
   await expect(tabs.getByRole("button", { name: "untitled.zpl Edited", exact: true })).toBeVisible();
 
   await tabs.getByRole("button", { name: "shipping-label.zpl", exact: true }).click();
-  await expect(page.getByText("workspace / shipping-label.zpl", { exact: true })).toBeVisible();
+  await expect(editorSurface).not.toContainText("Second file");
   await tabs.getByRole("button", { name: "untitled.zpl Edited", exact: true }).click();
-  await expect(page.getByText("workspace / untitled.zpl", { exact: true })).toBeVisible();
   await expect(editorSurface).toContainText("Second file");
 });
 
-test("offers an optional WYSIWYG designer with visual source edits", async ({ page }) => {
+test("keeps Files sections collapsible with Outline closed initially", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "New", exact: true }).click();
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
+
+  const openEditors = page.getByRole("button", { name: /^Open editors/ });
+  const examples = page.getByRole("button", { name: /^Examples/ });
+  const outline = page.getByRole("button", { name: /^Outline/ });
+  await expect(openEditors).toHaveAttribute("aria-expanded", "true");
+  await expect(examples).toHaveAttribute("aria-expanded", "true");
+  await expect(outline).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByRole("button", { name: /^1 \^XA Start Format$/ })).toBeHidden();
+
+  await outline.click();
+  await expect(outline).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("button", { name: /^1 \^XA Start Format$/ })).toBeVisible();
+  await openEditors.click();
+  await examples.click();
+  await expect(openEditors).toHaveAttribute("aria-expanded", "false");
+  await expect(examples).toHaveAttribute("aria-expanded", "false");
+});
+
+test("keeps code and WYSIWYG content and selection synchronized", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("Meta+A");
+  await page.keyboard.insertText("^XA\n^PW300\n^LL200\n^FO120,80^A0N,30,30^FDCode sync^FS\n^XZ");
+
+  const visualField = page.getByRole("button", { name: "Text at 120, 80", exact: true });
+  await expect(visualField).toBeVisible();
+  await editorSurface.locator(".view-line").nth(3).click({ position: { x: 20, y: 8 } });
+  await expect(page.getByText(/Ln 4, Col \d+/)).toBeVisible();
+  await expect(visualField).toHaveClass(/selected/);
+
+  await visualField.click();
+  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
+  const content = page.getByRole("textbox", { name: "Field content", exact: true });
+  await content.fill("Visual sync");
+  await expect(editorSurface).toContainText("Visual sync");
+  await expect(visualField).toHaveClass(/selected/);
+});
+
+test("hides inline parameter names while retaining parameter hover details", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("Meta+A");
+  await page.keyboard.insertText("^XA\n^PW300\n^LL200\n^FO120,80^GB100,50,4^FS\n^FO20,20^BQN,2,4^FDQA,https://example.com^FS\n^XZ");
+
+  const fieldLine = editorSurface.locator(".view-line").nth(3);
+  await expect(fieldLine).toContainText("^FO120,80");
+  await expect(fieldLine).not.toContainText(/\b(?:x|y|w|t):/);
+  await fieldLine.hover({ position: { x: 34, y: 8 } });
+  const hover = page.locator(".monaco-hover:visible");
+  await expect(hover).toBeVisible();
+  await expect(hover).toContainText("x-axis location (in dots)");
+  await expect(hover).toContainText("Values: 0 to 32000");
+
+  await page.keyboard.press("Escape");
+  const fieldDataLine = editorSurface.locator(".view-line").nth(4);
+  await fieldDataLine.hover({ position: { x: 235, y: 8 } });
+  await expect(hover).toContainText("Field Data");
+  await expect(hover).toContainText("Parameter 1: data to be printed");
+});
+
+test("combines Code and WYSIWYG editing with visual source edits", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
 
   const canvas = page.getByTestId("visual-label-canvas");
   await expect(canvas).toBeVisible();
-  await page.keyboard.press("Shift+/");
-  const shortcuts = page.getByRole("dialog", { name: "Designer shortcuts", exact: true });
+  await expect(page.getByTestId("zpl-editor")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
+  await canvas.focus();
+  await page.keyboard.press("Shift+Slash");
+  const shortcuts = page.getByRole("dialog", { name: "WYSIWYG shortcuts", exact: true });
   await expect(shortcuts).toBeVisible();
   await expect(shortcuts).toContainText("Copy selected layer");
   await expect(shortcuts).toContainText("Paste copied layer");
@@ -91,6 +168,7 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   const textField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
   await expect(textField).toBeVisible();
   await textField.click();
+  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toHaveValue("40");
 
   await page.locator(".designer-viewport").click({ position: { x: 5, y: 5 } });
@@ -176,7 +254,7 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
 });
 
-test("scrolls the source editor to a field revealed from the Designer", async ({ page }) => {
+test("scrolls the code editor to a field revealed from WYSIWYG", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
 
@@ -190,21 +268,20 @@ test("scrolls the source editor to a field revealed from the Designer", async ({
   await page.keyboard.press("Meta+ArrowUp");
   await editorSurface.hover();
   await page.mouse.wheel(0, -100_000);
-  await expect(editorSurface).toContainText("^XA");
-  await expect(editorSurface).not.toContainText("Reveal target");
+  await expect(editorSurface).not.toContainText("Reveal");
 
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
   await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
   await page.getByRole("button", { name: "Text at 40, 900", exact: true }).click();
   await page.getByRole("button", { name: "Reveal field in ZPL", exact: true }).click();
 
   await expect(page.getByTestId("zpl-editor")).toBeVisible();
-  await expect(editorSurface).toContainText("Reveal target");
+  await expect(editorSurface).toContainText("Reveal");
+  await expect(editorSurface).toContainText("target");
   await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
   await expect(page.locator(".monaco-editor .highlighted-command-inline")).toHaveCount(0);
 });
 
-test("offers quick fixes and configurable live preview", async ({ page }) => {
+test("offers quick fixes and configurable live WYSIWYG rendering", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
 
@@ -214,31 +291,34 @@ test("offers quick fixes and configurable live preview", async ({ page }) => {
   await page.keyboard.press("Meta+A");
   await page.keyboard.type("^XA^F010,20^FDQuick fix^FS^XZ");
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /Problems: \d+ errors, \d+ warnings/ }).click();
   const diagnostic = page.getByRole("button", { name: /UNKNOWN_COMMAND/i });
   await expect(diagnostic).toBeVisible();
   await diagnostic.click();
   await page.keyboard.press("Alt+Enter");
   await expect(page.locator(".actionList")).toBeVisible();
-  await expect(page.locator(".actionList")).toContainText("Change to ^FO");
+  await expect(page.locator(".actionList")).toContainText(/Change to \^[A-Z0-9~]{2}/);
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "Printer and preview settings", exact: true }).click();
+  await page.getByRole("button", { name: "Editor and printer settings", exact: true }).click();
   await page.getByRole("combobox", { name: "Label size", exact: true }).selectOption("custom");
   await page.getByRole("spinbutton", { name: "Width (dots)", exact: true }).fill("320");
   await page.getByRole("spinbutton", { name: "Height (dots)", exact: true }).fill("180");
-  await expect(page.getByText("320 × 180 dots · 203 dpi", { exact: true })).toBeVisible();
+  await expect(page.getByText(/320 × 180 dots · 203 dpi/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download PNG", exact: true })).toBeVisible();
 
   await page.getByRole("checkbox", { name: "Render automatically while typing", exact: true }).uncheck();
   await page.getByRole("spinbutton", { name: "Width (dots)", exact: true }).fill("360");
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
   await expect(page.getByRole("button", { name: "Render updated source", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Render updated source", exact: true }).click();
-  await expect(page.getByText("360 × 180 dots · 203 dpi", { exact: true })).toBeVisible();
+  await expect(page.getByText(/360 × 180 dots · 203 dpi/)).toBeVisible();
 });
 
 test("keeps source text selectable and selects everything with the platform shortcut", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.keyboard.press("Control+N");
 
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   const selectionStyles = await editorSurface.evaluate((element) => {
@@ -257,12 +337,12 @@ test("keeps source text selectable and selects everything with the platform shor
 test("offers command-aware completion, snippets, and formatting", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.keyboard.press("Control+N");
 
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await editorSurface.click({ position: { x: 100, y: 100 } });
   await page.keyboard.type("^F");
-  await page.getByRole("button", { name: "Show ZPL completions" }).click();
+  await page.keyboard.press("Control+Space");
   await expect(page.locator(".suggest-widget")).toBeVisible();
   await expect(page.locator(".suggest-widget .monaco-list-row").filter({ hasText: "^FD" }).first()).toBeVisible();
   await page.keyboard.press("Escape");
@@ -277,23 +357,24 @@ test("offers command-aware completion, snippets, and formatting", async ({ page 
   await expect(page.getByText("orientation", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "Insert parameter snippet", exact: true }).click();
   await page.getByRole("button", { name: "Files", exact: true }).click();
+  await page.getByRole("button", { name: /^Outline/ }).click();
   await expect(page.getByRole("button", { name: /\^BC Code 128 Bar Code/ })).toBeVisible();
 
-  await page.getByRole("button", { name: "Format", exact: true }).click();
-  await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
+  await page.keyboard.press("Control+Shift+F");
+  await expect(page.getByAltText("Editable rendered ZPL label")).toBeVisible();
 });
 
 test("completes parameter values and offers parameter quick fixes", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
-  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.keyboard.press("Control+N");
 
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await editorSurface.click({ position: { x: 100, y: 12 } });
   await page.keyboard.press("End");
   await page.keyboard.type("\n^FW");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Show ZPL completions" }).click();
+  await page.keyboard.press("Control+Space");
   const parameterSuggestions = page.locator(".suggest-widget .monaco-list-row").filter({ hasText: "^FW · rotate field" });
   await expect(parameterSuggestions).toHaveCount(4);
   const parameterSuggestion = parameterSuggestions.first();
@@ -304,6 +385,7 @@ test("completes parameter values and offers parameter quick fixes", async ({ pag
 
   await page.keyboard.type("X\n^XZ");
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: /Problems: \d+ errors, \d+ warnings/ }).click();
   const diagnostic = page.getByRole("button", { name: /INVALID_PARAMETER_VALUE/i });
   await expect(diagnostic).toContainText("Expected N, R, I, B");
   await diagnostic.click();
@@ -325,7 +407,6 @@ test("has no serious automated accessibility violations", async ({ page }) => {
     .analyze();
   expect(results.violations).toEqual([]);
 
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
   await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
   results = await new AxeBuilder({ page })
     .exclude(".monaco-editor")
@@ -333,6 +414,7 @@ test("has no serious automated accessibility violations", async ({ page }) => {
     .analyze();
   expect(results.violations).toEqual([]);
 
+  await page.getByRole("button", { name: "Open layers panel", exact: true }).click();
   await page.getByTestId("visual-layers").getByRole("button").first().click();
   await page.getByRole("tab", { name: "Properties", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Properties", exact: true })).toBeVisible();
@@ -343,7 +425,7 @@ test("has no serious automated accessibility violations", async ({ page }) => {
   expect(results.violations).toEqual([]);
 
   await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "Designer shortcuts", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "WYSIWYG shortcuts", exact: true })).toBeVisible();
   results = await new AxeBuilder({ page })
     .exclude(".monaco-editor")
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
@@ -358,15 +440,12 @@ test("remains usable at a narrow mobile viewport", async ({ page }) => {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
   await page.goto("/editor");
-  await expect(page.getByRole("button", { name: "Source", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Code", exact: true })).toBeVisible();
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
-  await page.getByRole("button", { name: /Preview/ }).click();
-  await expect(page.getByAltText("Rendered ZPL label")).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
-
-  await page.getByRole("button", { name: "Designer", exact: true }).click();
+  await expect(page.getByRole("button", { name: /Preview/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "WYSIWYG", exact: true }).click();
   await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
   await expect(page.getByRole("button", { name: "Add text", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Open layers panel", exact: true }).click();

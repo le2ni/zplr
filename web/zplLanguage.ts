@@ -447,6 +447,10 @@ export interface ZplParameterContext {
   span: SourceSpan;
 }
 
+// These commands have one documented parameter whose value is arbitrary text.
+// The active ZPL delimiter is part of that text, not a parameter separator.
+const opaqueSingleParameterCommands = new Set(["^FD", "^FV", "^FX"]);
+
 export function findZplParameterContext(source: string, offset: number): ZplParameterContext | undefined {
   if (!source) return undefined;
   const boundedOffset = Math.max(0, Math.min(offset, source.length));
@@ -460,6 +464,20 @@ export function findZplParameterContext(source: string, offset: number): ZplPara
   if (!definition || !signature || signature.parameters.length === 0) return undefined;
   const rawStart = command.span.end - command.rawParameters.length;
   if (boundedOffset < rawStart || boundedOffset > command.span.end) return undefined;
+
+  if (opaqueSingleParameterCommands.has(command.canonical) && signature.parameters.length === 1) {
+    const parameter = signature.parameters[0]!;
+    const span = { start: rawStart, end: command.span.end };
+    return {
+      command,
+      definition,
+      signature,
+      parameter,
+      parameterIndex: 0,
+      value: source.slice(span.start, span.end),
+      span,
+    };
+  }
 
   const beforeCursor = source.slice(rawStart, boundedOffset);
   const activeSlot = [...beforeCursor].filter((character) => character === command.delimiter).length;

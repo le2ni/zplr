@@ -150,6 +150,17 @@ describe("ZPL language intelligence", () => {
     expect(findZplParameterContext(customDelimiter, customDelimiter.indexOf("20") + 1)?.parameter.key).toBe("y");
   });
 
+  it("keeps commas inside field data and field variables in one recognized payload", () => {
+    for (const source of ["^FDQA,https://example.com", "^FVone,two,three"]) {
+      const payloadStart = 3;
+      const context = findZplParameterContext(source, source.lastIndexOf(",") + 2);
+      expect(context?.parameterIndex).toBe(0);
+      expect(context?.parameter.key).toBe("a");
+      expect(context?.value).toBe(source.slice(payloadStart));
+      expect(context?.span).toEqual({ start: payloadStart, end: source.length });
+    }
+  });
+
   it("diagnoses invalid, out-of-range, missing, and extra parameter values", () => {
     expect(validateZplParameters("^FWX")).toMatchObject([{ code: "INVALID_PARAMETER_VALUE", parameter: "rotate field" }]);
     expect(validateZplParameters("^FO40000,0")).toMatchObject([{ code: "PARAMETER_OUT_OF_RANGE" }]);

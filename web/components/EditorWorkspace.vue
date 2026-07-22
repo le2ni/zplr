@@ -24,56 +24,10 @@
         </p>
       </div>
 
-      <div class="editor-view-switch ml-4 hidden md:inline-flex" aria-label="Editor view">
-        <button :class="{ active: editorView === 'source' }" type="button" :aria-pressed="editorView === 'source'" @click="showEditorView('source')">
-          <IconApplicationBraces class="size-3.5" aria-hidden="true" /> Source
-        </button>
-        <button :class="{ active: editorView === 'visual' }" type="button" :aria-pressed="editorView === 'visual'" @click="showEditorView('visual')">
-          <IconVectorSquareEdit class="size-3.5" aria-hidden="true" /> Designer
-        </button>
-      </div>
-
       <div class="ml-auto flex items-center gap-0.5 sm:gap-1">
-        <button class="toolbar-button hidden md:inline-flex" type="button" title="New label" @click="newDocument">
-          <IconFileOutline class="size-4" aria-hidden="true" />
-          <span>New</span>
-        </button>
-        <button class="toolbar-button hidden md:inline-flex" type="button" title="Open ZPL file (⌘O)" @click="openFilePicker">
-          <IconFolderOpenOutline class="size-4" aria-hidden="true" />
-          <span>Open</span>
-        </button>
-        <button class="toolbar-button inline-flex" type="button" title="Save ZPL file (⌘S)" @click="downloadZpl">
-          <IconContentSaveOutline class="size-4" aria-hidden="true" />
-          <span class="hidden sm:inline">Save</span>
-        </button>
-        <button class="toolbar-button hidden xl:inline-flex" type="button" title="Save all open files as ZIP (⌘⇧S)" @click="downloadWorkspace">
-          <IconFolderZipOutline class="size-4" aria-hidden="true" />
-          <span>Save all</span>
-        </button>
-        <span class="mx-1 hidden h-5 w-px bg-zinc-200 sm:block dark:bg-white/10" aria-hidden="true"></span>
-        <button class="toolbar-button hidden sm:inline-flex" type="button" title="Undo" @click="editorComponent?.undo()">
-          <IconUndoVariant class="size-4" aria-hidden="true" />
-          <span class="sr-only">Undo</span>
-        </button>
-        <button class="toolbar-button hidden sm:inline-flex" type="button" title="Redo" @click="editorComponent?.redo()">
-          <IconRedoVariant class="size-4" aria-hidden="true" />
-          <span class="sr-only">Redo</span>
-        </button>
-        <button class="toolbar-button hidden sm:inline-flex" type="button" title="Find in source" @click="editorComponent?.find()">
-          <IconMagnify class="size-4" aria-hidden="true" />
-          <span class="sr-only">Find in source</span>
-        </button>
-        <button class="toolbar-button inline-flex" type="button" title="Format ZPL (⌘⇧F)" @click="formatDocument">
-          <IconFormatAlignLeft class="size-4" aria-hidden="true" />
-          <span class="hidden lg:inline">Format</span>
-        </button>
-        <button class="toolbar-button hidden md:inline-flex" type="button" title="Command palette (⌘P)" @click="editorComponent?.commandPalette()">
-          <IconConsoleLine class="size-4" aria-hidden="true" />
-          <span class="hidden xl:inline">Palette</span>
-        </button>
-        <button class="toolbar-button inline-flex" type="button" title="Editor settings (⌘,)" @click="settingsOpen = true">
+        <button class="toolbar-button inline-flex" type="button" title="Editor and printer settings (⌘,)" @click="settingsOpen = true">
           <IconCogOutline class="size-4" aria-hidden="true" />
-          <span class="sr-only">Editor settings</span>
+          <span class="sr-only">Editor and printer settings</span>
         </button>
         <button class="ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg bg-zinc-900 px-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 dark:bg-white dark:text-zinc-950 dark:hover:bg-zinc-200" type="button" title="Render now (⌘Enter)" @click="renderNow">
           <IconPlay class="size-4" aria-hidden="true" />
@@ -83,19 +37,15 @@
     </header>
 
     <nav class="flex h-10 shrink-0 items-center border-b border-zinc-200 bg-zinc-50 px-2 md:hidden dark:border-white/10 dark:bg-zinc-900" aria-label="Editor panes">
-      <button class="mobile-pane-tab" :class="{ active: editorView === 'source' && mobilePane === 'code' }" type="button" @click="showEditorSource">
-        <IconCodeTags class="size-4" aria-hidden="true" /> Source
+      <button class="mobile-pane-tab" :class="{ active: mobilePane === 'code' }" type="button" @click="showEditorCode">
+        <IconCodeTags class="size-4" aria-hidden="true" /> Code
       </button>
-      <button class="mobile-pane-tab" :class="{ active: editorView === 'visual' }" type="button" @click="showEditorView('visual')">
-        <IconVectorSquareEdit class="size-4" aria-hidden="true" /> Designer
-      </button>
-      <button class="mobile-pane-tab" :class="{ active: editorView === 'source' && mobilePane === 'preview' }" type="button" @click="showEditorPreview">
-        <IconImageOutline class="size-4" aria-hidden="true" /> Preview
-        <span v-if="errorCount" class="rounded-full bg-rose-100 px-1.5 text-[10px] text-rose-700 dark:bg-rose-400/15 dark:text-rose-300">{{ errorCount }}</span>
+      <button class="mobile-pane-tab" :class="{ active: mobilePane === 'visual' }" type="button" @click="showEditorWysiwyg">
+        <IconVectorSquareEdit class="size-4" aria-hidden="true" /> WYSIWYG
       </button>
     </nav>
 
-    <div v-show="editorView === 'source'" ref="workbench" class="flex min-h-0 flex-1 overflow-hidden">
+    <div ref="workbench" class="flex min-h-0 flex-1 overflow-hidden">
       <aside class="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-zinc-50/70 lg:flex dark:border-white/10 dark:bg-zinc-900/50" aria-label="Workspace sidebar">
         <div class="grid h-10 shrink-0 grid-cols-2 border-b border-zinc-200 px-2 dark:border-white/10">
           <button class="sidebar-tab" :class="{ active: sidebarMode === 'files' }" type="button" @click="sidebarMode = 'files'">Files</button>
@@ -105,57 +55,76 @@
         <div v-if="sidebarMode === 'files'" class="min-h-0 flex-1 overflow-y-auto py-2">
           <section>
             <div class="sidebar-heading">
-              <span>Open editors</span>
+              <button class="sidebar-section-toggle" type="button" :aria-expanded="sidebarSections.editors" @click="sidebarSections.editors = !sidebarSections.editors">
+                <IconChevronRight class="sidebar-section-chevron size-3.5" :class="{ open: sidebarSections.editors }" aria-hidden="true" />
+                <span>Open editors</span>
+                <span class="font-normal text-zinc-500">{{ documents.length }}</span>
+              </button>
               <div class="flex items-center gap-0.5">
                 <button class="icon-button-small" type="button" title="New label" @click="newDocument"><IconPlus class="size-3.5" aria-hidden="true" /><span class="sr-only">New label</span></button>
                 <button class="icon-button-small" type="button" title="Open file" @click="openFilePicker"><IconFolderOpenOutline class="size-3.5" aria-hidden="true" /><span class="sr-only">Open file</span></button>
               </div>
             </div>
-            <div
-              v-for="document in documents"
-              :key="document.id"
-              class="open-editor-row group"
-              :class="{ active: document.id === activeDocumentId }"
-            >
-              <button
-                class="open-editor-main"
-                type="button"
-                :title="document.filename"
-                @click="activateDocument(document.id)"
-                @dblclick="renameDocument(document.id)"
+            <div v-show="sidebarSections.editors">
+              <div
+                v-for="document in documents"
+                :key="document.id"
+                class="open-editor-row group"
+                :class="{ active: document.id === activeDocumentId }"
               >
-                <IconFileDocumentOutline class="size-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                <span class="min-w-0 flex-1 truncate">{{ document.filename }}</span>
-                <span v-if="document.source !== document.savedSource" class="size-2 shrink-0 rounded-full bg-zinc-500" title="Edited"></span>
-              </button>
-              <button class="open-editor-action" type="button" :title="`Duplicate ${document.filename}`" @click="duplicateDocument(document.id)">
-                <IconContentCopy class="size-3" aria-hidden="true" /><span class="sr-only">Duplicate {{ document.filename }}</span>
-              </button>
-              <button class="open-editor-action" type="button" :title="`Close ${document.filename}`" @click="closeDocument(document.id)">
-                <IconClose class="size-3.5" aria-hidden="true" /><span class="sr-only">Close {{ document.filename }}</span>
-              </button>
+                <button
+                  class="open-editor-main"
+                  type="button"
+                  :title="document.filename"
+                  @click="activateDocument(document.id)"
+                  @dblclick="renameDocument(document.id)"
+                >
+                  <IconFileDocumentOutline class="size-4 shrink-0 text-zinc-500" aria-hidden="true" />
+                  <span class="min-w-0 flex-1 truncate">{{ document.filename }}</span>
+                  <span v-if="document.source !== document.savedSource" class="size-2 shrink-0 rounded-full bg-zinc-500" title="Edited"></span>
+                </button>
+                <button class="open-editor-action" type="button" :title="`Duplicate ${document.filename}`" @click="duplicateDocument(document.id)">
+                  <IconContentCopy class="size-3" aria-hidden="true" /><span class="sr-only">Duplicate {{ document.filename }}</span>
+                </button>
+                <button class="open-editor-action" type="button" :title="`Close ${document.filename}`" @click="closeDocument(document.id)">
+                  <IconClose class="size-3.5" aria-hidden="true" /><span class="sr-only">Close {{ document.filename }}</span>
+                </button>
+              </div>
             </div>
-          </section>
-
-          <section class="mt-3 border-t border-zinc-200 pt-2 dark:border-white/10">
-            <div class="sidebar-heading"><span>Examples</span></div>
-            <button v-for="sample in samples" :key="sample.id" class="file-row" :class="{ selected: selectedSample === sample.id }" type="button" @click="loadSample(sample.id)">
-              <IconFileOutline class="size-4 text-zinc-500" aria-hidden="true" />
-              <span class="min-w-0 flex-1 truncate">{{ sample.name }}</span>
-            </button>
           </section>
 
           <section class="mt-3 border-t border-zinc-200 pt-2 dark:border-white/10">
             <div class="sidebar-heading">
-              <span>Outline</span>
-              <span class="font-normal text-zinc-500">{{ documentOutline.length }}</span>
+              <button class="sidebar-section-toggle" type="button" :aria-expanded="sidebarSections.examples" @click="sidebarSections.examples = !sidebarSections.examples">
+                <IconChevronRight class="sidebar-section-chevron size-3.5" :class="{ open: sidebarSections.examples }" aria-hidden="true" />
+                <span>Examples</span>
+                <span class="font-normal text-zinc-500">{{ samples.length }}</span>
+              </button>
             </div>
-            <p v-if="!documentOutline.length" class="px-3 py-4 text-xs leading-5 text-zinc-500">Add a <code>^XA</code>…<code>^XZ</code> format to see its structure.</p>
-            <button v-for="item in documentOutline.slice(0, 100)" :key="`${item.span.start}-${item.command}`" class="outline-row" type="button" :title="item.name" @click="focusSpan(item.span)">
-              <span class="w-8 shrink-0 text-right font-mono text-[10px] text-zinc-500">{{ item.line }}</span>
-              <span class="w-8 shrink-0 font-mono text-xs font-semibold" :class="categoryTextClass(item.category)">{{ item.command }}</span>
-              <span class="min-w-0 flex-1 truncate text-zinc-500">{{ item.name }}</span>
-            </button>
+            <div v-show="sidebarSections.examples">
+              <button v-for="sample in samples" :key="sample.id" class="file-row" :class="{ selected: selectedSample === sample.id }" type="button" @click="loadSample(sample.id)">
+                <IconFileOutline class="size-4 text-zinc-500" aria-hidden="true" />
+                <span class="min-w-0 flex-1 truncate">{{ sample.name }}</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="mt-3 border-t border-zinc-200 pt-2 dark:border-white/10">
+            <div class="sidebar-heading">
+              <button class="sidebar-section-toggle" type="button" :aria-expanded="sidebarSections.outline" @click="sidebarSections.outline = !sidebarSections.outline">
+                <IconChevronRight class="sidebar-section-chevron size-3.5" :class="{ open: sidebarSections.outline }" aria-hidden="true" />
+                <span>Outline</span>
+                <span class="font-normal text-zinc-500">{{ documentOutline.length }}</span>
+              </button>
+            </div>
+            <div v-show="sidebarSections.outline">
+              <p v-if="!documentOutline.length" class="px-3 py-4 text-xs leading-5 text-zinc-500">Add a <code>^XA</code>…<code>^XZ</code> format to see its structure.</p>
+              <button v-for="item in documentOutline.slice(0, 100)" :key="`${item.span.start}-${item.command}`" class="outline-row" type="button" :title="item.name" @click="focusSpan(item.span)">
+                <span class="w-8 shrink-0 text-right font-mono text-[10px] text-zinc-500">{{ item.line }}</span>
+                <span class="w-8 shrink-0 font-mono text-xs font-semibold" :class="categoryTextClass(item.category)">{{ item.command }}</span>
+                <span class="min-w-0 flex-1 truncate text-zinc-500">{{ item.name }}</span>
+              </button>
+            </div>
           </section>
         </div>
 
@@ -267,15 +236,6 @@
           </div>
         </div>
 
-        <div class="flex h-9 shrink-0 items-center justify-between border-b border-zinc-100 px-3 text-[11px] text-zinc-500 dark:border-white/5">
-          <span class="truncate">workspace <span class="mx-1 text-zinc-300">/</span> {{ filename }}</span>
-          <div class="flex items-center gap-1">
-            <button class="icon-button-small" type="button" title="Find" @click="editorComponent?.find()"><IconMagnify class="size-3.5" aria-hidden="true" /><span class="sr-only">Find</span></button>
-            <button class="icon-button-small" type="button" title="Show ZPL completions" @click="editorComponent?.triggerSuggest()"><IconCodeTags class="size-3.5" aria-hidden="true" /><span class="sr-only">Show ZPL completions</span></button>
-            <button class="icon-button-small" type="button" title="Format document" @click="formatDocument"><IconFormatAlignLeft class="size-3.5" aria-hidden="true" /><span class="sr-only">Format document</span></button>
-          </div>
-        </div>
-
         <div class="min-h-[180px] flex-1">
           <MonacoEditor
             ref="editorComponent"
@@ -292,6 +252,7 @@
             @activate:workspace-document="activateDocument"
             @update:cursor-position="editorCursor = $event"
             @update:cursor-state="cursorState = $event"
+            @update:focused="codeFocused = $event"
           />
         </div>
 
@@ -323,145 +284,50 @@
       <div
         class="splitter hidden w-1.5 shrink-0 cursor-col-resize bg-zinc-100 transition hover:bg-zinc-300 md:block dark:bg-zinc-900 dark:hover:bg-zinc-700"
         role="separator"
-        aria-label="Resize source and preview panes"
+        aria-label="Resize code and canvas panes"
         aria-orientation="vertical"
         :aria-valuenow="Math.round(splitPercent)"
-        aria-valuemin="35"
-        aria-valuemax="72"
+        aria-valuemin="30"
+        aria-valuemax="65"
         tabindex="0"
         @pointerdown="startResize"
         @keydown="resizeWithKeyboard"
       ></div>
 
-      <aside class="preview-pane flex min-w-0 flex-1 flex-col border-l border-zinc-200 bg-zinc-50 dark:border-white/10 dark:bg-zinc-900/60" :class="{ 'mobile-hidden': mobilePane !== 'preview' }" aria-label="Label preview">
-        <div class="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-zinc-200 bg-white px-3 py-2 dark:border-white/10 dark:bg-zinc-950">
-          <div class="min-w-0">
-            <h2 class="flex items-center gap-2 text-xs font-semibold text-zinc-900 dark:text-white">
-              Preview
-              <span v-if="previewStale" class="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">Out of date</span>
-              <span v-else-if="autoRender" class="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-300">Live</span>
-            </h2>
-            <p v-if="activeLabel" class="truncate text-[10px] text-zinc-500">{{ activeLabel.width }} × {{ activeLabel.height }} dots · {{ dpi }} dpi</p>
-            <p v-else class="text-[10px] text-zinc-500">No renderable label</p>
-          </div>
-          <div class="ml-auto flex items-center gap-1">
-            <label class="sr-only" for="density-select">Print density</label>
-            <select id="density-select" v-model.number="printDensity" class="compact-select" title="Print density">
-              <option :value="6">150 dpi</option>
-              <option :value="8">203 dpi</option>
-              <option :value="12">300 dpi</option>
-              <option :value="24">600 dpi</option>
-            </select>
-            <button class="toolbar-button inline-flex" :class="{ 'bg-zinc-100 text-zinc-900 dark:bg-white/10 dark:text-white': previewSettingsOpen }" type="button" title="Printer and preview settings" :aria-expanded="previewSettingsOpen" @click="previewSettingsOpen = !previewSettingsOpen">
-              <IconTuneVariant class="size-4" aria-hidden="true" /><span class="sr-only">Printer and preview settings</span>
-            </button>
-            <button v-if="labels.length > 1" class="toolbar-button inline-flex" type="button" title="Download all labels as ZIP" @click="downloadAllPngs">
-              <IconDownloadMultipleOutline class="size-4" aria-hidden="true" /><span class="sr-only">Download all labels as ZIP</span>
-            </button>
-            <button class="toolbar-button inline-flex" type="button" :disabled="!activeLabel" title="Download PNG" @click="downloadPng">
-              <IconDownloadOutline class="size-4" aria-hidden="true" /><span class="hidden xl:inline">PNG</span>
-            </button>
-          </div>
-        </div>
-
-        <div v-if="previewSettingsOpen" class="shrink-0 border-b border-zinc-200 bg-white px-3 py-3 dark:border-white/10 dark:bg-zinc-950">
-          <div class="grid grid-cols-2 gap-3">
-            <label class="text-[10px] font-medium text-zinc-500">
-              Label size
-              <select v-model="sizeMode" class="compact-select mt-1 w-full">
-                <option value="zpl">From ^PW / ^LL</option>
-                <option value="custom">Custom dots</option>
-              </select>
-            </label>
-            <label class="text-[10px] font-medium text-zinc-500">
-              Render mode
-              <select v-model="strictMode" class="compact-select mt-1 w-full">
-                <option :value="false">Compatible</option>
-                <option :value="true">Strict diagnostics</option>
-              </select>
-            </label>
-            <label v-if="sizeMode === 'custom'" class="text-[10px] font-medium text-zinc-500">
-              Width (dots)
-              <input v-model.number="overrideWidth" class="compact-input mt-1 w-full" type="number" min="1" max="8192" step="1" />
-            </label>
-            <label v-if="sizeMode === 'custom'" class="text-[10px] font-medium text-zinc-500">
-              Height (dots)
-              <input v-model.number="overrideHeight" class="compact-input mt-1 w-full" type="number" min="1" max="8192" step="1" />
-            </label>
-          </div>
-          <div class="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-white/5">
-            <label class="flex items-center gap-2 text-[10px] font-medium text-zinc-600 dark:text-zinc-300">
-              <input v-model="autoRender" class="size-3.5 accent-zinc-900 dark:accent-white" type="checkbox" />
-              Render automatically while typing
-            </label>
-            <button v-if="!autoRender || previewStale" class="rounded-md bg-zinc-900 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-950" type="button" @click="renderNow">Render now</button>
-          </div>
-        </div>
-
-        <div v-if="labels.length > 1" class="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-zinc-200 bg-white px-2 dark:border-white/10 dark:bg-zinc-950">
-          <button v-for="(_, index) in labels" :key="index" class="label-tab" :class="{ active: activeLabelIndex === index }" type="button" @click="activeLabelIndex = index">Label {{ index + 1 }}</button>
-        </div>
-
-        <div class="preview-grid relative min-h-0 flex-1 overflow-auto p-5 sm:p-7" tabindex="0" aria-label="Scrollable rendered label canvas">
-          <button v-if="previewStale && !rendering" class="absolute top-3 right-3 z-10 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-amber-700 shadow-sm hover:bg-amber-50 dark:border-amber-400/20 dark:bg-zinc-950 dark:text-amber-300" type="button" @click="renderNow">Render updated source</button>
-          <div v-if="rendering" class="absolute inset-0 z-10 flex items-center justify-center bg-zinc-50/70 backdrop-blur-[1px] dark:bg-zinc-900/70" role="status" aria-live="polite">
-            <span class="rounded-full border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-500 shadow-sm dark:border-white/10 dark:bg-zinc-950">Rendering label…</span>
-          </div>
-          <div v-if="renderFailure" class="mx-auto max-w-md rounded-xl border border-rose-200 bg-white p-4 text-sm text-rose-700 shadow-sm dark:border-rose-400/20 dark:bg-zinc-950 dark:text-rose-200">{{ renderFailure }}</div>
-          <div v-else-if="previewUrl" class="flex min-h-full min-w-full items-center justify-center">
-            <img
-              :src="previewUrl"
-              alt="Rendered ZPL label"
-              class="block cursor-crosshair bg-white shadow-xl shadow-zinc-900/15 ring-1 ring-zinc-900/10"
-              :class="{ 'max-h-full max-w-full object-contain': fitPreview }"
-              :style="previewImageStyle"
-              @click="selectRenderedField"
-            />
-          </div>
-          <div v-else class="flex min-h-full items-center justify-center text-center text-xs leading-5 text-zinc-500">
-            Enter a complete <code class="mx-1">^XA</code>…<code class="mx-1">^XZ</code> label to preview it.
-          </div>
-        </div>
-
-        <div class="flex h-10 shrink-0 items-center border-t border-zinc-200 bg-white px-3 dark:border-white/10 dark:bg-zinc-950">
-          <div class="flex items-center rounded-md border border-zinc-200 dark:border-white/10">
-            <button class="zoom-button" type="button" title="Zoom out" @click="zoom = Math.max(25, zoom - 10)"><IconMagnifyMinusOutline class="size-3.5" aria-hidden="true" /><span class="sr-only">Zoom out</span></button>
-            <button class="min-w-12 border-x border-zinc-200 px-2 py-1 text-[10px] text-zinc-500 dark:border-white/10" type="button" :aria-pressed="fitPreview" @click="fitPreview = !fitPreview">{{ fitPreview ? "Fit" : `${zoom}%` }}</button>
-            <button class="zoom-button" type="button" title="Zoom in" @click="zoom = Math.min(200, zoom + 10)"><IconMagnifyPlusOutline class="size-3.5" aria-hidden="true" /><span class="sr-only">Zoom in</span></button>
-          </div>
-          <button class="ml-2 text-[10px] text-zinc-500 hover:text-zinc-900 dark:hover:text-white" type="button" @click="fitPreview = !fitPreview"><IconFitToScreenOutline class="mr-1 inline size-3.5" aria-hidden="true" />Fit label</button>
-          <span class="ml-auto text-[10px] text-zinc-500">Click a field to reveal its source</span>
-        </div>
-
-        <div class="grid shrink-0 grid-cols-3 border-t border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-950">
-          <div class="preview-stat"><span>Labels</span><strong>{{ labels.length }}</strong></div>
-          <div class="preview-stat border-x border-zinc-200 dark:border-white/10"><span>Commands</span><strong>{{ parsedCommandCount }}</strong></div>
-          <div class="preview-stat"><span>Raster</span><strong>{{ activeLabel ? formatBytes(activeLabel.raster.data.byteLength) : "—" }}</strong></div>
-        </div>
-      </aside>
+      <section
+        class="canvas-pane flex min-w-0 flex-1 overflow-hidden border-l border-zinc-200 bg-zinc-50 dark:border-white/10 dark:bg-zinc-900/60"
+        :class="{ 'mobile-hidden': mobilePane === 'code' }"
+        aria-label="WYSIWYG editor"
+      >
+        <VisualEditor
+          embedded
+          :source="source"
+          :filename="filename"
+          :label="activeLabel"
+          :preview-url="previewUrl"
+          :rendering="rendering"
+          :render-failure="renderFailure"
+          :active-label-index="activeLabelIndex"
+          :label-count="labels.length"
+          :print-density="printDensity"
+          :selected-source-offset="codeFocused ? editorCursor : undefined"
+          :stale="previewStale"
+          @edit="applyVisualEdit"
+          @select-source="revealVisualSpan"
+          @sync-source-selection="syncVisualSelection"
+          @render="renderNow"
+          @download-png="downloadPng"
+          @download-all-pngs="downloadAllPngs"
+          @update:active-label-index="activeLabelIndex = $event"
+        />
+      </section>
     </div>
-
-    <VisualEditor
-      v-if="editorView === 'visual'"
-      :source="source"
-      :filename="filename"
-      :label="activeLabel"
-      :preview-url="previewUrl"
-      :rendering="rendering"
-      :render-failure="renderFailure"
-      :active-label-index="activeLabelIndex"
-      :label-count="labels.length"
-      :print-density="printDensity"
-      @edit="applyVisualEdit"
-      @select-source="revealVisualSpan"
-      @update:active-label-index="activeLabelIndex = $event"
-    />
 
     <div v-if="settingsOpen" class="fixed inset-0 z-40 flex justify-end bg-zinc-950/15 backdrop-blur-[1px]" @mousedown.self="settingsOpen = false">
       <section class="m-3 flex w-[min(24rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-2xl shadow-zinc-950/20 dark:border-white/10 dark:bg-zinc-950" role="dialog" aria-modal="true" aria-labelledby="editor-settings-title">
         <header class="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4 dark:border-white/10">
           <IconCogOutline class="mr-2 size-4 text-zinc-500" aria-hidden="true" />
-          <h2 id="editor-settings-title" class="text-sm font-semibold">Editor settings</h2>
+          <h2 id="editor-settings-title" class="text-sm font-semibold">Editor &amp; printer settings</h2>
           <button class="icon-button-small ml-auto" type="button" title="Close settings" @click="settingsOpen = false"><IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close settings</span></button>
         </header>
 
@@ -500,6 +366,49 @@
           </div>
 
           <div class="mt-6 border-t border-zinc-200 pt-4 dark:border-white/10">
+            <h3 class="text-[11px] font-bold tracking-wide text-zinc-500 uppercase">Printer &amp; rendering</h3>
+            <div class="mt-3 space-y-4">
+              <label class="settings-field">
+                <span><strong>Print density</strong><small>Controls physical scaling and barcode dimensions.</small></span>
+                <select v-model.number="printDensity" class="settings-select" aria-label="Print density">
+                  <option :value="6">150 dpi</option>
+                  <option :value="8">203 dpi</option>
+                  <option :value="12">300 dpi</option>
+                  <option :value="24">600 dpi</option>
+                </select>
+              </label>
+              <label class="settings-field">
+                <span><strong>Label size</strong><small>Use ZPL dimensions or override them for rendering.</small></span>
+                <select v-model="sizeMode" class="settings-select" aria-label="Label size">
+                  <option value="zpl">From ^PW / ^LL</option>
+                  <option value="custom">Custom dots</option>
+                </select>
+              </label>
+              <div v-if="sizeMode === 'custom'" class="grid grid-cols-2 gap-3">
+                <label class="text-[10px] font-medium text-zinc-500">
+                  Width (dots)
+                  <input v-model.number="overrideWidth" class="compact-input mt-1 w-full" type="number" min="1" max="8192" step="1" />
+                </label>
+                <label class="text-[10px] font-medium text-zinc-500">
+                  Height (dots)
+                  <input v-model.number="overrideHeight" class="compact-input mt-1 w-full" type="number" min="1" max="8192" step="1" />
+                </label>
+              </div>
+              <label class="settings-field">
+                <span><strong>Diagnostics</strong><small>Strict mode reports compatibility assumptions.</small></span>
+                <select v-model="strictMode" class="settings-select" aria-label="Render mode">
+                  <option :value="false">Compatible</option>
+                  <option :value="true">Strict</option>
+                </select>
+              </label>
+              <label class="settings-toggle">
+                <span><strong>Live rendering</strong><small>Keep WYSIWYG updated while typing.</small></span>
+                <input v-model="autoRender" type="checkbox" aria-label="Render automatically while typing" />
+              </label>
+            </div>
+          </div>
+
+          <div class="mt-6 border-t border-zinc-200 pt-4 dark:border-white/10">
             <h3 class="text-[11px] font-bold tracking-wide text-zinc-500 uppercase">Keyboard</h3>
             <dl class="mt-2 grid grid-cols-[1fr_auto] gap-x-4 gap-y-2 text-xs">
               <dt>Command palette</dt><dd><kbd>⌘ P</kbd> / <kbd>F1</kbd></dd>
@@ -509,30 +418,27 @@
               <dt>Format document</dt><dd><kbd>⌘ ⇧ F</kbd></dd>
               <dt>Render label</dt><dd><kbd>⌘ Enter</kbd></dd>
               <dt>Quick fix</dt><dd><kbd>⌥ Enter</kbd></dd>
-              <dt>Move designer field</dt><dd><kbd>← ↑ ↓ →</kbd> · <kbd>⇧</kbd> 10 dots</dd>
+              <dt>Move WYSIWYG field</dt><dd><kbd>← ↑ ↓ →</kbd> · <kbd>⇧</kbd> 10 dots</dd>
             </dl>
           </div>
         </div>
 
         <footer class="flex h-12 shrink-0 items-center justify-between border-t border-zinc-200 px-4 dark:border-white/10">
-          <button class="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-white" type="button" @click="resetEditorPreferences">Reset defaults</button>
+          <button class="text-xs font-medium text-zinc-500 hover:text-zinc-900 dark:hover:text-white" type="button" @click="resetSettings">Reset defaults</button>
           <button class="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-700 dark:bg-white dark:text-zinc-950" type="button" @click="settingsOpen = false">Done</button>
         </footer>
       </section>
     </div>
 
     <footer class="flex h-6 shrink-0 items-center bg-zinc-900 px-2 text-[10px] text-zinc-300 dark:bg-white dark:text-zinc-700">
-      <button class="status-button" type="button" @click="problemsOpen = !problemsOpen">
+      <button class="status-button" type="button" :aria-label="`Problems: ${errorCount} errors, ${warningCount} warnings`" :aria-expanded="problemsOpen" @click="problemsOpen = !problemsOpen">
         <IconAlertCircleOutline class="size-3" aria-hidden="true" />
         <span>{{ errorCount }}</span>
         <span class="ml-1 text-zinc-400 dark:text-zinc-500">△ {{ warningCount }}</span>
       </button>
-      <span class="ml-3 hidden sm:inline">{{ documents.length }} open<span v-if="dirtyDocumentCount"> · {{ dirtyDocumentCount }} unsaved</span></span>
       <span class="ml-auto">Ln {{ cursorState.line }}, Col {{ cursorState.column }}</span>
       <span v-if="cursorState.selectionLength" class="ml-3 hidden sm:inline">{{ cursorState.selectionLength }} selected</span>
-      <span class="ml-3 hidden sm:inline">UTF-8</span>
       <button class="status-button ml-3" type="button" @click="sidebarMode = 'commands'">ZPL II</button>
-      <span class="ml-3 hidden md:inline">{{ zplLanguageCoverage.commands }} commands · {{ zplLanguageCoverage.parameters }} parameters</span>
       <span class="ml-3 flex items-center gap-1 text-emerald-300 dark:text-emerald-700"><span class="size-1.5 rounded-full bg-current"></span> Local-only</span>
     </footer>
 
@@ -544,34 +450,21 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import {
   IconAlertCircleOutline,
-  IconApplicationBraces,
   IconBookOpenVariant,
   IconCheckCircleOutline,
+  IconChevronRight,
   IconClose,
   IconCodeTags,
   IconCogOutline,
-  IconConsoleLine,
   IconContentCopy,
-  IconContentSaveOutline,
-  IconDownloadMultipleOutline,
-  IconDownloadOutline,
   IconFileDocumentOutline,
   IconFileOutline,
-  IconFitToScreenOutline,
   IconFolderOpenOutline,
-  IconFolderZipOutline,
-  IconFormatAlignLeft,
-  IconImageOutline,
   IconInformationOutline,
   IconMagnify,
-  IconMagnifyMinusOutline,
-  IconMagnifyPlusOutline,
   IconOpenInNew,
   IconPlay,
   IconPlus,
-  IconRedoVariant,
-  IconTuneVariant,
-  IconUndoVariant,
   IconVectorSquareEdit,
 } from "@iconify-prerendered/vue-mdi";
 import { zipSync } from "fflate";
@@ -581,7 +474,6 @@ import assetSample from "../../fixtures/asset-matrix-pdf417.zpl?raw";
 import storedSample from "../../fixtures/stored-resources.zpl?raw";
 import {
   commandCapabilities,
-  findHighlightRegionAtPoint,
   parseDocument,
   renderZpl,
   type CommandCapabilityStatus,
@@ -604,7 +496,7 @@ const MonacoEditor = defineAsyncComponent(() => import("./MonacoEditor.vue"));
 const VisualEditor = defineAsyncComponent(() => import("./VisualEditor.vue"));
 type MonacoEditorApi = InstanceType<typeof MonacoEditorComponent>;
 type SampleId = (typeof samples)[number]["id"];
-type EditorView = "source" | "visual";
+type StoredEditorView = "source" | "visual";
 
 const samples = [
   { id: "shipping", name: "Shipping label", filename: "shipping-label.zpl", source: shippingSample },
@@ -626,7 +518,7 @@ interface StoredWorkspace {
   version: 2;
   activeDocumentId: string;
   documents: WorkspaceDocument[];
-  view?: EditorView;
+  view?: StoredEditorView;
   preferences?: EditorPreferences;
   preview?: PreviewPreferences;
 }
@@ -662,7 +554,6 @@ const documents = ref<WorkspaceDocument[]>(initialWorkspace?.documents ?? [
   createWorkspaceDocument(shippingSample, "shipping-label.zpl", { sampleId: "shipping" }),
 ]);
 const activeDocumentId = ref(initialWorkspace?.activeDocumentId ?? documents.value[0]!.id);
-const editorView = ref<EditorView>(initialWorkspace?.view ?? "source");
 const activeDocument = computed<WorkspaceDocument>(() =>
   documents.value.find((document) => document.id === activeDocumentId.value) ?? documents.value[0]!
 );
@@ -700,16 +591,15 @@ const editorCursor = computed<number>({
 });
 const cursorState = ref<EditorCursorState>({ line: 1, column: 1, selectionLength: 0 });
 const highlightRange = ref<SourceSpan>();
-const problemsOpen = ref(true);
+const codeFocused = ref(false);
+const problemsOpen = ref(false);
 const sidebarMode = ref<"files" | "commands">("files");
+const sidebarSections = ref({ editors: true, examples: true, outline: false });
 const commandQuery = ref("");
 const selectedCommand = ref<string>();
-const mobilePane = ref<"code" | "preview">("code");
-const splitPercent = ref(56);
-const zoom = ref(75);
-const fitPreview = ref(true);
+const mobilePane = ref<"code" | "visual">("code");
+const splitPercent = ref(42);
 const settingsOpen = ref(false);
-const previewSettingsOpen = ref(false);
 const previewStale = ref(false);
 const editorComponent = ref<MonacoEditorApi | null>(null);
 const workbench = ref<HTMLElement | null>(null);
@@ -730,9 +620,7 @@ const editorLimits = {
 } as const;
 
 const isDirty = computed(() => source.value !== activeDocument.value.savedSource);
-const dirtyDocumentCount = computed(() => documents.value.filter((document) => document.source !== document.savedSource).length);
 const activeLabel = computed(() => labels.value[activeLabelIndex.value]);
-const dpi = computed(() => ({ 6: 150, 8: 203, 12: 300, 24: 600 })[printDensity.value]);
 const languageDiagnostics = computed<readonly ZplDiagnostic[]>(() =>
   validateZplParameters(source.value).map((diagnostic) => ({
     code: diagnostic.code,
@@ -756,7 +644,6 @@ const errorCount = computed(() => diagnostics.value.filter(({ severity }) => sev
 const warningCount = computed(() => diagnostics.value.filter(({ severity }) => severity === "warning").length);
 const parsedDocument = computed(() => parseDocument(source.value));
 const parsedCommands = computed(() => parsedDocument.value.items.flatMap((item) => item.kind === "label" ? item.commands : [item]));
-const parsedCommandCount = computed(() => parsedCommands.value.length);
 const capabilityMap = new Map(commandCapabilities.map((capability) => [capability.canonical, capability]));
 const selectedCommandInfo = computed(() => {
   if (!selectedCommand.value) return undefined;
@@ -793,10 +680,6 @@ const visibleCapabilities = computed(() => {
     ].some((value) => value?.toUpperCase().includes(query));
   });
 });
-const previewImageStyle = computed(() => fitPreview.value || !activeLabel.value
-  ? undefined
-  : { width: `${Math.max(80, activeLabel.value.width * zoom.value / 100)}px`, maxWidth: "none", maxHeight: "none" });
-
 let documentIdSequence = 0;
 
 function createDocumentId(): string {
@@ -910,7 +793,7 @@ function persistWorkspace(): void {
         version: 2,
         activeDocumentId: activeDocumentId.value,
         documents: documents.value,
-        view: editorView.value,
+        view: "visual",
         preferences: editorPreferences.value,
         preview: {
           printDensity: printDensity.value,
@@ -1147,13 +1030,19 @@ function applyVisualEdit(edit: SourceEdit): void {
     const end = Math.max(start, Math.min(source.value.length, Math.trunc(edit.end)));
     source.value = `${source.value.slice(0, start)}${edit.text}${source.value.slice(end)}`;
   }
-  // Designer operations always refresh immediately, even when manual preview
+  // WYSIWYG operations always refresh immediately, even when manual preview
   // rendering is selected, so the visual surface remains authoritative.
   void nextTick(() => schedulePreview(0));
 }
 
-function resetEditorPreferences(): void {
+function resetSettings(): void {
   editorPreferences.value = { ...defaultEditorPreferences };
+  printDensity.value = defaultPreviewPreferences.printDensity;
+  autoRender.value = defaultPreviewPreferences.autoRender;
+  strictMode.value = defaultPreviewPreferences.strict;
+  sizeMode.value = defaultPreviewPreferences.sizeMode;
+  overrideWidth.value = defaultPreviewPreferences.width;
+  overrideHeight.value = defaultPreviewPreferences.height;
 }
 
 function insertCommand(command: string): void {
@@ -1162,7 +1051,6 @@ function insertCommand(command: string): void {
 
 function focusSpan(span?: SourceSpan): void {
   if (!span) return;
-  editorView.value = "source";
   editorCursor.value = span.start;
   highlightRange.value = { ...span };
   showMobilePane("code");
@@ -1171,13 +1059,12 @@ function focusSpan(span?: SourceSpan): void {
 
 function revealVisualSpan(span?: SourceSpan): void {
   if (!span) return;
-  editorView.value = "source";
   editorCursor.value = span.start;
   highlightRange.value = undefined;
   showMobilePane("code");
-  // v-show makes the source workbench visible on the next Vue tick, while
-  // Monaco's automatic layout follows on an animation frame. Reveal after
-  // both frames so the selected range is centered using the visible size.
+  // On mobile, changing panes makes Monaco visible on the next Vue tick and
+  // its automatic layout follows on an animation frame. Waiting for both
+  // frames also keeps desktop reveals centered in the persistent code pane.
   void nextTick(() => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => editorComponent.value?.revealSpan(span));
@@ -1185,14 +1072,10 @@ function revealVisualSpan(span?: SourceSpan): void {
   });
 }
 
-async function selectRenderedField(event: MouseEvent): Promise<void> {
-  const label = activeLabel.value;
-  const image = event.currentTarget as HTMLImageElement;
-  if (!label) return;
-  const bounds = image.getBoundingClientRect();
-  const x = ((event.clientX - bounds.left) / bounds.width) * label.width;
-  const y = ((event.clientY - bounds.top) / bounds.height) * label.height;
-  focusSpan(findHighlightRegionAtPoint(label.highlightRegions, x, y)?.sourceSpan);
+function syncVisualSelection(span?: SourceSpan): void {
+  highlightRange.value = undefined;
+  if (span) editorComponent.value?.syncSpan(span);
+  else editorComponent.value?.clearSelection();
 }
 
 function diagnosticKey(diagnostic: ZplDiagnostic, index: number): string {
@@ -1205,11 +1088,6 @@ function lineAt(offset: number): number {
     if (source.value.charCodeAt(index) === 10) line++;
   }
   return line;
-}
-
-function formatBytes(value: number): string {
-  if (value < 1024) return `${value} B`;
-  return `${(value / 1024).toFixed(value >= 10_240 ? 0 : 1)} KB`;
 }
 
 function categoryTextClass(category: CommandCategory): string {
@@ -1228,34 +1106,28 @@ function statusDotClass(status: CommandCapabilityStatus): string {
   return "bg-zinc-300 dark:bg-zinc-600";
 }
 
-function showMobilePane(pane: "code" | "preview"): void {
+function showMobilePane(pane: "code" | "visual"): void {
   mobilePane.value = pane;
   window.requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
 }
 
-function showEditorView(view: EditorView): void {
-  editorView.value = view;
-}
-
-function showEditorSource(): void {
-  editorView.value = "source";
+function showEditorCode(): void {
   showMobilePane("code");
 }
 
-function showEditorPreview(): void {
-  editorView.value = "source";
-  showMobilePane("preview");
+function showEditorWysiwyg(): void {
+  showMobilePane("visual");
 }
 
 function applySplit(): void {
-  if (!workbench.value || editorView.value !== "source") return;
+  if (!workbench.value) return;
   const sidebarWidth = window.innerWidth >= 1024 ? 240 : 0;
   const splitterWidth = 6;
   const available = Math.max(0, workbench.value.clientWidth - sidebarWidth - splitterWidth);
   const codePane = workbench.value.querySelector<HTMLElement>(".code-pane");
-  const previewPane = workbench.value.querySelector<HTMLElement>(".preview-pane");
+  const canvasPane = workbench.value.querySelector<HTMLElement>(".canvas-pane");
   if (codePane) codePane.style.flex = `0 0 ${available * splitPercent.value / 100}px`;
-  if (previewPane) previewPane.style.flex = "1 1 0";
+  if (canvasPane) canvasPane.style.flex = "1 1 0";
 }
 
 function startResize(event: PointerEvent): void {
@@ -1267,7 +1139,7 @@ function startResize(event: PointerEvent): void {
     const sidebarWidth = window.innerWidth >= 1024 ? 240 : 0;
     const x = moveEvent.clientX - rect.left - sidebarWidth;
     const available = rect.width - sidebarWidth - 6;
-    splitPercent.value = Math.min(72, Math.max(35, x / available * 100));
+    splitPercent.value = Math.min(65, Math.max(30, x / available * 100));
     applySplit();
   };
   const stop = () => {
@@ -1287,7 +1159,7 @@ function startResize(event: PointerEvent): void {
 function resizeWithKeyboard(event: KeyboardEvent): void {
   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
   event.preventDefault();
-  splitPercent.value = Math.min(72, Math.max(35, splitPercent.value + (event.key === "ArrowRight" ? 2 : -2)));
+  splitPercent.value = Math.min(65, Math.max(30, splitPercent.value + (event.key === "ArrowRight" ? 2 : -2)));
   applySplit();
 }
 
@@ -1313,6 +1185,8 @@ function handleKeyboardShortcut(event: KeyboardEvent): void {
   if (!modifier) return;
   const fromSourceEditor = event.target instanceof Element
     && event.target.closest('[data-testid="zpl-editor"]') !== null;
+  const fromVisualEditor = event.target instanceof Element
+    && event.target.closest(".designer-root") !== null;
   if (event.key.toLowerCase() === "a" && fromSourceEditor) {
     event.preventDefault();
     event.stopPropagation();
@@ -1333,7 +1207,7 @@ function handleKeyboardShortcut(event: KeyboardEvent): void {
   } else if (event.key.toLowerCase() === "p") {
     event.preventDefault();
     editorComponent.value?.commandPalette();
-  } else if (event.key.toLowerCase() === "z" && editorView.value === "visual") {
+  } else if (event.key.toLowerCase() === "z" && fromVisualEditor) {
     event.preventDefault();
     if (event.shiftKey) editorComponent.value?.redo();
     else editorComponent.value?.undo();
@@ -1358,17 +1232,6 @@ watch(source, () => {
 });
 watch(documents, persistWorkspace, { deep: true });
 watch(editorPreferences, persistWorkspace, { deep: true });
-watch(editorView, (view) => {
-  persistWorkspace();
-  if (view === "visual") {
-    renderNow();
-  } else {
-    void nextTick(() => {
-      applySplit();
-      window.dispatchEvent(new Event("resize"));
-    });
-  }
-});
 watch(activeDocumentId, () => {
   highlightRange.value = undefined;
   activeLabelIndex.value = 0;
@@ -1413,32 +1276,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.editor-view-switch {
-  height: 2rem;
-  align-items: center;
-  gap: 0.15rem;
-  border: 1px solid rgb(228 228 231);
-  border-radius: 0.55rem;
-  background: rgb(250 250 250);
-  padding: 0.15rem;
-}
-
-.editor-view-switch button {
-  display: inline-flex;
-  height: 1.55rem;
-  align-items: center;
-  gap: 0.3rem;
-  border-radius: 0.38rem;
-  padding-inline: 0.55rem;
-  color: rgb(113 113 122);
-  font-size: 0.65rem;
-  font-weight: 600;
-}
-
-.editor-view-switch button:hover { color: rgb(24 24 27); }
-.editor-view-switch button.active { background: white; color: rgb(24 24 27); box-shadow: 0 1px 2px rgb(0 0 0 / 0.08); }
-.editor-view-switch button:focus-visible { outline: 2px solid rgb(113 113 122); outline-offset: 1px; }
-
 .toolbar-button {
   align-items: center;
   justify-content: center;
@@ -1474,7 +1311,6 @@ onBeforeUnmount(() => {
 .command-insert-primary:focus-visible,
 .command-back:focus-visible,
 .diagnostic-row:focus-visible,
-.zoom-button:focus-visible,
 .status-button:focus-visible {
   outline: 2px solid rgb(113 113 122);
   outline-offset: -2px;
@@ -1527,6 +1363,21 @@ onBeforeUnmount(() => {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+.sidebar-section-toggle {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 0%;
+  align-items: center;
+  gap: 0.3rem;
+  text-align: left;
+}
+
+.sidebar-section-toggle > span:first-of-type { min-width: 0; flex: 1 1 0%; }
+.sidebar-section-chevron { flex: 0 0 auto; transition: transform 150ms ease; }
+.sidebar-section-chevron.open { transform: rotate(90deg); }
+.sidebar-section-toggle:focus-visible { border-radius: 0.25rem; outline: 2px solid rgb(113 113 122); outline-offset: -2px; }
 
 .file-row {
   display: flex;
@@ -1753,43 +1604,6 @@ onBeforeUnmount(() => {
 
 .compact-select:focus, .compact-input:focus { border-color: rgb(113 113 122); box-shadow: 0 0 0 2px rgb(228 228 231); }
 
-.label-tab {
-  border-radius: 0.35rem;
-  padding: 0.3rem 0.6rem;
-  color: rgb(113 113 122);
-  font-size: 0.65rem;
-}
-
-.label-tab.active { background: rgb(244 244 245); color: rgb(24 24 27); font-weight: 600; }
-
-.preview-grid {
-  background-color: rgb(244 244 245);
-  background-image: linear-gradient(rgb(24 24 27 / 0.04) 1px, transparent 1px), linear-gradient(90deg, rgb(24 24 27 / 0.04) 1px, transparent 1px);
-  background-size: 20px 20px;
-}
-
-.zoom-button {
-  display: inline-flex;
-  width: 1.75rem;
-  height: 1.65rem;
-  align-items: center;
-  justify-content: center;
-  color: rgb(113 113 122);
-}
-
-.zoom-button:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
-
-.preview-stat {
-  display: flex;
-  min-height: 3.2rem;
-  flex-direction: column;
-  justify-content: center;
-  padding-inline: 0.75rem;
-}
-
-.preview-stat span { color: rgb(113 113 122); font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.preview-stat strong { margin-top: 0.15rem; color: rgb(63 63 70); font-size: 0.72rem; font-weight: 600; }
-
 .status-button { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 0.2rem; padding-inline: 0.25rem; }
 .status-button:hover { background: rgb(255 255 255 / 0.12); }
 
@@ -1822,15 +1636,12 @@ onBeforeUnmount(() => {
 kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radius: 0.3rem; background: rgb(250 250 250); padding: 0.08rem 0.3rem; color: rgb(82 82 91); font-family: inherit; font-size: 0.62rem; }
 
 @media (width < 768px) {
-  .code-pane, .preview-pane { flex: 1 1 100% !important; width: 100%; }
+  .code-pane, .canvas-pane { flex: 1 1 100% !important; width: 100%; }
   .mobile-hidden { display: none; }
-  .preview-pane { border-left: 0; }
+  .canvas-pane { border-left: 0; }
 }
 
 @media (prefers-color-scheme: dark) {
-  .editor-view-switch { border-color: rgb(255 255 255 / 0.1); background: rgb(255 255 255 / 0.04); }
-  .editor-view-switch button:hover { color: white; }
-  .editor-view-switch button.active { background: rgb(255 255 255 / 0.1); color: white; box-shadow: none; }
   .toolbar-button { color: rgb(161 161 170); }
   .toolbar-button:hover:not(:disabled), .icon-button-small:hover { background: rgb(255 255 255 / 0.06); color: white; }
   .mobile-pane-tab.active { background: rgb(39 39 42); color: white; }
@@ -1851,10 +1662,6 @@ kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radiu
   .diagnostic-row:hover:not(:disabled) { background: rgb(255 255 255 / 0.04); }
   .compact-select, .compact-input { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(161 161 170); }
   .compact-select:focus, .compact-input:focus { border-color: rgb(113 113 122); box-shadow: 0 0 0 2px rgb(255 255 255 / 0.08); }
-  .label-tab.active { background: rgb(255 255 255 / 0.08); color: white; }
-  .preview-grid { background-color: rgb(24 24 27); background-image: linear-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 0.035) 1px, transparent 1px); }
-  .zoom-button:hover { background: rgb(255 255 255 / 0.06); color: white; }
-  .preview-stat strong { color: rgb(228 228 231); }
   .status-button:hover { background: rgb(0 0 0 / 0.08); }
   .settings-field strong, .settings-toggle strong { color: rgb(228 228 231); }
   .settings-select { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(212 212 216); }

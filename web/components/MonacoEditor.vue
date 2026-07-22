@@ -83,6 +83,7 @@ const emit = defineEmits<{
   "activate:workspaceDocument": [documentId: string];
   "update:cursorPosition": [position: number];
   "update:cursorState": [state: EditorCursorState];
+  "update:focused": [focused: boolean];
   ready: [];
 }>();
 
@@ -265,9 +266,9 @@ function selectAllSource(): void {
   editor.setSelection(activeModel.getFullModelRange());
 }
 
-function revealSourceRange(range: { start: number; end: number }): void {
+function selectSourceRange(range: { start: number; end: number }, focusEditor: boolean): void {
   if (!editor || !model || !monaco) return;
-  // The source workbench can be revealed from the Designer after Monaco was
+  // The code workbench can be revealed from WYSIWYG after Monaco was
   // laid out at zero width/height. Measure the now-visible container before
   // calculating the centered scroll position.
   editor.layout();
@@ -276,9 +277,23 @@ function revealSourceRange(range: { start: number; end: number }): void {
   const start = model.getPositionAt(startOffset);
   const end = model.getPositionAt(endOffset);
   const selection = new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
-  editor.focus();
+  if (focusEditor) editor.focus();
   editor.setSelection(selection);
   editor.revealRangeInCenter(selection, monaco.editor.ScrollType.Immediate);
+}
+
+function revealSourceRange(range: { start: number; end: number }): void {
+  selectSourceRange(range, true);
+}
+
+function synchronizeSourceRange(range: { start: number; end: number }): void {
+  selectSourceRange(range, false);
+}
+
+function clearSourceSelection(): void {
+  if (!editor || !monaco) return;
+  const position = editor.getPosition();
+  if (position) editor.setSelection(new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column));
 }
 
 function applySourceEdit(change: EditorSourceEdit): boolean {
@@ -449,7 +464,7 @@ onMounted(async () => {
     },
     quickSuggestions: { comments: false, strings: false, other: true },
     parameterHints: { enabled: true, cycle: true },
-    inlayHints: { enabled: "onUnlessPressed", padding: true, maximumLength: 24 },
+    inlayHints: { enabled: "off" },
     hover: { enabled: true, delay: 250 },
     fixedOverflowWidgets: true,
     tabSize: 2,
@@ -479,6 +494,8 @@ onMounted(async () => {
 
   editor.onDidChangeCursorPosition(emitCursorState);
   editor.onDidChangeCursorSelection(emitCursorState);
+  editor.onDidFocusEditorText(() => emit("update:focused", true));
+  editor.onDidBlurEditorText(() => emit("update:focused", false));
   editor.onDidChangeModel(() => {
     const nextModel = editor?.getModel();
     const nextEntry = [...models.entries()].find(([, candidate]) => candidate === nextModel);
@@ -568,6 +585,8 @@ defineExpose({
   redo: () => editor?.trigger("toolbar", "redo", null),
   applySourceEdit,
   revealSpan: revealSourceRange,
+  syncSpan: synchronizeSourceRange,
+  clearSelection: clearSourceSelection,
   selectAll: selectAllSource,
   insertCommand: (command: string) => {
     const position = editor?.getPosition();
