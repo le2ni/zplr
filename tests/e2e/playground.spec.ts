@@ -81,10 +81,22 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
 
   const canvas = page.getByTestId("visual-label-canvas");
   await expect(canvas).toBeVisible();
+  await page.keyboard.press("Shift+/");
+  const shortcuts = page.getByRole("dialog", { name: "Designer shortcuts", exact: true });
+  await expect(shortcuts).toBeVisible();
+  await expect(shortcuts).toContainText("Copy selected layer");
+  await expect(shortcuts).toContainText("Paste copied layer");
+  await page.keyboard.press("Escape");
+
   const textField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
   await expect(textField).toBeVisible();
   await textField.click();
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toHaveValue("40");
+
+  await page.locator(".designer-viewport").click({ position: { x: 5, y: 5 } });
+  await expect(page.getByRole("tab", { name: "Layers", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toBeHidden();
+  await textField.click();
 
   const content = page.getByRole("textbox", { name: "Field content", exact: true });
   await content.fill("Visual label");
@@ -92,7 +104,7 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   await expect(page.getByRole("textbox", { name: "Field content", exact: true })).toHaveValue("Visual label");
 
   await page.getByRole("button", { name: "Text at 40, 40", exact: true }).press("ArrowRight");
-  await expect(page.getByRole("button", { name: "Text at 41, 40", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Text at 50, 40", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Add box", exact: true }).click();
   const box = page.getByRole("button", { name: "Box at 360, 580", exact: true });
@@ -105,16 +117,41 @@ test("offers an optional WYSIWYG designer with visual source edits", async ({ pa
   await page.mouse.up();
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).not.toHaveValue("360");
 
+  await page.getByRole("button", { name: "Open layers panel", exact: true }).click();
+  const layers = page.getByTestId("visual-layers");
+  const layerNames = layers.locator(".designer-layer-row strong");
+  await expect(layerNames).toHaveCount(2);
+  await expect(layerNames.first()).toHaveText("Box");
+  await layers.getByRole("button", { name: /Select Box layer/ }).click();
+  await page.getByRole("button", { name: "Send backward", exact: true }).click();
+  await expect(layerNames.first()).toHaveText("Visual label");
+
+  await page.keyboard.press("Control+]");
+  await expect(layerNames.first()).toHaveText("Box");
+  await page.keyboard.press("Control+[");
+  await expect(layerNames.first()).toHaveText("Visual label");
+
+  await layers.getByRole("button", { name: /Select Visual label layer/ }).click();
+  await page.keyboard.press("Meta+C");
+  await page.keyboard.press("Meta+V");
+  await expect(canvas.locator('[data-visual-kind="text"]')).toHaveCount(2);
+  await page.keyboard.press("Backspace");
+  await expect(canvas.locator('[data-visual-kind="text"]')).toHaveCount(1);
+
   await page.getByRole("button", { name: "Add barcode", exact: true }).dragTo(canvas, {
     targetPosition: { x: 120, y: 180 },
   });
-  await expect(canvas.locator('[data-visual-kind="barcode"]')).toHaveCount(1);
+  const barcode = canvas.locator('[data-visual-kind="barcode"]');
+  await expect(barcode).toHaveCount(1);
+  await barcode.click();
+  await page.getByRole("button", { name: "Reveal field in ZPL", exact: true }).click();
 
-  await page.getByRole("button", { name: "Source", exact: true }).click();
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await expect(editorSurface).toContainText("Visual label");
   await expect(editorSurface).toContainText("^GB");
   await expect(editorSurface).toContainText("^BC");
+  await expect(page.locator(".monaco-editor .highlighted-command-inline")).not.toHaveCount(0);
+  await expect(page.getByText(/\d+ selected/, { exact: true })).toBeVisible();
 });
 
 test("offers quick fixes and configurable live preview", async ({ page }) => {
@@ -245,6 +282,14 @@ test("has no serious automated accessibility violations", async ({ page }) => {
     .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
     .analyze();
   expect(results.violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Designer shortcuts", exact: true })).toBeVisible();
+  results = await new AxeBuilder({ page })
+    .exclude(".monaco-editor")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(results.violations).toEqual([]);
 });
 
 test("remains usable at a narrow mobile viewport", async ({ page }) => {
@@ -265,5 +310,7 @@ test("remains usable at a narrow mobile viewport", async ({ page }) => {
   await page.getByRole("button", { name: "Designer", exact: true }).click();
   await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
   await expect(page.getByRole("button", { name: "Add text", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open layers panel", exact: true }).click();
+  await expect(page.getByTestId("visual-layers")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });

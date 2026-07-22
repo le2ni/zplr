@@ -6,7 +6,9 @@ import {
   sourceEditForDelete,
   sourceEditForDuplicate,
   sourceEditForInsert,
+  sourceEditForLayerSwap,
   sourceEditForMove,
+  sourceEditForPaste,
   visualBounds,
   type SourceEdit,
 } from "./visualEditorSource";
@@ -114,6 +116,42 @@ describe("visual editor source operations", () => {
     const duplicated = applyEdit(source, sourceEditForDuplicate(source, field, 8));
     expect(duplicated).toContain("^FO30,40^GB100,40,2^FS");
     expect(applyEdit(source, sourceEditForDelete(source, field.sourceSpan))).toBe("^XA\n^XZ");
+
+    const pasted = applyEdit(source, sourceEditForPaste(source, 0, source, field, 8, 40));
+    expect(pasted).toContain("^FO50,60^GB100,40,2^FS\n^XZ");
+  });
+
+  it("swaps adjacent visual fields to change their source-backed layer order", () => {
+    const source = "^XA\n^FO10,20^GB100,40,2^FS\n^FO30,40^GB80,20,2^FS\n^XZ";
+    const commands = parseDocument(source).labels[0]!.commands;
+    const origins = commands.filter(({ canonical }) => canonical === "^FO");
+    const endings = commands.filter(({ canonical }) => canonical === "^FS");
+    const fields = collectVisualFields(source, [
+      { type: "origin", sourceSpan: origins[0]!.span, x: 10, y: 20 },
+      { type: "box", sourceSpan: { start: origins[0]!.span.start, end: endings[0]!.span.end }, x: 10, y: 20, width: 100, height: 40 },
+      { type: "origin", sourceSpan: origins[1]!.span, x: 30, y: 40 },
+      { type: "box", sourceSpan: { start: origins[1]!.span.start, end: endings[1]!.span.end }, x: 30, y: 40, width: 80, height: 20 },
+    ]);
+
+    const edit = sourceEditForLayerSwap(source, fields[0]!, fields[1]!);
+    const reordered = applyEdit(source, edit);
+    expect(reordered.indexOf("^FO30,40")).toBeLessThan(reordered.indexOf("^FO10,20"));
+    expect(edit?.selectOriginAt).toBe(reordered.indexOf("^FO10,20"));
+  });
+
+  it("does not move a layer across source commands that may change field state", () => {
+    const source = "^XA^FO10,20^FDOne^FS^LH5,5^FO30,40^FDTwo^FS^XZ";
+    const commands = parseDocument(source).labels[0]!.commands;
+    const origins = commands.filter(({ canonical }) => canonical === "^FO");
+    const endings = commands.filter(({ canonical }) => canonical === "^FS");
+    const fields = collectVisualFields(source, [
+      { type: "origin", sourceSpan: origins[0]!.span, x: 10, y: 20 },
+      { type: "text", sourceSpan: { start: origins[0]!.span.start, end: endings[0]!.span.end }, x: 10, y: 20, width: 30, height: 10 },
+      { type: "origin", sourceSpan: origins[1]!.span, x: 35, y: 45 },
+      { type: "text", sourceSpan: { start: origins[1]!.span.start, end: endings[1]!.span.end }, x: 35, y: 45, width: 30, height: 10 },
+    ]);
+
+    expect(sourceEditForLayerSwap(source, fields[0]!, fields[1]!)).toBeUndefined();
   });
 
   it("normalizes circular hit regions to rectangular designer bounds", () => {

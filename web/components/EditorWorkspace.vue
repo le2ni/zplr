@@ -1166,7 +1166,7 @@ function focusSpan(span?: SourceSpan): void {
   editorCursor.value = span.start;
   highlightRange.value = { ...span };
   showMobilePane("code");
-  void nextTick(() => editorComponent.value?.focus());
+  void nextTick(() => editorComponent.value?.revealSpan(span));
 }
 
 async function selectRenderedField(event: MouseEvent): Promise<void> {

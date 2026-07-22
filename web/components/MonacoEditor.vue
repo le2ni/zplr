@@ -265,6 +265,18 @@ function selectAllSource(): void {
   editor.setSelection(activeModel.getFullModelRange());
 }
 
+function revealSourceRange(range: { start: number; end: number }): void {
+  if (!editor || !model || !monaco) return;
+  const startOffset = Math.max(0, Math.min(model.getValueLength(), Math.trunc(range.start)));
+  const endOffset = Math.max(startOffset, Math.min(model.getValueLength(), Math.trunc(range.end)));
+  const start = model.getPositionAt(startOffset);
+  const end = model.getPositionAt(endOffset);
+  const selection = new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
+  editor.focus();
+  editor.setSelection(selection);
+  editor.revealRangeInCenter(selection);
+}
+
 function applySourceEdit(change: EditorSourceEdit): boolean {
   if (!editor || !model) return false;
   const startOffset = Math.max(0, Math.min(model.getValueLength(), Math.trunc(change.start)));
@@ -551,6 +563,7 @@ defineExpose({
   undo: () => editor?.trigger("toolbar", "undo", null),
   redo: () => editor?.trigger("toolbar", "redo", null),
   applySourceEdit,
+  revealSpan: revealSourceRange,
   selectAll: selectAllSource,
   insertCommand: (command: string) => {
     const position = editor?.getPosition();

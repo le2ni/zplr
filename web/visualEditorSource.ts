@@ -316,12 +316,12 @@ export function sourceEditForDelete(source: string, span: SourceSpan): SourceEdi
   return { start: expanded.start, end: expanded.end, text: "" };
 }
 
-export function sourceEditForDuplicate(
+function offsetFieldSource(
   source: string,
   field: VisualField,
   printDensity: PrintDensity,
-  offset = 20,
-): SourceEdit | undefined {
+  offset: number,
+): { text: string; originOffset: number } | undefined {
   if (!field.origin) return undefined;
   const movedOrigin = sourceEditForMove(source, field.origin.command.span, offset, offset, printDensity);
   if (!movedOrigin) return undefined;
@@ -329,13 +329,90 @@ export function sourceEditForDuplicate(
   const relativeStart = movedOrigin.start - field.sourceSpan.start;
   const relativeEnd = movedOrigin.end - field.sourceSpan.start;
   if (relativeStart < 0 || relativeEnd > fieldSource.length) return undefined;
-  const copy = `${fieldSource.slice(0, relativeStart)}${movedOrigin.text}${fieldSource.slice(relativeEnd)}`;
+  return {
+    text: `${fieldSource.slice(0, relativeStart)}${movedOrigin.text}${fieldSource.slice(relativeEnd)}`,
+    originOffset: relativeStart,
+  };
+}
+
+export function sourceEditForDuplicate(
+  source: string,
+  field: VisualField,
+  printDensity: PrintDensity,
+  offset = 20,
+): SourceEdit | undefined {
+  const copy = offsetFieldSource(source, field, printDensity, offset);
+  if (!copy) return undefined;
   const separator = "\n";
   return {
     start: field.sourceSpan.end,
     end: field.sourceSpan.end,
-    text: `${separator}${copy}`,
-    selectOriginAt: field.sourceSpan.end + separator.length + relativeStart,
+    text: `${separator}${copy.text}`,
+    selectOriginAt: field.sourceSpan.end + separator.length + copy.originOffset,
+  };
+}
+
+/** Paste a copied visual field into a label with a visual-dot offset. */
+export function sourceEditForPaste(
+  targetSource: string,
+  targetLabelIndex: number,
+  copiedSource: string,
+  copiedField: VisualField,
+  printDensity: PrintDensity,
+  offset = 20,
+): SourceEdit | undefined {
+  const copy = offsetFieldSource(copiedSource, copiedField, printDensity, offset);
+  const targetLabel = parseDocument(targetSource).labels[targetLabelIndex];
+  if (!copy || !targetLabel) return undefined;
+  const endCommand = targetLabel.commands.findLast(({ canonical }) => canonical === "^XZ");
+  const insertionPoint = endCommand?.span.start ?? targetLabel.span.end;
+  const leading = insertionPoint > 0 && targetSource[insertionPoint - 1] !== "\n" ? "\n" : "";
+  const trailing = targetSource[insertionPoint] === "\n" ? "" : "\n";
+  return {
+    start: insertionPoint,
+    end: insertionPoint,
+    text: `${leading}${copy.text}${trailing}`,
+    selectOriginAt: insertionPoint + leading.length + copy.originOffset,
+  };
+}
+
+/**
+ * Swap two adjacent visual fields to change their paint order.
+ *
+ * Only whitespace may sit between the fields. Moving a field across another
+ * ZPL command could change inherited formatting or coordinate state, so the
+ * visual editor deliberately leaves those cases to the source editor.
+ */
+export function sourceEditForLayerSwap(
+  source: string,
+  selected: VisualField,
+  adjacent: VisualField,
+): SourceEdit | undefined {
+  if (selected.labelIndex !== adjacent.labelIndex || selected.id === adjacent.id) return undefined;
+  const first = selected.sourceSpan.start < adjacent.sourceSpan.start ? selected : adjacent;
+  const second = first === selected ? adjacent : selected;
+  if (
+    first.sourceSpan.start < 0 ||
+    first.sourceSpan.end <= first.sourceSpan.start ||
+    first.sourceSpan.end > second.sourceSpan.start ||
+    second.sourceSpan.end <= second.sourceSpan.start ||
+    second.sourceSpan.end > source.length
+  ) return undefined;
+
+  const separator = source.slice(first.sourceSpan.end, second.sourceSpan.start);
+  if (separator.trim() !== "") return undefined;
+  const firstSource = source.slice(first.sourceSpan.start, first.sourceSpan.end);
+  const secondSource = source.slice(second.sourceSpan.start, second.sourceSpan.end);
+  const selectedOffset = (selected.origin?.command.span.start ?? selected.sourceSpan.start) - selected.sourceSpan.start;
+  const selectedStart = selected === first
+    ? first.sourceSpan.start + secondSource.length + separator.length
+    : first.sourceSpan.start;
+
+  return {
+    start: first.sourceSpan.start,
+    end: second.sourceSpan.end,
+    text: `${secondSource}${separator}${firstSource}`,
+    selectOriginAt: selectedStart + selectedOffset,
   };
 }
 

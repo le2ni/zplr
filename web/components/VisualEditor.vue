@@ -26,7 +26,7 @@
       <div class="mt-auto border-t border-zinc-200 p-3 text-[10px] leading-4 text-zinc-500 dark:border-white/10">
         <div class="flex items-start gap-2">
           <IconCursorMove class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-          <span>Drag existing fields to reposition them. Use arrow keys for 1-dot nudges and Shift for 10 dots.</span>
+          <span>Drag fields to reposition them. Arrow keys move by the snap amount; Backspace deletes. Press ? for every shortcut.</span>
         </div>
       </div>
     </aside>
@@ -63,6 +63,12 @@
               <option :value="20">20 dots</option>
             </select>
           </label>
+          <button class="designer-icon-button" :class="{ active: sidebarTab === 'layers' }" type="button" title="Open layers panel" :aria-pressed="sidebarTab === 'layers'" @click="openSidebar('layers')">
+            <IconLayersOutline class="size-4" aria-hidden="true" /><span class="sr-only">Open layers panel</span>
+          </button>
+          <button class="designer-icon-button" type="button" title="Keyboard shortcuts" @click="openShortcuts">
+            <IconKeyboardOutline class="size-4" aria-hidden="true" /><span class="sr-only">Keyboard shortcuts</span>
+          </button>
           <button class="designer-icon-button" :class="{ active: gridVisible }" type="button" title="Toggle grid" :aria-pressed="gridVisible" @click="gridVisible = !gridVisible">
             <IconGrid class="size-4" aria-hidden="true" /><span class="sr-only">Toggle grid</span>
           </button>
@@ -93,18 +99,18 @@
         class="designer-viewport relative min-h-0 flex-1 overflow-auto"
         @dragover="dragOverCanvas"
         @drop="dropOnCanvas"
+        @pointerdown.self="clearSelection"
       >
-        <div class="flex min-h-full min-w-full items-center justify-center p-7 sm:p-10">
+        <div class="flex min-h-full min-w-full items-center justify-center p-7 sm:p-10" @pointerdown.self="clearSelection">
           <div
             v-if="label && previewUrl"
             ref="surface"
             class="designer-surface relative shrink-0 touch-none overflow-hidden bg-white shadow-2xl shadow-zinc-950/20 ring-1 ring-zinc-900/15 outline-none"
             :style="surfaceStyle"
             tabindex="0"
-            aria-label="Editable rendered label. Select a field, then drag it or use the arrow keys to move it."
+            aria-label="Editable rendered label. Select a field, then drag it or use keyboard shortcuts to edit it."
             data-testid="visual-label-canvas"
             @pointerdown.self="clearSelection"
-            @keydown="handleCanvasKeydown"
           >
             <img :src="previewUrl" alt="Editable rendered ZPL label" class="pointer-events-none absolute inset-0 size-full select-none" draggable="false" />
             <div v-if="gridVisible" class="designer-grid pointer-events-none absolute inset-0" :style="gridStyle" aria-hidden="true"></div>
@@ -118,7 +124,7 @@
               :aria-label="`${visualFieldLabel(field.kind, field.region.type)} at ${Math.round(field.bounds.x)}, ${Math.round(field.bounds.y)}${field.movable ? '' : ', position locked'}`"
               :title="field.movable ? `Drag ${visualFieldLabel(field.kind, field.region.type).toLowerCase()} to move` : 'This field has no directly editable ^FO or ^FT origin'"
               :data-visual-kind="field.kind"
-              @click.stop="selectField(field)"
+              @click.stop="selectField(field, $event)"
               @pointerdown.stop="beginFieldDrag($event, field)"
             >
               <span class="sr-only">{{ visualFieldLabel(field.kind, field.region.type) }}</span>
@@ -151,92 +157,168 @@
 
       <footer class="flex h-9 shrink-0 items-center gap-2 border-t border-zinc-200 bg-white px-3 text-[10px] text-zinc-500 dark:border-white/10 dark:bg-zinc-950">
         <IconSelectionDrag class="size-3.5" aria-hidden="true" />
-        <span v-if="selectedField">{{ visualFieldLabel(selectedField.kind, selectedField.region.type) }} selected<span v-if="selectedField.movable"> · drag or use arrow keys</span></span>
+        <span v-if="selectedField">{{ visualFieldLabel(selectedField.kind, selectedField.region.type) }} selected<span v-if="selectedField.movable"> · arrows move {{ snapSize }} dot{{ snapSize === 1 ? "" : "s" }}</span> · Backspace deletes</span>
         <span v-else>{{ fields.length }} editable visual field{{ fields.length === 1 ? "" : "s" }}</span>
-        <span class="ml-auto hidden sm:inline">Rendered locally · source stays authoritative</span>
+        <span v-if="clipboardAnnouncement" class="ml-auto" role="status" aria-live="polite">{{ clipboardAnnouncement }}</span>
+        <span v-else class="ml-auto hidden sm:inline">⌘C copy · ⌘V paste · ? shortcuts</span>
       </footer>
     </div>
 
-    <aside class="designer-inspector w-72 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-950" :class="{ 'has-selection': selectedField }" aria-label="Selected element properties">
-      <div class="flex h-12 shrink-0 items-center border-b border-zinc-200 px-3 dark:border-white/10">
-        <IconTuneVariant class="mr-2 size-4 text-zinc-500" aria-hidden="true" />
-        <h2 class="text-xs font-semibold">Properties</h2>
-        <button v-if="selectedField" class="designer-icon-button ml-auto lg:hidden" type="button" title="Close properties" @click="clearSelection"><IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close properties</span></button>
+    <aside class="designer-inspector w-72 shrink-0 flex-col border-l border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-950" :class="{ 'is-open': mobileSidebarOpen }" aria-label="Designer panels">
+      <div class="designer-sidebar-tabs">
+        <div class="flex items-center gap-0.5" role="tablist" aria-label="Designer side panels">
+          <button class="designer-sidebar-tab" :class="{ active: sidebarTab === 'layers' }" type="button" role="tab" :aria-selected="sidebarTab === 'layers'" @click="sidebarTab = 'layers'">
+            <IconLayersOutline class="size-4" aria-hidden="true" /> Layers
+          </button>
+          <button class="designer-sidebar-tab" :class="{ active: sidebarTab === 'properties' }" type="button" role="tab" :aria-selected="sidebarTab === 'properties'" @click="sidebarTab = 'properties'">
+            <IconTuneVariant class="size-4" aria-hidden="true" /> Properties
+          </button>
+        </div>
+        <button class="designer-icon-button ml-auto lg:hidden" type="button" title="Close designer panel" @click="mobileSidebarOpen = false">
+          <IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close designer panel</span>
+        </button>
       </div>
 
-      <div v-if="selectedField" class="min-h-0 flex-1 overflow-y-auto p-3">
-        <div class="flex items-start gap-2">
-          <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-300">
-            <component :is="fieldIcon(selectedField)" class="size-5" aria-hidden="true" />
+      <template v-if="sidebarTab === 'layers'">
+        <div class="min-h-0 flex-1 overflow-y-auto" role="tabpanel" aria-label="Layers">
+          <div class="border-b border-zinc-200 px-3 py-2.5 dark:border-white/10">
+            <p class="text-[10px] leading-4 text-zinc-500">Top layers render last. Select a layer, then change its source-backed paint order.</p>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs font-semibold text-zinc-900 dark:text-white">{{ visualFieldLabel(selectedField.kind, selectedField.region.type) }}</h3>
-            <p class="mt-0.5 truncate font-mono text-[10px] text-zinc-500">{{ selectedField.origin?.command.canonical ?? "Rendered field" }}</p>
+          <ol v-if="layerFields.length" class="designer-layer-list" data-testid="visual-layers">
+            <li v-for="(field, index) in layerFields" :key="field.id">
+              <button
+                class="designer-layer-row"
+                :class="{ selected: isSelected(field) }"
+                type="button"
+                :aria-label="`Select ${layerName(field)} layer at ${Math.round(field.bounds.x)}, ${Math.round(field.bounds.y)}`"
+                :aria-current="isSelected(field) ? 'true' : undefined"
+                @click="selectLayer(field, $event)"
+              >
+                <span class="designer-layer-icon"><component :is="fieldIcon(field)" class="size-4" aria-hidden="true" /></span>
+                <span class="min-w-0 flex-1 text-left">
+                  <strong>{{ layerName(field) }}</strong>
+                  <small>{{ layerDetails(field) }}</small>
+                </span>
+                <span class="designer-layer-index">{{ index === 0 ? "Top" : layerFields.length - index }}</span>
+              </button>
+            </li>
+          </ol>
+          <div v-else class="flex min-h-40 flex-col items-center justify-center px-6 text-center text-[11px] leading-5 text-zinc-500">
+            <IconLayersOutline class="mb-3 size-8 text-zinc-300 dark:text-zinc-700" aria-hidden="true" />
+            Rendered fields will appear here as layers.
           </div>
         </div>
 
-        <section class="designer-property-section">
-          <h4>Position</h4>
-          <div v-if="selectedField.origin" class="grid grid-cols-2 gap-2">
-            <label class="designer-property-label">
-              X <span>dots</span>
-              <input :value="selectedPosition.x" type="number" min="0" :max="label?.width ?? 32000" step="1" @change="commitPosition('x', $event)" @keydown.stop />
-            </label>
-            <label class="designer-property-label">
-              Y <span>dots</span>
-              <input :value="selectedPosition.y" type="number" min="0" :max="label?.height ?? 32000" step="1" @change="commitPosition('y', $event)" @keydown.stop />
-            </label>
+        <div class="shrink-0 border-t border-zinc-200 p-3 dark:border-white/10">
+          <div class="grid grid-cols-2 gap-2">
+            <button class="designer-secondary-action justify-center" type="button" :disabled="!canBringForward" title="Bring forward (⌘/Ctrl + ])" @click="moveSelectedLayer('forward')">
+              <IconArrowUp class="size-4" aria-hidden="true" /> Bring forward
+            </button>
+            <button class="designer-secondary-action justify-center" type="button" :disabled="!canSendBackward" title="Send backward (⌘/Ctrl + [)" @click="moveSelectedLayer('backward')">
+              <IconArrowDown class="size-4" aria-hidden="true" /> Send backward
+            </button>
           </div>
-          <div v-else class="flex items-start gap-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-4 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
-            <IconLockOutline class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            This rendered field has no direct <code>^FO</code> or <code>^FT</code> origin to move safely.
+          <p class="mt-2 text-[9px] leading-4 text-zinc-500">Ordering is disabled across ZPL state commands to avoid changing field formatting.</p>
+        </div>
+      </template>
+
+      <template v-else>
+        <div v-if="selectedField" class="min-h-0 flex-1 overflow-y-auto p-3" role="tabpanel" aria-label="Properties">
+          <div class="flex items-start gap-2">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-zinc-600 dark:bg-white/10 dark:text-zinc-300">
+              <component :is="fieldIcon(selectedField)" class="size-5" aria-hidden="true" />
+            </div>
+            <div class="min-w-0">
+              <h3 class="text-xs font-semibold text-zinc-900 dark:text-white">{{ visualFieldLabel(selectedField.kind, selectedField.region.type) }}</h3>
+              <p class="mt-0.5 truncate font-mono text-[10px] text-zinc-500">{{ selectedField.origin?.command.canonical ?? "Rendered field" }}</p>
+            </div>
           </div>
-          <p class="mt-2 text-[10px] text-zinc-500">Rendered size: {{ Math.round(selectedField.bounds.width) }} × {{ Math.round(selectedField.bounds.height) }} dots</p>
-        </section>
 
-        <section v-if="selectedField.content" class="designer-property-section">
-          <h4>Content</h4>
-          <label class="sr-only" for="visual-field-content">Field content</label>
-          <textarea
-            id="visual-field-content"
-            :value="selectedField.content.value"
-            class="designer-content-input"
-            rows="4"
-            spellcheck="false"
-            @blur="commitContent"
-            @keydown.stop
-          ></textarea>
-          <p v-if="selectedField.content.prefix" class="mt-1 font-mono text-[9px] text-zinc-500">ZPL prefix {{ selectedField.content.prefix }} is preserved.</p>
-        </section>
+          <section class="designer-property-section">
+            <h4>Position</h4>
+            <div v-if="selectedField.origin" class="grid grid-cols-2 gap-2">
+              <label class="designer-property-label">
+                X <span>dots</span>
+                <input :value="selectedPosition.x" type="number" min="0" :max="label?.width ?? 32000" step="1" @change="commitPosition('x', $event)" @keydown.stop />
+              </label>
+              <label class="designer-property-label">
+                Y <span>dots</span>
+                <input :value="selectedPosition.y" type="number" min="0" :max="label?.height ?? 32000" step="1" @change="commitPosition('y', $event)" @keydown.stop />
+              </label>
+            </div>
+            <div v-else class="flex items-start gap-2 rounded-lg bg-amber-50 p-2 text-[10px] leading-4 text-amber-800 dark:bg-amber-400/10 dark:text-amber-200">
+              <IconLockOutline class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              This rendered field has no direct <code>^FO</code> or <code>^FT</code> origin to move safely.
+            </div>
+            <p class="mt-2 text-[10px] text-zinc-500">Rendered size: {{ Math.round(selectedField.bounds.width) }} × {{ Math.round(selectedField.bounds.height) }} dots</p>
+          </section>
 
-        <section class="designer-property-section">
-          <h4>Source</h4>
-          <button class="designer-secondary-action" type="button" @click="emit('selectSource', selectedField.sourceSpan)">
-            <IconCodeTags class="size-4" aria-hidden="true" /> Reveal field in ZPL
+          <section v-if="selectedField.content" class="designer-property-section">
+            <h4>Content</h4>
+            <label class="sr-only" for="visual-field-content">Field content</label>
+            <textarea
+              id="visual-field-content"
+              :value="selectedField.content.value"
+              class="designer-content-input"
+              rows="4"
+              spellcheck="false"
+              @blur="commitContent"
+              @keydown.stop
+            ></textarea>
+            <p v-if="selectedField.content.prefix" class="mt-1 font-mono text-[9px] text-zinc-500">ZPL prefix {{ selectedField.content.prefix }} is preserved.</p>
+          </section>
+
+          <section class="designer-property-section">
+            <h4>Source</h4>
+            <button class="designer-secondary-action" type="button" @click="emit('selectSource', selectedField.sourceSpan)">
+              <IconCodeTags class="size-4" aria-hidden="true" /> Reveal field in ZPL
+            </button>
+          </section>
+        </div>
+
+        <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center text-[11px] leading-5 text-zinc-500" role="tabpanel" aria-label="Properties">
+          <IconSelection class="mb-3 size-8 text-zinc-300 dark:text-zinc-700" aria-hidden="true" />
+          Select a field on the label or in Layers to edit its position and content.
+        </div>
+
+        <div v-if="selectedField" class="grid shrink-0 grid-cols-2 gap-2 border-t border-zinc-200 p-3 dark:border-white/10">
+          <button class="designer-secondary-action justify-center" type="button" :disabled="!selectedField.origin" title="Duplicate (⌘/Ctrl + D)" @click="duplicateSelected">
+            <IconContentCopy class="size-4" aria-hidden="true" /> Duplicate
           </button>
-        </section>
-      </div>
-
-      <div v-else class="flex min-h-0 flex-1 flex-col items-center justify-center px-6 text-center text-[11px] leading-5 text-zinc-500">
-        <IconSelection class="mb-3 size-8 text-zinc-300 dark:text-zinc-700" aria-hidden="true" />
-        Select a field on the label to edit its position and content.
-      </div>
-
-      <div v-if="selectedField" class="grid shrink-0 grid-cols-2 gap-2 border-t border-zinc-200 p-3 dark:border-white/10">
-        <button class="designer-secondary-action justify-center" type="button" :disabled="!selectedField.origin" @click="duplicateSelected">
-          <IconContentCopy class="size-4" aria-hidden="true" /> Duplicate
-        </button>
-        <button class="designer-danger-action" type="button" @click="deleteSelected">
-          <IconDeleteOutline class="size-4" aria-hidden="true" /> Delete
-        </button>
-      </div>
+          <button class="designer-danger-action" type="button" title="Delete (Backspace)" @click="deleteSelected">
+            <IconDeleteOutline class="size-4" aria-hidden="true" /> Delete
+          </button>
+        </div>
+      </template>
     </aside>
+
+    <div v-if="shortcutsOpen" class="designer-shortcuts-backdrop" @mousedown.self="closeShortcuts">
+      <section class="designer-shortcuts-dialog" role="dialog" aria-modal="true" aria-labelledby="designer-shortcuts-title">
+        <header class="flex h-12 items-center border-b border-zinc-200 px-4 dark:border-white/10">
+          <IconKeyboardOutline class="mr-2 size-4 text-zinc-500" aria-hidden="true" />
+          <h2 id="designer-shortcuts-title" class="text-sm font-semibold">Designer shortcuts</h2>
+          <button ref="shortcutCloseButton" class="designer-icon-button ml-auto" type="button" title="Close shortcuts" @click="closeShortcuts">
+            <IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close shortcuts</span>
+          </button>
+        </header>
+        <div class="designer-shortcut-list">
+          <div v-for="shortcut in shortcuts" :key="shortcut.action" class="designer-shortcut-row">
+            <span>{{ shortcut.action }}</span>
+            <span class="flex flex-wrap justify-end gap-1">
+              <kbd v-for="key in shortcut.keys" :key="key">{{ key }}</kbd>
+            </span>
+          </div>
+        </div>
+      </section>
+    </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component, type CSSProperties } from "vue";
 import {
+  IconArrowDown,
+  IconArrowUp,
   IconBarcode,
   IconClose,
   IconCodeTags,
@@ -246,6 +328,8 @@ import {
   IconDrag,
   IconFormatText,
   IconGrid,
+  IconKeyboardOutline,
+  IconLayersOutline,
   IconLockOutline,
   IconMagnifyMinusOutline,
   IconMagnifyPlusOutline,
@@ -264,7 +348,9 @@ import {
   sourceEditForDelete,
   sourceEditForDuplicate,
   sourceEditForInsert,
+  sourceEditForLayerSwap,
   sourceEditForMove,
+  sourceEditForPaste,
   visualFieldLabel,
   type SourceEdit,
   type VisualElementKind,
@@ -297,18 +383,41 @@ const tools: readonly { kind: VisualElementKind; name: string; icon: Component }
   { kind: "line", name: "Line", icon: IconVectorLine },
 ];
 const dragMime = "application/x-zplr-visual-element";
+const visualClipboardMime = "application/x-zplr-visual-field";
+const shortcuts: readonly { action: string; keys: readonly string[] }[] = [
+  { action: "Move by snap amount", keys: ["Arrow keys"] },
+  { action: "Move by 10 snap steps", keys: ["Shift", "Arrow keys"] },
+  { action: "Copy selected layer", keys: ["⌘/Ctrl", "C"] },
+  { action: "Paste copied layer", keys: ["⌘/Ctrl", "V"] },
+  { action: "Delete selected layer", keys: ["Backspace / Delete"] },
+  { action: "Duplicate selected layer", keys: ["⌘/Ctrl", "D"] },
+  { action: "Bring layer forward", keys: ["⌘/Ctrl", "]"] },
+  { action: "Send layer backward", keys: ["⌘/Ctrl", "["] },
+  { action: "Deselect", keys: ["Esc"] },
+  { action: "Toggle grid", keys: ["G"] },
+  { action: "Fit label", keys: ["0"] },
+  { action: "Zoom", keys: ["+ / −"] },
+  { action: "Open this shortcut list", keys: ["?"] },
+];
 
 const viewport = ref<HTMLElement | null>(null);
 const surface = ref<HTMLElement | null>(null);
+const shortcutCloseButton = ref<HTMLButtonElement | null>(null);
 const viewportWidth = ref(0);
 const viewportHeight = ref(0);
 const zoom = ref(100);
 const snapSize = ref(10);
 const gridVisible = ref(true);
 const toolDragActive = ref(false);
+const sidebarTab = ref<"layers" | "properties">("layers");
+const mobileSidebarOpen = ref(false);
+const shortcutsOpen = ref(false);
+const clipboardAnnouncement = ref("");
 const selectionAnchor = ref<number>();
 const selectionKind = ref<VisualField["kind"]>();
 const fields = computed(() => collectVisualFields(props.source, props.label?.highlightRegions ?? []));
+const sourceOrderedFields = computed(() => [...fields.value].sort((left, right) => left.sourceSpan.start - right.sourceSpan.start));
+const layerFields = computed(() => [...sourceOrderedFields.value].reverse());
 const selectedField = computed(() => fields.value.find((field) =>
   (field.origin?.command.span.start ?? field.sourceSpan.start) === selectionAnchor.value &&
   field.kind === selectionKind.value
@@ -317,6 +426,15 @@ const selectedPosition = computed(() => ({
   x: Math.round(selectedField.value?.origin?.region.x ?? selectedField.value?.bounds.x ?? 0),
   y: Math.round(selectedField.value?.origin?.region.y ?? selectedField.value?.bounds.y ?? 0),
 }));
+const selectedSourceIndex = computed(() => selectedField.value
+  ? sourceOrderedFields.value.findIndex((field) => field.id === selectedField.value?.id)
+  : -1);
+const forwardLayer = computed(() => sourceOrderedFields.value[selectedSourceIndex.value + 1]);
+const backwardLayer = computed(() => sourceOrderedFields.value[selectedSourceIndex.value - 1]);
+const canBringForward = computed(() => selectedField.value !== undefined && forwardLayer.value !== undefined &&
+  sourceEditForLayerSwap(props.source, selectedField.value, forwardLayer.value) !== undefined);
+const canSendBackward = computed(() => selectedField.value !== undefined && backwardLayer.value !== undefined &&
+  sourceEditForLayerSwap(props.source, selectedField.value, backwardLayer.value) !== undefined);
 
 const fitScale = computed(() => {
   if (!props.label || viewportWidth.value <= 0 || viewportHeight.value <= 0) return 1;
@@ -342,21 +460,51 @@ interface DragState {
   deltaY: number;
 }
 
+interface VisualClipboardItem {
+  source: string;
+  field: VisualField;
+  pasteCount: number;
+}
+
 const dragState = ref<DragState>();
 let resizeObserver: ResizeObserver | undefined;
+let shortcutReturnFocus: HTMLElement | null = null;
+let pendingDesignerFocus: "selection" | "surface" | undefined;
+let visualClipboard: VisualClipboardItem | undefined;
+let clipboardAnnouncementTimer: number | undefined;
 
 function selectionOffset(field: VisualField): number {
   return field.origin?.command.span.start ?? field.sourceSpan.start;
 }
 
-function selectField(field: VisualField): void {
-  selectionAnchor.value = selectionOffset(field);
-  selectionKind.value = field.kind;
+function focusInteractionTarget(event?: Event): void {
+  if (event?.currentTarget instanceof HTMLElement) event.currentTarget.focus({ preventScroll: true });
 }
 
-function clearSelection(): void {
+function selectField(field: VisualField, event?: Event): void {
+  selectionAnchor.value = selectionOffset(field);
+  selectionKind.value = field.kind;
+  sidebarTab.value = "properties";
+  mobileSidebarOpen.value = true;
+  focusInteractionTarget(event);
+}
+
+function selectLayer(field: VisualField, event?: Event): void {
+  selectionAnchor.value = selectionOffset(field);
+  selectionKind.value = field.kind;
+  focusInteractionTarget(event);
+}
+
+function clearSelection(event?: Event): void {
   selectionAnchor.value = undefined;
   selectionKind.value = undefined;
+  sidebarTab.value = "layers";
+  if (event) void nextTick(() => surface.value?.focus({ preventScroll: true }));
+}
+
+function openSidebar(tab: "layers" | "properties"): void {
+  sidebarTab.value = tab;
+  mobileSidebarOpen.value = true;
 }
 
 function isSelected(field: VisualField): boolean {
@@ -403,7 +551,7 @@ const originMarkerStyle = computed<CSSProperties | undefined>(() => {
 });
 
 function beginFieldDrag(event: PointerEvent, field: VisualField): void {
-  selectField(field);
+  selectField(field, event);
   if (!field.movable || event.button !== 0) return;
   event.preventDefault();
   dragState.value = { field, startX: event.clientX, startY: event.clientY, deltaX: 0, deltaY: 0 };
@@ -434,35 +582,165 @@ function finishFieldDrag(): void {
   dragState.value = undefined;
   if (!state?.field.origin || (state.deltaX === 0 && state.deltaY === 0)) return;
   const edit = sourceEditForMove(props.source, state.field.origin.command.span, state.deltaX, state.deltaY, props.printDensity);
-  if (edit) emit("edit", edit);
+  if (edit) {
+    pendingDesignerFocus = "selection";
+    emit("edit", edit);
+  }
 }
 
 function moveSelected(deltaX: number, deltaY: number): void {
   const field = selectedField.value;
   if (!field?.origin) return;
   const edit = sourceEditForMove(props.source, field.origin.command.span, deltaX, deltaY, props.printDensity);
-  if (edit) emit("edit", edit);
+  if (edit) {
+    pendingDesignerFocus = "selection";
+    emit("edit", edit);
+  }
 }
 
-function handleCanvasKeydown(event: KeyboardEvent): void {
-  if (!selectedField.value) return;
-  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
-    if (!selectedField.value.movable) return;
-    event.preventDefault();
-    const step = event.shiftKey ? 10 : 1;
+function handledShortcut(event: KeyboardEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (
+    target.matches("input, textarea, select") ||
+    target.isContentEditable
+  );
+}
+
+function announceClipboard(message: string): void {
+  clipboardAnnouncement.value = message;
+  if (clipboardAnnouncementTimer !== undefined) window.clearTimeout(clipboardAnnouncementTimer);
+  clipboardAnnouncementTimer = window.setTimeout(() => {
+    clipboardAnnouncement.value = "";
+    clipboardAnnouncementTimer = undefined;
+  }, 1_800);
+}
+
+function validClipboardSpan(value: unknown, sourceLength: number): value is SourceSpan {
+  if (!value || typeof value !== "object") return false;
+  const span = value as Partial<SourceSpan>;
+  return Number.isInteger(span.start) && Number.isInteger(span.end) &&
+    span.start! >= 0 && span.end! > span.start! && span.end! <= sourceLength;
+}
+
+function parseVisualClipboard(raw: string): VisualClipboardItem | undefined {
+  if (!raw || raw.length > 9_000_000) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as { version?: unknown; source?: unknown; field?: Partial<VisualField> };
+    if (parsed.version !== 1 || typeof parsed.source !== "string" || parsed.source.length > 8_000_000 || !parsed.field) return undefined;
+    const field = parsed.field;
+    const originSpan = field.origin?.command?.span;
+    if (
+      !validClipboardSpan(field.sourceSpan, parsed.source.length) ||
+      !validClipboardSpan(originSpan, parsed.source.length) ||
+      typeof field.kind !== "string" ||
+      !["text", "barcode", "qr", "box", "circle", "ellipse", "graphic"].includes(field.kind)
+    ) return undefined;
+    return { source: parsed.source, field: field as VisualField, pasteCount: 0 };
+  } catch {
+    return undefined;
+  }
+}
+
+function handleVisualCopy(event: ClipboardEvent): void {
+  if (shortcutsOpen.value || isEditableTarget(event.target)) return;
+  const field = selectedField.value;
+  if (!field?.origin) return;
+  visualClipboard = { source: props.source, field, pasteCount: 0 };
+  const fieldSource = props.source.slice(field.sourceSpan.start, field.sourceSpan.end);
+  if (event.clipboardData) {
+    event.clipboardData.setData("text/plain", fieldSource);
+    try {
+      event.clipboardData.setData(visualClipboardMime, JSON.stringify({ version: 1, source: props.source, field }));
+    } catch {
+      // Some browsers only allow standard clipboard MIME types. The in-memory
+      // clipboard still provides visual paste for the current Designer session.
+    }
+  }
+  event.preventDefault();
+  announceClipboard(`${visualFieldLabel(field.kind, field.region.type)} copied`);
+}
+
+function handleVisualPaste(event: ClipboardEvent): void {
+  if (shortcutsOpen.value || isEditableTarget(event.target)) return;
+  let item = visualClipboard;
+  if (!item && event.clipboardData) item = parseVisualClipboard(event.clipboardData.getData(visualClipboardMime));
+  if (!item) return;
+  const pasteCount = item.pasteCount + 1;
+  const edit = sourceEditForPaste(
+    props.source,
+    props.activeLabelIndex,
+    item.source,
+    item.field,
+    props.printDensity,
+    pasteCount * 20,
+  );
+  if (!edit) return;
+  event.preventDefault();
+  item.pasteCount = pasteCount;
+  visualClipboard = item;
+  emitAndSelect(edit, item.field.kind);
+  announceClipboard(`${visualFieldLabel(item.field.kind, item.field.region?.type)} pasted`);
+}
+
+function handleDesignerKeydown(event: KeyboardEvent): void {
+  if (event.isComposing) return;
+  const helpKey = event.key === "?" || (event.shiftKey && (event.key === "/" || event.code === "Slash"));
+  if (shortcutsOpen.value) {
+    if (event.key === "Escape") {
+      handledShortcut(event);
+      closeShortcuts();
+    } else if (helpKey) {
+      handledShortcut(event);
+      closeShortcuts();
+    }
+    return;
+  }
+  if (isEditableTarget(event.target)) return;
+
+  const modifier = event.metaKey || event.ctrlKey;
+  const selected = selectedField.value;
+  if (modifier && event.key.toLowerCase() === "d" && selected) {
+    handledShortcut(event);
+    duplicateSelected();
+  } else if (modifier && event.key === "]" && selected) {
+    handledShortcut(event);
+    moveSelectedLayer("forward");
+  } else if (modifier && event.key === "[" && selected) {
+    handledShortcut(event);
+    moveSelectedLayer("backward");
+  } else if (!modifier && !event.altKey && selected && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+    if (!selected.movable) return;
+    handledShortcut(event);
+    const step = snapSize.value * (event.shiftKey ? 10 : 1);
     moveSelected(
       event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0,
       event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0,
     );
-  } else if (event.key === "Delete" || event.key === "Backspace") {
-    event.preventDefault();
+  } else if (!modifier && selected && (event.key === "Delete" || event.key === "Backspace")) {
+    handledShortcut(event);
     deleteSelected();
-  } else if (event.key === "Escape") {
-    event.preventDefault();
+  } else if (!modifier && event.key === "Escape") {
+    handledShortcut(event);
     clearSelection();
-  } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
-    event.preventDefault();
-    duplicateSelected();
+  } else if (!modifier && !event.altKey && event.key.toLowerCase() === "g") {
+    handledShortcut(event);
+    gridVisible.value = !gridVisible.value;
+  } else if (!modifier && !event.altKey && event.key === "0") {
+    handledShortcut(event);
+    fitLabel();
+  } else if (!modifier && !event.altKey && (event.key === "+" || event.key === "=")) {
+    handledShortcut(event);
+    changeZoom(10);
+  } else if (!modifier && !event.altKey && (event.key === "-" || event.key === "_")) {
+    handledShortcut(event);
+    changeZoom(-10);
+  } else if (!modifier && !event.altKey && helpKey) {
+    handledShortcut(event);
+    openShortcuts();
   }
 }
 
@@ -471,6 +749,7 @@ function emitAndSelect(edit: SourceEdit, kind?: VisualField["kind"]): void {
     selectionAnchor.value = edit.selectOriginAt;
     if (kind) selectionKind.value = kind;
   }
+  pendingDesignerFocus = "selection";
   emit("edit", edit);
 }
 
@@ -563,8 +842,41 @@ function deleteSelected(): void {
   if (!field) return;
   const edit = sourceEditForDelete(props.source, field.sourceSpan);
   if (!edit) return;
+  pendingDesignerFocus = "surface";
   clearSelection();
   emit("edit", edit);
+}
+
+function layerName(field: VisualField): string {
+  const content = field.content?.value.trim();
+  if (!content) return visualFieldLabel(field.kind, field.region.type);
+  return content.length > 28 ? `${content.slice(0, 27)}…` : content;
+}
+
+function layerDetails(field: VisualField): string {
+  const type = visualFieldLabel(field.kind, field.region.type);
+  return `${type} · ${Math.round(field.bounds.x)}, ${Math.round(field.bounds.y)}`;
+}
+
+function moveSelectedLayer(direction: "forward" | "backward"): void {
+  const field = selectedField.value;
+  const adjacent = direction === "forward" ? forwardLayer.value : backwardLayer.value;
+  if (!field || !adjacent) return;
+  const edit = sourceEditForLayerSwap(props.source, field, adjacent);
+  if (edit) emitAndSelect(edit, field.kind);
+}
+
+function openShortcuts(): void {
+  shortcutReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  shortcutsOpen.value = true;
+  void nextTick(() => shortcutCloseButton.value?.focus());
+}
+
+function closeShortcuts(): void {
+  shortcutsOpen.value = false;
+  const returnFocus = shortcutReturnFocus;
+  shortcutReturnFocus = null;
+  void nextTick(() => returnFocus?.focus());
 }
 
 function fieldIcon(field: VisualField): Component {
@@ -588,11 +900,27 @@ function updateViewportSize(): void {
   viewportHeight.value = viewport.value?.clientHeight ?? 0;
 }
 
+function restoreDesignerFocus(): void {
+  if (!pendingDesignerFocus || props.rendering) return;
+  void nextTick(() => {
+    const target = pendingDesignerFocus === "selection"
+      ? surface.value?.querySelector<HTMLElement>(".designer-field.selected")
+      : surface.value;
+    if (!target) return;
+    pendingDesignerFocus = undefined;
+    target.focus({ preventScroll: true });
+  });
+}
+
 watch(() => [props.label?.width, props.label?.height], () => void nextTick(updateViewportSize));
-watch(() => props.activeLabelIndex, clearSelection);
+watch(() => props.activeLabelIndex, () => clearSelection());
+watch([selectedField, () => props.rendering], restoreDesignerFocus);
 
 onMounted(() => {
   updateViewportSize();
+  window.addEventListener("keydown", handleDesignerKeydown);
+  window.addEventListener("copy", handleVisualCopy);
+  window.addEventListener("paste", handleVisualPaste);
   if (viewport.value) {
     resizeObserver = new ResizeObserver(updateViewportSize);
     resizeObserver.observe(viewport.value);
@@ -601,6 +929,10 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
+  window.removeEventListener("keydown", handleDesignerKeydown);
+  window.removeEventListener("copy", handleVisualCopy);
+  window.removeEventListener("paste", handleVisualPaste);
+  if (clipboardAnnouncementTimer !== undefined) window.clearTimeout(clipboardAnnouncementTimer);
   window.removeEventListener("pointermove", continueFieldDrag);
   window.removeEventListener("pointerup", finishFieldDrag);
   document.body.style.cursor = "";
@@ -718,7 +1050,7 @@ onBeforeUnmount(() => {
 }
 
 .designer-inspector { display: none; }
-.designer-inspector.has-selection {
+.designer-inspector.is-open {
   position: absolute;
   right: 0.75rem;
   bottom: 0.75rem;
@@ -730,6 +1062,61 @@ onBeforeUnmount(() => {
   border-radius: 0.75rem;
   box-shadow: 0 20px 45px rgb(24 24 27 / 0.18);
 }
+
+.designer-sidebar-tabs {
+  display: flex;
+  height: 3rem;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.2rem;
+  border-bottom: 1px solid rgb(228 228 231);
+  padding-inline: 0.5rem;
+}
+
+.designer-sidebar-tab {
+  display: inline-flex;
+  height: 2rem;
+  align-items: center;
+  gap: 0.35rem;
+  border-radius: 0.45rem;
+  padding-inline: 0.55rem;
+  color: rgb(113 113 122);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.designer-sidebar-tab:hover { color: rgb(39 39 42); }
+.designer-sidebar-tab.active { background: rgb(244 244 245); color: rgb(24 24 27); }
+
+.designer-layer-list { padding: 0.4rem; }
+.designer-layer-list > li + li { margin-top: 0.2rem; }
+.designer-layer-row {
+  display: flex;
+  width: 100%;
+  min-height: 3.25rem;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 0.55rem;
+  padding: 0.4rem 0.45rem;
+  color: rgb(82 82 91);
+}
+.designer-layer-row:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
+.designer-layer-row.selected { border-color: rgb(191 219 254); background: rgb(239 246 255); color: rgb(30 64 175); }
+.designer-layer-icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.45rem;
+  background: rgb(244 244 245);
+  color: rgb(82 82 91);
+}
+.designer-layer-row.selected .designer-layer-icon { background: white; color: rgb(37 99 235); }
+.designer-layer-row strong { display: block; overflow: hidden; text-overflow: ellipsis; color: inherit; font-size: 0.68rem; line-height: 1rem; white-space: nowrap; }
+.designer-layer-row small { display: block; overflow: hidden; text-overflow: ellipsis; color: rgb(113 113 122); font-size: 0.58rem; line-height: 0.9rem; white-space: nowrap; }
+.designer-layer-index { flex: 0 0 auto; color: rgb(113 113 122); font-size: 0.55rem; font-weight: 600; text-transform: uppercase; }
 
 .designer-property-section { margin-top: 1rem; border-top: 1px solid rgb(228 228 231); padding-top: 0.8rem; }
 .designer-property-section h4 { margin-bottom: 0.55rem; color: rgb(113 113 122); font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
@@ -783,9 +1170,55 @@ onBeforeUnmount(() => {
 .designer-danger-action { justify-content: center; border: 1px solid rgb(254 205 211); color: rgb(190 18 60); }
 .designer-danger-action:hover { background: rgb(255 241 242); }
 
+.designer-shortcuts-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(24 24 27 / 0.28);
+  padding: 1rem;
+  backdrop-filter: blur(2px);
+}
+.designer-shortcuts-dialog {
+  width: min(27rem, 100%);
+  overflow: hidden;
+  border: 1px solid rgb(228 228 231);
+  border-radius: 0.8rem;
+  background: white;
+  box-shadow: 0 24px 60px rgb(24 24 27 / 0.25);
+}
+.designer-shortcut-list { padding: 0.55rem 1rem 0.8rem; }
+.designer-shortcut-row {
+  display: flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgb(244 244 245);
+  color: rgb(82 82 91);
+  font-size: 0.7rem;
+}
+.designer-shortcut-row:last-child { border-bottom: 0; }
+.designer-shortcut-row kbd {
+  min-width: 1.55rem;
+  border: 1px solid rgb(212 212 216);
+  border-bottom-width: 2px;
+  border-radius: 0.35rem;
+  background: rgb(250 250 250);
+  padding: 0.16rem 0.35rem;
+  color: rgb(63 63 70);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.6rem;
+  text-align: center;
+}
+
 .designer-tool:focus-visible,
 .designer-tool-compact:focus-visible,
 .designer-field:focus-visible,
+.designer-layer-row:focus-visible,
+.designer-sidebar-tab:focus-visible,
 .designer-icon-button:focus-visible,
 .designer-zoom-button:focus-visible,
 .designer-secondary-action:focus-visible,
@@ -796,7 +1229,7 @@ onBeforeUnmount(() => {
 
 @media (min-width: 1024px) {
   .designer-inspector,
-  .designer-inspector.has-selection {
+  .designer-inspector.is-open {
     position: static;
     z-index: auto;
     display: flex;
@@ -809,7 +1242,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
-  .designer-inspector.has-selection { right: 0.4rem; bottom: 0.4rem; width: calc(100% - 0.8rem); max-height: 55%; }
+  .designer-inspector.is-open { right: 0.4rem; bottom: 0.4rem; width: calc(100% - 0.8rem); max-height: 65%; }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -820,12 +1253,23 @@ onBeforeUnmount(() => {
   .designer-tool, .designer-tool-compact, .designer-select { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(161 161 170); }
   .designer-tool:hover, .designer-tool-compact:hover { background: rgb(255 255 255 / 0.06); color: white; }
   .designer-icon-button:hover, .designer-icon-button.active, .designer-zoom-button:hover, .designer-label-tab.active { background: rgb(255 255 255 / 0.08); color: white; }
-  .designer-inspector.has-selection { border-color: rgb(255 255 255 / 0.1); }
+  .designer-inspector.is-open { border-color: rgb(255 255 255 / 0.1); }
+  .designer-sidebar-tabs { border-color: rgb(255 255 255 / 0.1); }
+  .designer-sidebar-tab:hover { color: white; }
+  .designer-sidebar-tab.active { background: rgb(255 255 255 / 0.08); color: white; }
+  .designer-layer-row:hover { background: rgb(255 255 255 / 0.06); color: white; }
+  .designer-layer-row.selected { border-color: rgb(59 130 246 / 0.35); background: rgb(59 130 246 / 0.12); color: rgb(147 197 253); }
+  .designer-layer-icon { background: rgb(255 255 255 / 0.06); color: rgb(161 161 170); }
+  .designer-layer-row.selected .designer-layer-icon { background: rgb(59 130 246 / 0.15); color: rgb(147 197 253); }
+  .designer-layer-row small, .designer-layer-index { color: rgb(161 161 170); }
   .designer-property-section { border-color: rgb(255 255 255 / 0.1); }
   .designer-property-label input, .designer-content-input { border-color: rgb(255 255 255 / 0.1); background: rgb(24 24 27); color: rgb(244 244 245); }
   .designer-secondary-action { border-color: rgb(255 255 255 / 0.1); color: rgb(212 212 216); }
   .designer-secondary-action:hover:not(:disabled) { background: rgb(255 255 255 / 0.08); color: white; }
   .designer-danger-action { border-color: rgb(244 63 94 / 0.25); color: rgb(253 164 175); }
   .designer-danger-action:hover { background: rgb(244 63 94 / 0.1); }
+  .designer-shortcuts-dialog { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); }
+  .designer-shortcut-row { border-color: rgb(255 255 255 / 0.06); color: rgb(212 212 216); }
+  .designer-shortcut-row kbd { border-color: rgb(255 255 255 / 0.16); background: rgb(255 255 255 / 0.06); color: rgb(228 228 231); }
 }
 </style>
