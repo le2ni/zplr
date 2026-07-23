@@ -2,8 +2,8 @@
   "version": "0.3.0",
   "freeze": "0.3.x may add compatible functionality but may not remove or reinterpret this surface.",
   "declarationSha256": {
-    "node": "262ece0864849712742e42ad561b4e05a01b3e8f833374c4a55425dd427a2573",
-    "web": "19a8d44ac3a84694068ab69daefb3060d3d13682d5e7a14605ea5064fc43e25f"
+    "node": "45e32226a6d6d34319f22c9458d96776add92f0654c5f8ea34fd0c17c2e40f22",
+    "web": "4a9cb86314691edceefd8906cae88004244c7e800406e41fa889ebc05cf96d85"
   },
   "runtimeExports": [
     "commandCapabilities",
@@ -36,6 +36,7 @@
     "RenderLimits",
     "RenderedLabel",
     "SourceSpan",
+    "TextCaretStop",
     "ZplCommandNode",
     "ZplDiagnostic",
     "ZplDiagnosticPhase",

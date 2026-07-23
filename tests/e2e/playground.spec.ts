@@ -50,6 +50,33 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
   await expect(page.locator(".monaco-editor .squiggly-warning, .monaco-editor .squiggly-error")).not.toHaveCount(0);
 });
 
+test("uses the system color scheme as the default editor theme", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+
+  const monaco = page.getByTestId("zpl-editor").locator(".monaco-editor").first();
+  await expect(monaco).toHaveClass(/vs-dark/);
+  await page.getByRole("button", { name: "Editor and printer settings", exact: true }).click();
+  const themeSelect = page.locator("label.settings-field").filter({ hasText: "Editor theme" }).locator("select");
+  await expect(themeSelect).toHaveValue("system");
+
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect(monaco).not.toHaveClass(/vs-dark/);
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect(monaco).toHaveClass(/vs-dark/);
+
+  await themeSelect.selectOption("light");
+  await expect(monaco).not.toHaveClass(/vs-dark/);
+  await page.waitForTimeout(300);
+  await page.reload();
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("zpl-editor").locator(".monaco-editor").first()).not.toHaveClass(/vs-dark/);
+  await page.getByRole("button", { name: "Editor and printer settings", exact: true }).click();
+  await expect(page.locator("label.settings-field").filter({ hasText: "Editor theme" }).locator("select"))
+    .toHaveValue("light");
+});
+
 test("keeps multiple files, dirty state, and editor models independent", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
@@ -277,6 +304,197 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await expect(editorSurface).toContainText("^B3");
   await expect(page.locator(".monaco-editor .highlighted-command-inline")).toHaveCount(0);
   await expect(page.locator(".designer-root footer")).toContainText("selected");
+});
+
+test("positions the inline caret from rendered glyph advances", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const field = page.locator('.designer-field[data-visual-kind="text"]');
+  await expect(field).toHaveCount(1);
+  await expect(field).toBeVisible();
+  const initialBounds = await field.boundingBox();
+  expect(initialBounds).not.toBeNull();
+  await field.click();
+  await page.getByRole("textbox", { name: "Field content", exact: true }).fill("WiWi");
+  await expect.poll(async () => (await field.boundingBox())?.width ?? initialBounds!.width)
+    .toBeLessThan(initialBounds!.width * 0.75);
+
+  await field.dblclick({ position: { x: 2, y: Math.max(2, initialBounds!.height / 2) } });
+  const editor = page.getByRole("textbox", { name: "Edit text inline", exact: true });
+  const caret = page.getByTestId("inline-caret");
+  await expect(editor).toBeVisible();
+  const selectionFrame = await field.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      borderWidth: style.borderTopWidth,
+      outlineStyle: style.outlineStyle,
+      boxShadow: style.boxShadow,
+    };
+  });
+  expect(selectionFrame).toEqual({ borderWidth: "1px", outlineStyle: "none", boxShadow: "none" });
+  await editor.press("Home");
+  await expect(caret).toHaveAttribute("data-caret-offset", "0");
+  const first = await caret.boundingBox();
+  expect(first).not.toBeNull();
+
+  await editor.press("ArrowRight");
+  await expect(caret).toHaveAttribute("data-caret-offset", "1");
+  const afterWideGlyph = await caret.boundingBox();
+  expect(afterWideGlyph).not.toBeNull();
+
+  await editor.press("ArrowRight");
+  await expect(caret).toHaveAttribute("data-caret-offset", "2");
+  const afterNarrowGlyph = await caret.boundingBox();
+  expect(afterNarrowGlyph).not.toBeNull();
+
+  const wideAdvance = afterWideGlyph!.x - first!.x;
+  const narrowAdvance = afterNarrowGlyph!.x - afterWideGlyph!.x;
+  expect(wideAdvance).toBeGreaterThan(narrowAdvance * 1.5);
+});
+
+test("edits barcode and QR payloads in inline input boxes", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const canvas = page.getByTestId("visual-label-canvas");
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText([
+    "^XA",
+    "^PW600",
+    "^LL400",
+    "^FO40,40",
+    "^BCN,80,Y,N,N",
+    "^FD1234567890^FS",
+    "^FO350,40",
+    "^BQN,2,5",
+    "^FDQA,https://example.com^FS",
+    "^XZ",
+  ].join("\n"));
+  const barcode = canvas.locator('[data-visual-kind="barcode"]');
+  const qrCode = canvas.locator('[data-visual-kind="qr"]');
+  await expect(barcode).toHaveCount(1);
+  await expect(qrCode).toHaveCount(1);
+  await expect(barcode).toBeVisible();
+  await expect(qrCode).toBeVisible();
+  await expect(page.getByRole("region", { name: "WYSIWYG label editor", exact: true }))
+    .toContainText("600 × 400 dots");
+  await expect.poll(async () => {
+    const bounds = await canvas.boundingBox();
+    return bounds ? bounds.width / bounds.height : 0;
+  }).toBeGreaterThan(1);
+  const barcodeBounds = await barcode.boundingBox();
+  expect(barcodeBounds).not.toBeNull();
+  await barcode.dblclick({ position: { x: barcodeBounds!.width / 2, y: barcodeBounds!.height / 2 } });
+  const barcodeInput = page.getByRole("textbox", { name: "Edit barcode data inline", exact: true });
+  await expect(barcodeInput).toBeVisible();
+  await expect(barcodeInput).toHaveValue("1234567890");
+  await barcodeInput.fill("9876543210");
+  await expect(editorSurface).toContainText("^FD9876543210^FS");
+  await barcodeInput.press("Enter");
+  await expect(barcodeInput).toBeHidden();
+
+  const qrBounds = await qrCode.boundingBox();
+  expect(qrBounds).not.toBeNull();
+  await qrCode.dblclick({ position: { x: qrBounds!.width / 2, y: qrBounds!.height / 2 } });
+  const qrInput = page.getByRole("textbox", { name: "Edit qr code data inline", exact: true });
+  await expect(qrInput).toBeVisible();
+  await expect(qrInput).toHaveValue("https://example.com");
+  await qrInput.fill("https://zplr.dev/labels");
+  await expect(editorSurface).toContainText("^FDQA,https://zplr.dev/labels^FS");
+  await qrInput.press("Enter");
+  await expect(qrInput).toBeHidden();
+});
+
+test("zooms around the pointer and pans with touchpad wheel gestures", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText("^XA\n^PW1218\n^LL812\n^FO40,40^A0N,40,40^FDGesture test^FS\n^XZ");
+  await expect(page.getByRole("region", { name: "WYSIWYG label editor", exact: true }))
+    .toContainText("1218 × 812 dots");
+
+  const viewport = page.locator(".designer-viewport");
+  const canvas = page.getByTestId("visual-label-canvas");
+  const zoomReadout = page.getByTitle("Fit label", { exact: true });
+  await expect(viewport).toBeVisible();
+  await expect(canvas).toBeVisible();
+
+  const viewportBounds = await viewport.boundingBox();
+  expect(viewportBounds).not.toBeNull();
+  const anchor = {
+    x: viewportBounds!.x + viewportBounds!.width * 0.55,
+    y: viewportBounds!.y + viewportBounds!.height * 0.55,
+  };
+  await page.mouse.move(anchor.x, anchor.y);
+  await page.keyboard.down("Control");
+  try {
+    await page.mouse.wheel(0, -50);
+    await page.mouse.wheel(0, -50);
+    await page.mouse.wheel(0, -50);
+  } finally {
+    await page.keyboard.up("Control");
+  }
+  await expect(zoomReadout).toHaveText("250%");
+  const overflowAtMaximumZoom = await viewport.evaluate((element) => {
+    const canvasElement = element.querySelector<HTMLElement>('[data-testid="visual-label-canvas"]');
+    return {
+      canvasWidth: canvasElement?.getBoundingClientRect().width ?? 0,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+  expect(overflowAtMaximumZoom.scrollWidth).toBeGreaterThan(overflowAtMaximumZoom.canvasWidth + 50);
+
+  const beforeZoom = await canvas.boundingBox();
+  expect(beforeZoom).not.toBeNull();
+  const anchorFraction = {
+    x: (anchor.x - beforeZoom!.x) / beforeZoom!.width,
+    y: (anchor.y - beforeZoom!.y) / beforeZoom!.height,
+  };
+  await page.keyboard.down("Control");
+  try {
+    await page.mouse.wheel(0, 20);
+  } finally {
+    await page.keyboard.up("Control");
+  }
+  await expect(zoomReadout).not.toHaveText("250%");
+  const afterZoom = await canvas.boundingBox();
+  expect(afterZoom).not.toBeNull();
+  expect(Math.abs(afterZoom!.x + afterZoom!.width * anchorFraction.x - anchor.x)).toBeLessThan(3);
+  expect(Math.abs(afterZoom!.y + afterZoom!.height * anchorFraction.y - anchor.y)).toBeLessThan(3);
+
+  const zoomBeforePan = await zoomReadout.textContent();
+  const scrollBeforePan = await viewport.evaluate((element) => ({
+    left: element.scrollLeft,
+    top: element.scrollTop,
+  }));
+  await page.mouse.wheel(60, 80);
+  await expect.poll(async () => viewport.evaluate((element) => element.scrollLeft))
+    .toBeGreaterThan(scrollBeforePan.left);
+  await expect.poll(async () => viewport.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(scrollBeforePan.top);
+  await expect(zoomReadout).toHaveText(zoomBeforePan ?? "");
+
+  await page.mouse.wheel(-100_000, -100_000);
+  await expect.poll(async () => viewport.evaluate((element) => [element.scrollLeft, element.scrollTop]))
+    .toEqual([0, 0]);
+  await page.mouse.wheel(100_000, 100_000);
+  const maximumScroll = await viewport.evaluate((element) => ({
+    left: element.scrollWidth - element.clientWidth,
+    top: element.scrollHeight - element.clientHeight,
+  }));
+  await expect.poll(async () => viewport.evaluate((element) => element.scrollLeft))
+    .toBeGreaterThan(maximumScroll.left - 1);
+  await expect.poll(async () => viewport.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(maximumScroll.top - 1);
 });
 
 test("uses distinct snapline colors for the label and other objects", async ({ page }) => {

@@ -13,7 +13,7 @@ import type {
   FontProvider,
   MonochromeRaster,
 } from "@/types/RenderJob";
-import type { HighlightRegion } from "@/types/HighlightRegion";
+import type { HighlightRegion, TextCaretStop } from "@/types/HighlightRegion";
 import type { Orientation } from "@/types/Orientation";
 import type { ZplDiagnostic } from "@/types/ZplDocument";
 import {
@@ -127,6 +127,21 @@ function transformHighlightRegions(
 ): HighlightRegion[] {
   return regions.map((source) => {
     const region = { ...source };
+    if (region.textCaretStops) {
+      const transformPoint = (x: number, y: number) => {
+        if (options.mirror) x = width - x;
+        if (options.rotate180) {
+          x = width - x;
+          y = height - y;
+        }
+        return { x, y };
+      };
+      region.textCaretStops = region.textCaretStops.map((stop) => {
+        const start = transformPoint(stop.x, stop.y);
+        const end = transformPoint(stop.endX, stop.endY);
+        return { ...stop, x: start.x, y: start.y, endX: end.x, endY: end.y };
+      });
+    }
     if (region.width !== undefined && region.height !== undefined) {
       if (options.mirror) region.x = width - region.x - region.width;
       if (options.rotate180) {
@@ -197,6 +212,52 @@ function orientedSize(
   return orientation === "R" || orientation === "B"
     ? { width: height, height: width }
     : { width, height };
+}
+
+interface IndexedTextCharacter {
+  character: string;
+  start: number;
+  end: number;
+}
+
+function indexedTextCharacters(value: string): IndexedTextCharacter[] {
+  const result: IndexedTextCharacter[] = [];
+  let offset = 0;
+  for (const character of value) {
+    const start = offset;
+    offset += character.length;
+    result.push({ character, start, end: offset });
+  }
+  return result;
+}
+
+function setTextCaretStop(stops: TextCaretStop[], stop: TextCaretStop): void {
+  const existing = stops.findIndex(({ offset }) => offset === stop.offset);
+  if (existing >= 0) stops[existing] = stop;
+  else stops.push(stop);
+}
+
+function orientTextCaretStops(
+  stops: readonly TextCaretStop[],
+  orientation: Orientation,
+  logicalWidth: number,
+  logicalHeight: number,
+  x: number,
+  y: number
+): TextCaretStop[] {
+  const point = (sourceX: number, sourceY: number) => {
+    if (orientation === "R") return { x: x + logicalHeight - sourceY, y: y + sourceX };
+    if (orientation === "I") return { x: x + logicalWidth - sourceX, y: y + logicalHeight - sourceY };
+    if (orientation === "B") return { x: x + sourceY, y: y + logicalWidth - sourceX };
+    return { x: x + sourceX, y: y + sourceY };
+  };
+  return stops
+    .map((stop) => {
+      const start = point(stop.x, stop.y);
+      const end = point(stop.endX, stop.endY);
+      return { offset: stop.offset, x: start.x, y: start.y, endX: end.x, endY: end.y };
+    })
+    .sort((left, right) => left.offset - right.offset);
 }
 
 function measureText(value: string, font: LayoutFont): number {
@@ -798,15 +859,22 @@ async function renderTextField(
   width: number;
   height: number;
   substituted: boolean;
+  textCaretStops?: readonly TextCaretStop[];
 }> {
+  const originalData = field.data;
   if (field.advancedText) {
     field = {
       ...field,
       data: shapeAndOrderText(field.data, field.advancedText),
     };
   }
+  const textMappingExact = field.data === originalData;
   if (field.direction === "V") {
-    const characters = [...parseTextBlockEscapes(field.data)];
+    const renderedText = parseTextBlockEscapes(field.data);
+    const characters = [...renderedText];
+    const mappedCharacters = textMappingExact && renderedText === originalData && !/[\r\n]/.test(renderedText)
+      ? indexedTextCharacters(originalData)
+      : undefined;
     const gap = Math.max(0, field.characterGap ?? 0);
     const blockWidth = field.block?.width;
     const blockHeight = field.block?.height;
@@ -818,10 +886,31 @@ async function renderTextField(
           Math.max(0, characters.length - 1) * gap
     );
     const textRaster = allocate(logicalWidth, logicalHeight);
+    const logicalCaretStops: TextCaretStop[] = [];
     let cursor = 0;
     let substituted = false;
-    for (const character of characters) {
+    if (mappedCharacters?.length === 0) {
+      setTextCaretStop(logicalCaretStops, {
+        offset: 0,
+        x: 0,
+        y: 0,
+        endX: logicalWidth,
+        endY: 0,
+      });
+    }
+    for (let characterIndex = 0; characterIndex < characters.length; characterIndex++) {
+      const character = characters[characterIndex];
       if (character === "\n" || character === "\r") continue;
+      const mapped = mappedCharacters?.[characterIndex];
+      if (mapped) {
+        setTextCaretStop(logicalCaretStops, {
+          offset: mapped.start,
+          x: 0,
+          y: Math.round(cursor),
+          endX: logicalWidth,
+          endY: Math.round(cursor),
+        });
+      }
       const resolved = await glyphFor(
         engine,
         character,
@@ -838,6 +927,17 @@ async function renderTextField(
         Math.max(0, Math.floor((logicalWidth - resolved.raster.width) / 2)),
         cursor
       );
+      const nextCursor = cursor + resolved.raster.height +
+        (characterIndex + 1 < characters.length ? gap : 0);
+      if (mapped) {
+        setTextCaretStop(logicalCaretStops, {
+          offset: mapped.end,
+          x: 0,
+          y: Math.round(nextCursor),
+          endX: logicalWidth,
+          endY: Math.round(nextCursor),
+        });
+      }
       cursor += resolved.raster.height + gap;
     }
     const oriented = orientedSize(field.orientation, logicalWidth, logicalHeight);
@@ -847,9 +947,29 @@ async function renderTextField(
       orientation: field.orientation,
       operation: operation(field.reverse),
     });
-    return { x, y: field.y, ...size, substituted };
+    const textCaretStops = orientTextCaretStops(
+      logicalCaretStops,
+      field.orientation,
+      logicalWidth,
+      logicalHeight,
+      x,
+      field.y
+    );
+    return {
+      x,
+      y: field.y,
+      ...size,
+      substituted,
+      ...(textCaretStops.length > 0 ? { textCaretStops } : {}),
+    };
   }
   const lines = layoutTextLines(field);
+  const exactCaretCharacters = textMappingExact &&
+    lines.length === 1 &&
+    lines[0]?.text === originalData &&
+    !lines[0]?.overprints?.length
+    ? indexedTextCharacters(originalData)
+    : undefined;
   const effectiveBitmapFonts =
     field.font.resources?.bitmapFonts ?? bitmapFonts;
   const bitmapFont = field.font.name
@@ -891,12 +1011,14 @@ async function renderTextField(
   );
   const logicalHeight = Math.max(1, field.font.height + Math.max(0, lines.length - 1) * lineStep);
   const textRaster = allocate(logicalWidth, logicalHeight);
+  const logicalCaretStops: TextCaretStop[] = [];
   const op = operation(field.reverse);
   let substituted = false;
   const drawLine = async (
     line: RasterTextLine,
     lineIndex: number,
-    isLastLine: boolean
+    isLastLine: boolean,
+    caretCharacters?: readonly IndexedTextCharacter[]
   ) => {
     const available = logicalWidth - line.indent;
     let cursor = line.indent;
@@ -905,9 +1027,11 @@ async function renderTextField(
     } else if (field.block?.justification === "R") {
       cursor += Math.max(0, available - line.width);
     }
-    const characters = [...line.text];
+    const characters: Array<{ character: string; start?: number; end?: number }> = caretCharacters
+      ? caretCharacters.map((character) => ({ ...character }))
+      : [...line.text].map((character) => ({ character }));
     if (field.direction === "R") characters.reverse();
-    const spaces = characters.filter((character) => character === " ").length;
+    const spaces = characters.filter(({ character }) => character === " ").length;
     const extraGap =
       field.block?.justification === "J" &&
       !line.paragraphEnd &&
@@ -915,7 +1039,28 @@ async function renderTextField(
       spaces > 0
         ? Math.max(0, available - line.width) / spaces
         : 0;
-    for (const character of characters) {
+    if (caretCharacters?.length === 0) {
+      setTextCaretStop(logicalCaretStops, {
+        offset: 0,
+        x: Math.round(cursor),
+        y: lineIndex * lineStep,
+        endX: Math.round(cursor),
+        endY: lineIndex * lineStep + field.font.height,
+      });
+    }
+    for (let characterIndex = 0; characterIndex < characters.length; characterIndex++) {
+      const entry = characters[characterIndex]!;
+      const character = entry.character;
+      const beforeOffset = field.direction === "R" ? entry.end : entry.start;
+      if (beforeOffset !== undefined) {
+        setTextCaretStop(logicalCaretStops, {
+          offset: beforeOffset,
+          x: Math.round(cursor),
+          y: lineIndex * lineStep,
+          endX: Math.round(cursor),
+          endY: lineIndex * lineStep + field.font.height,
+        });
+      }
       const resolved = await glyphFor(
         engine,
         character,
@@ -932,15 +1077,31 @@ async function renderTextField(
         lineIndex * lineStep,
         { operation: "set" }
       );
-      cursor +=
+      const nextCursor = cursor +
         resolved.raster.width +
-        Math.max(0, field.characterGap ?? 0) +
+        (characterIndex + 1 < characters.length ? Math.max(0, field.characterGap ?? 0) : 0) +
         (character === " " ? extraGap : 0);
+      const afterOffset = field.direction === "R" ? entry.start : entry.end;
+      if (afterOffset !== undefined) {
+        setTextCaretStop(logicalCaretStops, {
+          offset: afterOffset,
+          x: Math.round(nextCursor),
+          y: lineIndex * lineStep,
+          endX: Math.round(nextCursor),
+          endY: lineIndex * lineStep + field.font.height,
+        });
+      }
+      cursor = nextCursor;
     }
   };
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    await drawLine(lines[lineIndex], lineIndex, lineIndex === lines.length - 1);
+    await drawLine(
+      lines[lineIndex],
+      lineIndex,
+      lineIndex === lines.length - 1,
+      lineIndex === 0 ? exactCaretCharacters : undefined
+    );
     for (const overprint of lines[lineIndex].overprints ?? []) {
       await drawLine(overprint, lineIndex, lineIndex === lines.length - 1);
     }
@@ -957,7 +1118,21 @@ async function renderTextField(
     orientation: field.orientation,
     operation: op,
   });
-  return { x, y: field.y, ...size, substituted };
+  const textCaretStops = orientTextCaretStops(
+    logicalCaretStops,
+    field.orientation,
+    logicalWidth,
+    logicalHeight,
+    x,
+    field.y
+  );
+  return {
+    x,
+    y: field.y,
+    ...size,
+    substituted,
+    ...(textCaretStops.length > 0 ? { textCaretStops } : {}),
+  };
 }
 
 function bitmapToRaster(

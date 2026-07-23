@@ -77,6 +77,24 @@ describe("shared renderer", () => {
     expect(countDarkPixels(result.labels[0].canvas)).toBeGreaterThan(0);
   });
 
+  it("reports caret stops from each internally rendered glyph", async () => {
+    const result = await renderZpl(
+      "^XA^PW120^LL80^FO10,10^A0N,20,20^FDWi.W^FS^FO80,10^A0R,20,20^FDWi^FS^XZ"
+    );
+    const text = result.labels[0].highlightRegions.filter(({ type }) => type === "text");
+    const normal = text[0]!;
+    const normalStops = normal.textCaretStops ?? [];
+    expect(normalStops.map(({ offset }) => offset)).toEqual([0, 1, 2, 3, 4]);
+    const advances = normalStops.slice(1).map((stop, index) => stop.x - normalStops[index]!.x);
+    expect(new Set(advances).size).toBeGreaterThan(1);
+    expect(normalStops.at(-1)!.x - normalStops[0]!.x).toBe(normal.width);
+    expect(normalStops.every((stop) => stop.y === 10 && stop.endY === 30)).toBe(true);
+
+    const rotatedStops = text[1]!.textCaretStops ?? [];
+    expect(rotatedStops.map(({ offset }) => offset)).toEqual([0, 1, 2]);
+    expect(rotatedStops.every((stop) => stop.y === stop.endY && stop.x !== stop.endX)).toBe(true);
+  });
+
   it("renders graphic boxes and circles with declared geometry", async () => {
     const document = parseDocument(
       "^XA^FO10,10^GB30,20,3,B,4^FS^FO60,10^GC20,2,B^FS^XZ"

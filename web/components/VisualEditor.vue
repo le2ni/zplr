@@ -3,6 +3,7 @@
     class="designer-root relative flex min-h-0 flex-1 overflow-hidden bg-zinc-100 dark:bg-zinc-900"
     :class="{ embedded }"
     aria-label="WYSIWYG label editor"
+    @pointerdown.capture="captureInlineDataDoublePress"
   >
     <aside class="designer-toolbox hidden w-52 shrink-0 flex-col border-r border-zinc-200 bg-white lg:flex dark:border-white/10 dark:bg-zinc-950" aria-label="Add label elements">
       <div class="border-b border-zinc-200 px-3 py-3 dark:border-white/10">
@@ -136,7 +137,7 @@
           </button>
           <div class="ml-1 flex items-center rounded-md border border-zinc-200 dark:border-white/10">
             <button class="designer-zoom-button" type="button" title="Zoom out" @click="changeZoom(-10)"><IconMagnifyMinusOutline class="size-3.5" aria-hidden="true" /><span class="sr-only">Zoom out</span></button>
-            <button class="min-w-12 border-x border-zinc-200 px-1.5 py-1 text-[10px] text-zinc-500 dark:border-white/10" type="button" title="Fit label" @click="fitLabel">{{ zoom === 100 ? "Fit" : `${zoom}%` }}</button>
+            <button class="min-w-12 border-x border-zinc-200 px-1.5 py-1 text-[10px] text-zinc-500 dark:border-white/10" type="button" title="Fit label" @click="fitLabel">{{ zoomLabel }}</button>
             <button class="designer-zoom-button" type="button" title="Zoom in" @click="changeZoom(10)"><IconMagnifyPlusOutline class="size-3.5" aria-hidden="true" /><span class="sr-only">Zoom in</span></button>
           </div>
         </div>
@@ -163,11 +164,13 @@
       <div
         ref="viewport"
         class="designer-viewport relative min-h-0 flex-1 overflow-auto"
+        title="Two-finger scroll to pan; pinch or Ctrl/⌘ + scroll to zoom"
         @dragover="dragOverCanvas"
         @drop="dropOnCanvas"
+        @wheel="handleViewportWheel"
         @pointerdown.self="clearSelection"
       >
-        <div class="flex min-h-full min-w-full items-center justify-center p-7 sm:p-10" @pointerdown.self="clearSelection">
+        <div class="designer-canvas-stage flex min-h-full min-w-full items-center justify-center p-7 sm:p-10" @pointerdown.self="clearSelection">
           <div
             v-if="label && previewUrl"
             ref="surface"
@@ -222,6 +225,7 @@
               :aria-label="isInlineEditing(field) ? undefined : `${visualFieldLabel(field.kind, field.region.type)} at ${Math.round(field.bounds.x)}, ${Math.round(field.bounds.y)}${field.locked || !field.movable ? ', position locked' : ''}`"
               :title="fieldTitle(field)"
               :data-visual-kind="field.kind"
+              :data-field-id="field.id"
               @click.stop="finishFieldClick($event, field)"
               @dblclick.stop="beginInlineEdit(field, $event)"
               @pointermove="updateFieldCursor($event, field)"
@@ -229,9 +233,28 @@
               @pointerdown.stop="beginFieldInteraction($event, field)"
               @keydown.space.prevent.stop="selectField(field, $event)"
             >
+              <input
+                v-if="isInlineEditing(field) && field.kind !== 'text'"
+                class="designer-inline-control designer-inline-data-editor"
+                :style="inlineDataEditorStyle(field)"
+                :value="inlineEdit?.value ?? ''"
+                type="text"
+                :aria-label="inlineDataEditorLabel(field)"
+                autocomplete="off"
+                spellcheck="false"
+                @input="updateInlineText"
+                @keydown="handleInlineTextKeydown"
+                @select="syncInlineSelection"
+                @click.stop
+                @pointerdown.stop
+                @pointermove.stop
+                @dblclick.stop
+                @blur="finishInlineEdit"
+              />
               <span
-                v-if="isInlineEditing(field)"
-                class="designer-inline-editor"
+                v-else-if="isInlineEditing(field)"
+                class="designer-inline-control designer-inline-editor"
+                :class="{ 'uses-rendered-caret': hasRenderedCaret(field) }"
                 :style="inlineEditorStyle(field)"
                 contenteditable="plaintext-only"
                 role="textbox"
@@ -239,7 +262,7 @@
                 spellcheck="false"
                 @input="updateInlineText"
                 @keydown="handleInlineTextKeydown"
-                @click.stop
+                @click.stop="placeInlineCaret($event, field)"
                 @pointerdown.stop
                 @pointermove.stop
                 @dblclick.stop
@@ -247,6 +270,14 @@
               ></span>
               <span v-else class="sr-only">{{ visualFieldLabel(field.kind, field.region.type) }}</span>
             </div>
+            <span
+              v-if="inlineCaretStyle"
+              class="designer-inline-caret"
+              :style="inlineCaretStyle"
+              :data-caret-offset="inlineEdit?.selectionStart"
+              data-testid="inline-caret"
+              aria-hidden="true"
+            ></span>
             <div
               v-if="selectedField?.origin"
               class="designer-origin-marker pointer-events-none absolute z-20"
@@ -606,7 +637,7 @@ import {
   IconVectorLine,
   IconVectorSquareEdit,
 } from "@iconify-prerendered/vue-mdi";
-import type { PrintDensity, RenderedLabel, SourceSpan } from "../../src/index.web";
+import type { PrintDensity, RenderedLabel, SourceSpan, TextCaretStop } from "../../src/index.web";
 import {
   collectVisualFields,
   sourceEditForContent,
@@ -704,7 +735,7 @@ const shortcuts: readonly { action: string; keys: readonly string[] }[] = [
   { action: "Select every layer", keys: ["⌘/Ctrl", "A"] },
   { action: "Move by snap amount", keys: ["Arrow keys"] },
   { action: "Move by 10 snap steps", keys: ["Shift", "Arrow keys"] },
-  { action: "Edit selected text inline", keys: ["Enter / double-click"] },
+  { action: "Edit selected field data inline", keys: ["Enter / double-click"] },
   { action: "Copy selected layer", keys: ["⌘/Ctrl", "C"] },
   { action: "Paste copied layer", keys: ["⌘/Ctrl", "V"] },
   { action: "Delete selected layer", keys: ["Backspace / Delete"] },
@@ -715,6 +746,8 @@ const shortcuts: readonly { action: string; keys: readonly string[] }[] = [
   { action: "Toggle grid", keys: ["G"] },
   { action: "Fit label", keys: ["0"] },
   { action: "Zoom", keys: ["+ / −"] },
+  { action: "Pan canvas", keys: ["Two-finger scroll"] },
+  { action: "Zoom around pointer", keys: ["Pinch / Ctrl/⌘ + scroll"] },
   { action: "Open this shortcut list", keys: ["?"] },
 ];
 
@@ -805,6 +838,7 @@ const rulerStep = computed(() => {
 });
 const rulerXTicks = computed(() => rulerTicks(props.label?.width ?? 0));
 const rulerYTicks = computed(() => rulerTicks(props.label?.height ?? 0));
+const zoomLabel = computed(() => zoom.value === 100 ? "Fit" : `${Math.round(zoom.value)}%`);
 
 interface DragState {
   fields: readonly VisualField[];
@@ -833,6 +867,8 @@ interface InlineEditState {
   originalValue: string;
   value: string;
   fieldNumber?: string;
+  selectionStart: number;
+  selectionEnd: number;
 }
 
 interface MarqueeState {
@@ -870,6 +906,8 @@ let clipboardAnnouncementTimer: number | undefined;
 let guideSequence = 0;
 let pressedFieldId: string | undefined;
 let pressedFieldResetTimer: number | undefined;
+let pendingDataDoublePress: { fieldId: string; clientX: number; clientY: number; at: number } | undefined;
+let pendingInlineOpenTimer: number | undefined;
 
 function selectionOffset(field: VisualField): number {
   return field.origin?.command.span.start ?? field.sourceSpan.start;
@@ -980,7 +1018,13 @@ function fieldTitle(field: VisualField): string {
     ? `Drag ${visualFieldLabel(field.kind, field.region.type).toLowerCase()} to move`
     : "This field has no directly editable ^FO or ^FT origin";
   const resize = visualResizeMode(field) ? " · resize from an edge or corner" : "";
-  return field.kind === "text" && field.content ? `Double-click to edit text · ${move}${resize}` : `${move}${resize}`;
+  if (!field.content) return `${move}${resize}`;
+  const dataType = field.kind === "text" ? "text" : "field data";
+  return `Double-click to edit ${dataType} · ${move}${resize}`;
+}
+
+function inlineDataEditorLabel(field: VisualField): string {
+  return `Edit ${visualFieldLabel(field.kind, field.region.type).toLowerCase()} data inline`;
 }
 
 function snap(value: number): number {
@@ -1053,6 +1097,93 @@ function inlineEditorStyle(field: VisualField): CSSProperties {
   };
 }
 
+function inlineDataEditorStyle(field: VisualField): CSSProperties {
+  const label = props.label;
+  const state = inlineEdit.value;
+  if (!label || !state) return {};
+  const bounds = visualBoundsFor(field);
+  const rawFieldWidth = Math.max(1, bounds.width * canvasScale.value);
+  const rawFieldHeight = Math.max(1, bounds.height * canvasScale.value);
+  const fieldWidth = Math.max(8, rawFieldWidth);
+  const fieldHeight = Math.max(8, rawFieldHeight);
+  const fieldLeft = bounds.x * canvasScale.value - (fieldWidth - rawFieldWidth) / 2;
+  const fieldTop = bounds.y * canvasScale.value - (fieldHeight - rawFieldHeight) / 2;
+  const surfaceWidth = label.width * canvasScale.value;
+  const surfaceHeight = label.height * canvasScale.value;
+  const contentWidth = Math.min(360, Math.max(160, state.value.length * 8 + 24));
+  const width = Math.min(Math.max(80, surfaceWidth - 16), Math.max(contentWidth, rawFieldWidth));
+  const height = 32;
+  const globalLeft = Math.max(8, Math.min(surfaceWidth - width - 8, fieldLeft + (fieldWidth - width) / 2));
+  const globalTop = Math.max(8, Math.min(surfaceHeight - height - 8, fieldTop + (fieldHeight - height) / 2));
+  return {
+    left: `${globalLeft - fieldLeft}px`,
+    top: `${globalTop - fieldTop}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+  };
+}
+
+function hasRenderedCaret(field: VisualField): boolean {
+  return (field.region.textCaretStops?.length ?? 0) > 0;
+}
+
+function caretStopDistanceSquared(stop: TextCaretStop, x: number, y: number): number {
+  const deltaX = stop.endX - stop.x;
+  const deltaY = stop.endY - stop.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  const progress = lengthSquared <= 0
+    ? 0
+    : Math.max(0, Math.min(1, ((x - stop.x) * deltaX + (y - stop.y) * deltaY) / lengthSquared));
+  const nearestX = stop.x + deltaX * progress;
+  const nearestY = stop.y + deltaY * progress;
+  return (x - nearestX) ** 2 + (y - nearestY) ** 2;
+}
+
+function renderedCaretOffsetAt(field: VisualField, clientX: number, clientY: number): number | undefined {
+  const stops = field.region.textCaretStops;
+  const label = props.label;
+  const element = surface.value;
+  if (!stops?.length || !label || !element) return undefined;
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return undefined;
+  const x = (clientX - rect.left) / rect.width * label.width;
+  const y = (clientY - rect.top) / rect.height * label.height;
+  let best = stops[0]!;
+  let bestDistance = caretStopDistanceSquared(best, x, y);
+  for (const stop of stops.slice(1)) {
+    const distance = caretStopDistanceSquared(stop, x, y);
+    if (distance <= bestDistance) {
+      best = stop;
+      bestDistance = distance;
+    }
+  }
+  return best.offset;
+}
+
+const inlineCaretStyle = computed<CSSProperties | undefined>(() => {
+  const state = inlineEdit.value;
+  if (!state || state.selectionStart !== state.selectionEnd) return undefined;
+  const field = fields.value.find(({ id }) => id === state.fieldId);
+  const stops = field?.region.textCaretStops;
+  if (!stops?.length) return undefined;
+  const stop = stops.find(({ offset }) => offset === state.selectionStart) ??
+    [...stops].sort((left, right) =>
+      Math.abs(left.offset - state.selectionStart) - Math.abs(right.offset - state.selectionStart))[0];
+  if (!stop) return undefined;
+  const startX = stop.x * canvasScale.value;
+  const startY = stop.y * canvasScale.value;
+  const deltaX = (stop.endX - stop.x) * canvasScale.value;
+  const deltaY = (stop.endY - stop.y) * canvasScale.value;
+  const length = Math.max(8, Math.hypot(deltaX, deltaY));
+  const rotation = Math.atan2(deltaY, deltaX) * 180 / Math.PI - 90;
+  return {
+    left: `${startX}px`,
+    top: `${startY}px`,
+    height: `${length}px`,
+    transform: `translateX(-50%) rotate(${rotation}deg)`,
+  };
+});
+
 const originMarkerStyle = computed<CSSProperties | undefined>(() => {
   const field = selectedField.value;
   if (!field?.origin) return undefined;
@@ -1106,6 +1237,39 @@ function updateFieldCursor(event: PointerEvent, field: VisualField): void {
 
 function resetFieldCursor(event: PointerEvent): void {
   if (event.currentTarget instanceof HTMLElement) event.currentTarget.style.cursor = "";
+}
+
+function captureInlineDataDoublePress(event: PointerEvent): void {
+  if (event.button !== 0 || inlineEdit.value ||
+    (event.target instanceof Element && event.target.closest(".designer-inline-control"))) return;
+  const directFieldId = event.target instanceof Element
+    ? event.target.closest<HTMLElement>(".designer-field")?.dataset.fieldId
+    : undefined;
+  const directField = directFieldId ? fields.value.find(({ id }) => id === directFieldId) : undefined;
+  const directDataField = directField?.kind !== "text" && directField?.content ? directField : undefined;
+  const now = performance.now();
+  const previous = pendingDataDoublePress;
+  const repeated = previous && now - previous.at <= 500 &&
+    Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <= 8;
+  const fieldId = repeated ? previous.fieldId : event.detail >= 2 ? directDataField?.id : undefined;
+  if (!fieldId) {
+    pendingDataDoublePress = directDataField
+      ? { fieldId: directDataField.id, clientX: event.clientX, clientY: event.clientY, at: now }
+      : undefined;
+    return;
+  }
+  pendingDataDoublePress = undefined;
+  event.preventDefault();
+  event.stopPropagation();
+  if (pendingInlineOpenTimer !== undefined) window.clearTimeout(pendingInlineOpenTimer);
+  // Let the browser finish pointerup/click/dblclick before focusing an input
+  // that did not exist when the gesture started. This is required by Firefox
+  // and WebKit and also survives a first click opening the properties panel.
+  pendingInlineOpenTimer = window.setTimeout(() => {
+    pendingInlineOpenTimer = undefined;
+    const field = fields.value.find(({ id }) => id === fieldId);
+    if (field?.content && field.kind !== "text") beginInlineEdit(field);
+  }, 0);
 }
 
 function beginFieldInteraction(event: PointerEvent, field: VisualField): void {
@@ -1360,11 +1524,85 @@ function finishFieldResize(): void {
   }
 }
 
+function setInlineSelection(editor: HTMLElement, start: number, end = start): void {
+  const state = inlineEdit.value;
+  if (!state) return;
+  const value = editor instanceof HTMLInputElement ? editor.value : editor.textContent ?? "";
+  const selectionStart = Math.max(0, Math.min(value.length, Math.trunc(start)));
+  const selectionEnd = Math.max(selectionStart, Math.min(value.length, Math.trunc(end)));
+  if (editor instanceof HTMLInputElement) {
+    editor.setSelectionRange(selectionStart, selectionEnd);
+    state.selectionStart = selectionStart;
+    state.selectionEnd = selectionEnd;
+    return;
+  }
+  if (!(editor.firstChild instanceof Text) || editor.childNodes.length !== 1) editor.textContent = value;
+  const text = editor.firstChild instanceof Text
+    ? editor.firstChild
+    : editor.appendChild(document.createTextNode(""));
+  const range = document.createRange();
+  range.setStart(text, selectionStart);
+  range.setEnd(text, selectionEnd);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  state.selectionStart = selectionStart;
+  state.selectionEnd = selectionEnd;
+}
+
+function selectionOffsetWithin(editor: HTMLElement, node: Node, offset: number): number | undefined {
+  if (node !== editor && !editor.contains(node)) return undefined;
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  } catch {
+    return undefined;
+  }
+}
+
+function syncInlineSelection(): void {
+  const state = inlineEdit.value;
+  const editor = surface.value?.querySelector<HTMLElement>(".designer-inline-control");
+  if (!state || !editor) return;
+  if (editor instanceof HTMLInputElement) {
+    state.selectionStart = editor.selectionStart ?? editor.value.length;
+    state.selectionEnd = editor.selectionEnd ?? state.selectionStart;
+    return;
+  }
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  const start = selectionOffsetWithin(editor, range.startContainer, range.startOffset);
+  const end = selectionOffsetWithin(editor, range.endContainer, range.endOffset);
+  if (start === undefined || end === undefined) return;
+  state.selectionStart = Math.min(start, end);
+  state.selectionEnd = Math.max(start, end);
+}
+
+function placeInlineCaret(event: MouseEvent, field: VisualField): void {
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed) {
+    syncInlineSelection();
+    return;
+  }
+  const offset = renderedCaretOffsetAt(field, event.clientX, event.clientY);
+  const editor = event.currentTarget as HTMLElement;
+  if (offset !== undefined) setInlineSelection(editor, offset);
+  else syncInlineSelection();
+}
+
 function beginInlineEdit(field: VisualField, event?: Event): void {
-  if (field.kind !== "text" || !field.content) return;
+  if (!field.content) return;
+  if (inlineEdit.value?.fieldId === field.id) return;
   selectField(field, event);
   const fieldNumber = fieldNumberForVisualField(field);
   const value = fieldNumber ? props.fieldValues?.[fieldNumber] ?? field.content.value : field.content.value;
+  const requestedOffset = event instanceof MouseEvent
+    ? renderedCaretOffsetAt(field, event.clientX, event.clientY)
+    : undefined;
+  const initialOffset = Math.max(0, Math.min(value.length, requestedOffset ?? value.length));
   inlineEdit.value = {
     fieldId: field.id,
     commandStart: field.content.commandSpan.start,
@@ -1373,18 +1611,16 @@ function beginInlineEdit(field: VisualField, event?: Event): void {
     originalValue: value,
     value,
     fieldNumber,
+    selectionStart: initialOffset,
+    selectionEnd: initialOffset,
   };
   void nextTick(() => {
-    const editor = surface.value?.querySelector<HTMLElement>(".designer-inline-editor");
+    const editor = surface.value?.querySelector<HTMLElement>(".designer-inline-control");
     if (!editor) return;
-    editor.textContent = value;
+    if (editor instanceof HTMLInputElement) editor.value = value;
+    else editor.textContent = value;
     editor.focus({ preventScroll: true });
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    setInlineSelection(editor, initialOffset);
   });
 }
 
@@ -1392,9 +1628,12 @@ function updateInlineText(event: Event): void {
   const editState = inlineEdit.value;
   if (!editState) return;
   const editor = event.currentTarget as HTMLElement;
-  const value = (editor.textContent ?? "").replace(/[\r\n]+/g, " ");
-  if (editor.textContent !== value) editor.textContent = value;
+  const rawValue = editor instanceof HTMLInputElement ? editor.value : editor.textContent ?? "";
+  const value = rawValue.replace(/[\r\n]+/g, " ");
+  if (editor instanceof HTMLInputElement) editor.value = value;
+  else if (editor.textContent !== value) editor.textContent = value;
   editState.value = value;
+  syncInlineSelection();
   if (editState.fieldNumber) {
     emit("updateFieldValue", editState.fieldNumber, value);
     return;
@@ -1697,7 +1936,7 @@ function handleDesignerKeydown(event: KeyboardEvent): void {
   } else if (!modifier && event.key === "Escape") {
     handledShortcut(event);
     clearSelection();
-  } else if (!modifier && event.key === "Enter" && selected?.kind === "text" && selected.content) {
+  } else if (!modifier && event.key === "Enter" && selected?.content) {
     handledShortcut(event);
     beginInlineEdit(selected);
   } else if (!modifier && !event.altKey && event.key.toLowerCase() === "g") {
@@ -1980,8 +2219,64 @@ function fitLabel(): void {
   zoom.value = 100;
 }
 
+function boundedZoom(value: number): number {
+  return Math.round(Math.max(25, Math.min(250, value)) * 10) / 10;
+}
+
+async function zoomAtPoint(nextZoom: number, clientX: number, clientY: number): Promise<void> {
+  const viewportElement = viewport.value;
+  const surfaceElement = surface.value;
+  const bounded = boundedZoom(nextZoom);
+  if (!viewportElement || !surfaceElement || bounded === zoom.value) return;
+  const before = surfaceElement.getBoundingClientRect();
+  if (before.width <= 0 || before.height <= 0) {
+    zoom.value = bounded;
+    return;
+  }
+  const anchorX = (clientX - before.left) / before.width;
+  const anchorY = (clientY - before.top) / before.height;
+  zoom.value = bounded;
+  await nextTick();
+  const after = surfaceElement.getBoundingClientRect();
+  viewportElement.scrollLeft += after.left + anchorX * after.width - clientX;
+  viewportElement.scrollTop += after.top + anchorY * after.height - clientY;
+}
+
 function changeZoom(delta: number): void {
-  zoom.value = Math.max(25, Math.min(250, zoom.value + delta));
+  const viewportElement = viewport.value;
+  if (!viewportElement) {
+    zoom.value = boundedZoom(zoom.value + delta);
+    return;
+  }
+  const rect = viewportElement.getBoundingClientRect();
+  void zoomAtPoint(zoom.value + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+function wheelDeltaPixels(event: WheelEvent, axis: "x" | "y"): number {
+  const delta = axis === "x" ? event.deltaX : event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return delta * 16;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    const viewportElement = viewport.value;
+    return delta * (axis === "x" ? viewportElement?.clientWidth ?? 1 : viewportElement?.clientHeight ?? 1);
+  }
+  return delta;
+}
+
+function handleViewportWheel(event: WheelEvent): void {
+  const viewportElement = viewport.value;
+  if (!viewportElement) return;
+  event.preventDefault();
+  const deltaX = wheelDeltaPixels(event, "x");
+  const deltaY = wheelDeltaPixels(event, "y");
+  if (event.ctrlKey || event.metaKey) {
+    const boundedDelta = Math.max(-50, Math.min(50, deltaY));
+    const nextZoom = zoom.value * 2 ** (-boundedDelta / 100);
+    void zoomAtPoint(nextZoom, event.clientX, event.clientY);
+    return;
+  }
+  const shiftToHorizontal = event.shiftKey && Math.abs(deltaX) < Math.abs(deltaY);
+  viewportElement.scrollLeft += shiftToHorizontal ? deltaY : deltaX;
+  viewportElement.scrollTop += shiftToHorizontal ? 0 : deltaY;
 }
 
 function updateViewportSize(): void {
@@ -2025,6 +2320,7 @@ onMounted(() => {
   window.addEventListener("keydown", handleDesignerKeydown);
   window.addEventListener("copy", handleVisualCopy);
   window.addEventListener("paste", handleVisualPaste);
+  document.addEventListener("selectionchange", syncInlineSelection);
   if (viewport.value) {
     resizeObserver = new ResizeObserver(updateViewportSize);
     resizeObserver.observe(viewport.value);
@@ -2036,7 +2332,9 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleDesignerKeydown);
   window.removeEventListener("copy", handleVisualCopy);
   window.removeEventListener("paste", handleVisualPaste);
+  document.removeEventListener("selectionchange", syncInlineSelection);
   if (clipboardAnnouncementTimer !== undefined) window.clearTimeout(clipboardAnnouncementTimer);
+  if (pendingInlineOpenTimer !== undefined) window.clearTimeout(pendingInlineOpenTimer);
   window.removeEventListener("pointermove", continueFieldDrag);
   window.removeEventListener("pointerup", finishFieldDrag);
   window.removeEventListener("pointermove", continueFieldResize);
@@ -2052,9 +2350,15 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .designer-viewport {
+  overscroll-behavior: contain;
   background-color: rgb(244 244 245);
   background-image: linear-gradient(rgb(24 24 27 / 0.035) 1px, transparent 1px), linear-gradient(90deg, rgb(24 24 27 / 0.035) 1px, transparent 1px);
   background-size: 20px 20px;
+}
+.designer-canvas-stage {
+  box-sizing: border-box;
+  width: max-content;
+  height: max-content;
 }
 
 .designer-tool {
@@ -2205,11 +2509,12 @@ onBeforeUnmount(() => {
   transition: border-color 100ms, background-color 100ms, box-shadow 100ms;
 }
 .designer-field:hover { border-color: rgb(59 130 246 / 0.8); background: rgb(59 130 246 / 0.08); }
-.designer-field.selected { z-index: 15; border: 2px solid rgb(37 99 235); background: rgb(59 130 246 / 0.1); box-shadow: 0 0 0 1px white, 0 2px 8px rgb(37 99 235 / 0.2); }
+.designer-field.selected { z-index: 15; border: 1px solid rgb(37 99 235); background: rgb(59 130 246 / 0.1); box-shadow: none; }
+.designer-field.selected:focus-visible { outline: none; }
 .designer-field.dragging { cursor: grabbing; border-style: solid; background: rgb(59 130 246 / 0.16); transition: none; }
 .designer-field.resizing { cursor: default; border-style: solid; background: rgb(59 130 246 / 0.14); transition: none; }
 .designer-field.locked { cursor: pointer; }
-.designer-field.locked.selected { border-color: rgb(245 158 11); background: rgb(245 158 11 / 0.09); box-shadow: 0 0 0 1px white; }
+.designer-field.locked.selected { border-color: rgb(245 158 11); background: rgb(245 158 11 / 0.09); }
 
 .designer-inline-editor {
   position: absolute;
@@ -2232,6 +2537,37 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 .designer-inline-editor::selection { background: rgb(59 130 246 / 0.22); }
+.designer-inline-editor.uses-rendered-caret { caret-color: transparent; }
+.designer-inline-data-editor {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  border: 1px solid rgb(37 99 235);
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 0.98);
+  padding: 0 0.5rem;
+  color: rgb(24 24 27);
+  caret-color: rgb(37 99 235);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  line-height: 1;
+  outline: none;
+  box-shadow: 0 4px 12px rgb(24 24 27 / 0.18);
+}
+.designer-inline-data-editor::selection { background: rgb(59 130 246 / 0.22); }
+.designer-inline-caret {
+  position: absolute;
+  z-index: 1100;
+  width: 2px;
+  transform-origin: 50% 0;
+  pointer-events: none;
+  border-radius: 9999px;
+  background: rgb(37 99 235);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.65);
+  animation: designer-caret-blink 1.05s steps(1, end) infinite;
+}
+@keyframes designer-caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .designer-inline-caret { animation: none; } }
 
 .designer-origin-marker {
   width: 0.55rem;
@@ -2578,6 +2914,7 @@ label.designer-property-control > span {
   .designer-arrange-popover button, .designer-hidden-row button { border-color: rgb(255 255 255 / 0.1); }
   .designer-arrange-popover button:hover:not(:disabled), .designer-hidden-row button:hover { background: rgb(255 255 255 / 0.08); color: white; }
   .designer-ruler { background: rgb(9 9 11 / 0.82); color: rgb(212 212 216); }
+  .designer-inline-data-editor { border-color: rgb(96 165 250); background: rgb(24 24 27 / 0.98); color: rgb(244 244 245); caret-color: rgb(147 197 253); }
   .designer-inspector.is-open { border-color: rgb(255 255 255 / 0.1); }
   .designer-sidebar-tabs { border-color: rgb(255 255 255 / 0.1); }
   .designer-sidebar-tab:hover { color: white; }

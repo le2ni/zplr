@@ -75,7 +75,7 @@ const props = withDefaults(defineProps<{
   documentId: "default",
   workspaceDocuments: () => [],
   preferences: () => ({
-    theme: "light",
+    theme: "system",
     fontSize: 13,
     wordWrap: true,
     minimap: true,

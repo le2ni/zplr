@@ -388,11 +388,11 @@
         <div class="min-h-0 flex-1 overflow-y-auto p-4">
           <div class="space-y-4">
             <label class="settings-field">
-              <span><strong>Editor theme</strong><small>The clean light theme remains the default.</small></span>
+              <span><strong>Editor theme</strong><small>Follows your operating system by default.</small></span>
               <select v-model="editorPreferences.theme" class="settings-select">
+                <option value="system">System</option>
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
-                <option value="system">System</option>
               </select>
             </label>
             <label class="settings-field items-center">
@@ -624,7 +624,7 @@ interface PreviewPreferences {
 }
 
 const defaultEditorPreferences: EditorPreferences = {
-  theme: "light",
+  theme: "system",
   fontSize: 13,
   wordWrap: true,
   minimap: true,
@@ -866,7 +866,7 @@ function normalizeEditorPreferences(value: unknown): EditorPreferences {
   if (!value || typeof value !== "object") return { ...defaultEditorPreferences };
   const candidate = value as Partial<EditorPreferences>;
   return {
-    theme: candidate.theme === "dark" || candidate.theme === "system" ? candidate.theme : "light",
+    theme: candidate.theme === "light" || candidate.theme === "dark" ? candidate.theme : "system",
     fontSize: typeof candidate.fontSize === "number" ? Math.max(10, Math.min(24, candidate.fontSize)) : 13,
     wordWrap: typeof candidate.wordWrap === "boolean" ? candidate.wordWrap : true,
     minimap: typeof candidate.minimap === "boolean" ? candidate.minimap : true,

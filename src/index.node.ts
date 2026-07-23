@@ -53,6 +53,7 @@ export async function renderZplPNG(
 export type {
   HighlightRegion,
   HighlightRegionType,
+  TextCaretStop,
 } from "./types/HighlightRegion";
 export type {
   CommandCapability,
