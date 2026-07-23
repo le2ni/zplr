@@ -964,11 +964,17 @@ async function renderTextField(
     };
   }
   const lines = layoutTextLines(field);
+  const singleLine = lines.length === 1 ? lines[0] : undefined;
+  const trailingFieldBreak = field.block?.mode !== "TB"
+    ? originalData.match(/(?:\\&)+$/u)?.[0] ?? ""
+    : "";
+  const caretData = trailingFieldBreak
+    ? originalData.slice(0, -trailingFieldBreak.length)
+    : originalData;
   const exactCaretCharacters = textMappingExact &&
-    lines.length === 1 &&
-    lines[0]?.text === originalData &&
-    !lines[0]?.overprints?.length
-    ? indexedTextCharacters(originalData)
+    singleLine?.text === caretData &&
+    !singleLine.overprints?.some(({ text }) => text.length > 0)
+    ? indexedTextCharacters(caretData)
     : undefined;
   const effectiveBitmapFonts =
     field.font.resources?.bitmapFonts ?? bitmapFonts;

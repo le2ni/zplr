@@ -240,6 +240,25 @@ describe("shared renderer", () => {
       height: 44,
     });
 
+    const renderCaretAligned = async (justification: "L" | "C" | "R") => {
+      const document = parseDocument(
+        `^XA^FO0,0^A0N,20,10^FB100,1,0,${justification}^FDWiW\\&^FS^XZ`
+      );
+      const [result] = await renderDocument(document, { width: 110, height: 30 });
+      const stops = result.highlightRegions.find(({ type }) => type === "text")
+        ?.textCaretStops;
+      expect(stops?.map(({ offset }) => offset)).toEqual([0, 1, 2, 3]);
+      if (!stops) throw new Error("Expected aligned text caret stops.");
+      return { start: stops[0]!.x, end: stops.at(-1)!.x };
+    };
+    const leftCaret = await renderCaretAligned("L");
+    const centerCaret = await renderCaretAligned("C");
+    const rightCaret = await renderCaretAligned("R");
+    const renderedAdvance = leftCaret.end - leftCaret.start;
+    expect(leftCaret.start).toBe(0);
+    expect(centerCaret.start * 2 + renderedAdvance).toBeCloseTo(100, 0);
+    expect(rightCaret.end).toBe(100);
+
     const justifiedDocument = parseDocument(
       "^XA^FO0,0^A0N,20,10^FB60,2,0,J^FDAA BB CC DDD EE^FS^XZ"
     );

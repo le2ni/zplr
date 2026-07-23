@@ -81,34 +81,36 @@
               <IconChevronDown class="designer-select-chevron" aria-hidden="true" />
             </span>
           </label>
-          <details v-if="selectedFields.length" class="designer-arrange relative">
-            <summary class="designer-icon-button w-auto! gap-1 px-2!" :title="`Arrange ${selectedFields.length} selected layer${selectedFields.length === 1 ? '' : 's'}`">
-              <IconSelectionDrag class="size-4" aria-hidden="true" />
-              <span class="hidden text-[10px] sm:inline">Arrange</span>
-            </summary>
-            <div class="designer-arrange-popover">
-              <div class="flex items-center justify-between gap-3 border-b border-zinc-100 pb-2 dark:border-white/10">
-                <strong>{{ selectedFields.length }} selected</strong>
-                <label class="flex items-center gap-1.5 text-[10px] font-normal"><input v-model="alignToLabel" type="checkbox" /> Align to label</label>
+          <div class="designer-arrange-slot">
+            <details v-if="selectedFields.length" class="designer-arrange relative">
+              <summary class="designer-icon-button" :title="`Arrange ${selectedFields.length} selected layer${selectedFields.length === 1 ? '' : 's'}`">
+                <IconSelectionDrag class="size-4" aria-hidden="true" />
+                <span class="sr-only">Arrange</span>
+              </summary>
+              <div class="designer-arrange-popover designer-selection-popover">
+                <div class="flex items-center justify-between gap-3 border-b border-zinc-100 pb-2 dark:border-white/10">
+                  <strong>{{ selectedFields.length }} selected</strong>
+                  <label class="flex items-center gap-1.5 text-[10px] font-normal"><input v-model="alignToLabel" type="checkbox" /> Align to label</label>
+                </div>
+                <div class="mt-2 grid grid-cols-3 gap-1" aria-label="Alignment actions">
+                  <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('left')">Left</button>
+                  <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('center')">Center</button>
+                  <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('right')">Right</button>
+                  <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('top')">Top</button>
+                  <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('middle')">Middle</button>
+                  <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('bottom')">Bottom</button>
+                </div>
+                <div class="mt-2 grid grid-cols-2 gap-1">
+                  <button type="button" :disabled="selectedFields.length < 3 || !allSelectedMovable" @click="distributeSelection('horizontal')">Equal horizontal gaps</button>
+                  <button type="button" :disabled="selectedFields.length < 3 || !allSelectedMovable" @click="distributeSelection('vertical')">Equal vertical gaps</button>
+                </div>
+                <div class="mt-2 grid grid-cols-2 gap-1 border-t border-zinc-100 pt-2 dark:border-white/10">
+                  <button type="button" @click="toggleSelectedLock">{{ selectedFields.every((field) => field.locked) ? 'Unlock' : 'Lock' }}</button>
+                  <button type="button" :disabled="selectedFields.some((field) => field.locked)" @click="hideSelectedFields">Hide from output</button>
+                </div>
               </div>
-              <div class="mt-2 grid grid-cols-3 gap-1" aria-label="Alignment actions">
-                <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('left')">Left</button>
-                <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('center')">Center</button>
-                <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('right')">Right</button>
-                <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('top')">Top</button>
-                <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('middle')">Middle</button>
-                <button type="button" :disabled="!allSelectedMovable" @click="arrangeSelection('bottom')">Bottom</button>
-              </div>
-              <div class="mt-2 grid grid-cols-2 gap-1">
-                <button type="button" :disabled="selectedFields.length < 3 || !allSelectedMovable" @click="distributeSelection('horizontal')">Equal horizontal gaps</button>
-                <button type="button" :disabled="selectedFields.length < 3 || !allSelectedMovable" @click="distributeSelection('vertical')">Equal vertical gaps</button>
-              </div>
-              <div class="mt-2 grid grid-cols-2 gap-1 border-t border-zinc-100 pt-2 dark:border-white/10">
-                <button type="button" @click="toggleSelectedLock">{{ selectedFields.every((field) => field.locked) ? 'Unlock' : 'Lock' }}</button>
-                <button type="button" :disabled="selectedFields.some((field) => field.locked)" @click="hideSelectedFields">Hide from output</button>
-              </div>
-            </div>
-          </details>
+            </details>
+          </div>
           <details class="designer-arrange relative">
             <summary class="designer-icon-button" title="Snapping, rulers and guides">
               <IconTuneVariant class="size-4" aria-hidden="true" /><span class="sr-only">Snapping, rulers and guides</span>
@@ -173,117 +175,149 @@
         <div class="designer-canvas-stage flex min-h-full min-w-full items-center justify-center p-7 sm:p-10" @pointerdown.self="clearSelection">
           <div
             v-if="label && previewUrl"
-            ref="surface"
-            class="designer-surface relative shrink-0 touch-none overflow-hidden bg-white shadow-2xl shadow-zinc-950/20 ring-1 ring-zinc-900/15 outline-none"
-            :style="surfaceStyle"
-            tabindex="0"
-            aria-label="Editable rendered label. Select a field, then drag it or use keyboard shortcuts to edit it."
-            data-testid="visual-label-canvas"
-            @pointerdown.self="beginMarquee"
+            class="designer-canvas-frame relative shrink-0"
           >
-            <img :src="previewUrl" alt="Editable rendered ZPL label" class="pointer-events-none absolute inset-0 size-full select-none" draggable="false" />
-            <div v-if="gridVisible" class="designer-grid pointer-events-none absolute inset-0" :style="gridStyle" aria-hidden="true"></div>
-            <div
-              v-for="guide in manualGuides"
-              :key="guide.id"
-              class="designer-manual-guide absolute z-20"
-              :class="guide.axis === 'x' ? 'vertical' : 'horizontal'"
-              :style="guideLineStyle(guide.axis, guide.position)"
-              role="separator"
-              :aria-label="`${guide.axis === 'x' ? 'Vertical' : 'Horizontal'} guide at ${Math.round(guide.position)} dots`"
-              tabindex="0"
-              @pointerdown.stop="beginGuideDrag($event, guide.id)"
-              @dblclick.stop="removeManualGuide(guide.id)"
-              @keydown.delete.prevent="removeManualGuide(guide.id)"
-              @keydown.backspace.prevent="removeManualGuide(guide.id)"
-            ></div>
-            <div
-              v-for="(guide, index) in activeSmartGuides"
-              :key="`${guide.axis}-${guide.position}-${index}`"
-              class="designer-smart-guide pointer-events-none absolute z-20"
-              :class="[guide.axis === 'x' ? 'vertical' : 'horizontal', `kind-${guide.kind}`]"
-              :data-snap-kind="guide.kind"
-              :style="guideLineStyle(guide.axis, guide.position)"
-              aria-hidden="true"
-            ></div>
-            <div v-if="marqueeStyle" class="designer-marquee pointer-events-none absolute z-30" :style="marqueeStyle" aria-hidden="true"></div>
-            <div v-if="groupSelectionStyle" class="designer-group-selection pointer-events-none absolute z-20" :style="groupSelectionStyle" aria-hidden="true"></div>
-            <div v-if="rulersVisible" class="designer-ruler designer-ruler-x absolute top-0 right-0 left-0 z-30" aria-label="Horizontal ruler" @dblclick="addGuideFromRuler($event, 'x')">
+            <div v-if="rulersVisible" class="designer-ruler-corner" aria-hidden="true"></div>
+            <div v-if="rulersVisible" class="designer-ruler designer-ruler-x" aria-label="Horizontal ruler" @dblclick="addGuideFromRuler($event, 'x')">
               <span v-for="tick in rulerXTicks" :key="tick" :style="rulerTickStyle('x', tick)"><small>{{ tick }}</small></span>
             </div>
-            <div v-if="rulersVisible" class="designer-ruler designer-ruler-y absolute top-0 bottom-0 left-0 z-30" aria-label="Vertical ruler" @dblclick="addGuideFromRuler($event, 'y')">
+            <div v-if="rulersVisible" class="designer-ruler designer-ruler-y" aria-label="Vertical ruler" @dblclick="addGuideFromRuler($event, 'y')">
               <span v-for="tick in rulerYTicks" :key="tick" :style="rulerTickStyle('y', tick)"><small>{{ tick }}</small></span>
             </div>
             <div
-              v-for="field in fields"
-              :key="field.id"
-              class="designer-field absolute"
-              :class="{ selected: isSelected(field), locked: field.locked || !field.movable, dragging: isDragging(field), resizing: isResizing(field), editing: isInlineEditing(field) }"
-              :style="fieldStyle(field)"
-              :role="isInlineEditing(field) ? undefined : 'button'"
-              :tabindex="isInlineEditing(field) ? -1 : 0"
-              :aria-label="isInlineEditing(field) ? undefined : `${visualFieldLabel(field.kind, field.region.type)} at ${Math.round(field.bounds.x)}, ${Math.round(field.bounds.y)}${field.locked || !field.movable ? ', position locked' : ''}`"
-              :title="fieldTitle(field)"
-              :data-visual-kind="field.kind"
-              :data-field-id="field.id"
-              @click.stop="finishFieldClick($event, field)"
-              @dblclick.stop="beginInlineEdit(field, $event)"
-              @pointermove="updateFieldCursor($event, field)"
-              @pointerleave="resetFieldCursor"
-              @pointerdown.stop="beginFieldInteraction($event, field)"
-              @keydown.space.prevent.stop="selectField(field, $event)"
+              ref="surface"
+              class="designer-surface relative shrink-0 touch-none overflow-hidden bg-white shadow-2xl shadow-zinc-950/20 ring-1 ring-zinc-900/15 outline-none"
+              :style="surfaceStyle"
+              tabindex="0"
+              aria-label="Editable rendered label. Select a field, then drag it or use keyboard shortcuts to edit it."
+              data-testid="visual-label-canvas"
+              @pointerdown.self="beginMarquee"
             >
-              <input
-                v-if="isInlineEditing(field) && field.kind !== 'text'"
-                class="designer-inline-control designer-inline-data-editor"
-                :style="inlineDataEditorStyle(field)"
-                :value="inlineEdit?.value ?? ''"
-                type="text"
-                :aria-label="inlineDataEditorLabel(field)"
-                autocomplete="off"
-                spellcheck="false"
-                @input="updateInlineText"
-                @keydown="handleInlineTextKeydown"
-                @select="syncInlineSelection"
-                @click.stop
-                @pointerdown.stop
-                @pointermove.stop
-                @dblclick.stop
-                @blur="finishInlineEdit"
-              />
+              <img :src="previewUrl" alt="Editable rendered ZPL label" class="pointer-events-none absolute inset-0 size-full select-none" draggable="false" />
+              <div v-if="gridVisible" class="designer-grid pointer-events-none absolute inset-0" :style="gridStyle" aria-hidden="true"></div>
+              <div
+                v-for="guide in manualGuides"
+                :key="guide.id"
+                class="designer-manual-guide absolute z-20"
+                :class="guide.axis === 'x' ? 'vertical' : 'horizontal'"
+                :style="guideLineStyle(guide.axis, guide.position)"
+                role="separator"
+                :aria-label="`${guide.axis === 'x' ? 'Vertical' : 'Horizontal'} guide at ${Math.round(guide.position)} dots`"
+                tabindex="0"
+                @pointerdown.stop="beginGuideDrag($event, guide.id)"
+                @dblclick.stop="removeManualGuide(guide.id)"
+                @keydown.delete.prevent="removeManualGuide(guide.id)"
+                @keydown.backspace.prevent="removeManualGuide(guide.id)"
+              ></div>
+              <div
+                v-for="(guide, index) in activeSmartGuides"
+                :key="`${guide.axis}-${guide.position}-${index}`"
+                class="designer-smart-guide pointer-events-none absolute z-20"
+                :class="[guide.axis === 'x' ? 'vertical' : 'horizontal', `kind-${guide.kind}`]"
+                :data-snap-kind="guide.kind"
+                :style="guideLineStyle(guide.axis, guide.position)"
+                aria-hidden="true"
+              ></div>
+              <div v-if="marqueeStyle" class="designer-marquee pointer-events-none absolute z-30" :style="marqueeStyle" aria-hidden="true"></div>
+              <div v-if="groupSelectionStyle" class="designer-group-selection pointer-events-none absolute z-20" :style="groupSelectionStyle" aria-hidden="true"></div>
+              <div
+                v-for="field in fields"
+                :key="field.id"
+                class="designer-field absolute"
+                :class="{ selected: isSelected(field), locked: field.locked || !field.movable, dragging: isDragging(field), resizing: isResizing(field), editing: isInlineEditing(field) }"
+                :style="fieldStyle(field)"
+                :role="isInlineEditing(field) ? undefined : 'button'"
+                :tabindex="isInlineEditing(field) ? -1 : 0"
+                :aria-label="isInlineEditing(field) ? undefined : `${visualFieldLabel(field.kind, field.region.type)} at ${Math.round(field.bounds.x)}, ${Math.round(field.bounds.y)}${field.locked || !field.movable ? ', position locked' : ''}`"
+                :title="fieldTitle(field)"
+                :data-visual-kind="field.kind"
+                :data-field-id="field.id"
+                @click.stop="finishFieldClick($event, field)"
+                @dblclick.stop="beginInlineEdit(field, $event)"
+                @pointermove="updateFieldCursor($event, field)"
+                @pointerleave="resetFieldCursor"
+                @pointerdown.stop="beginFieldInteraction($event, field)"
+                @keydown.space.prevent.stop="selectField(field, $event)"
+              >
+                <svg
+                  v-if="!isInlineEditing(field)"
+                  class="designer-field-hit-target"
+                  :style="fieldHitTargetStyle(field)"
+                  :viewBox="fieldHitGeometry(field).viewBox"
+                  preserveAspectRatio="none"
+                  focusable="false"
+                  aria-hidden="true"
+                  :data-hit-geometry="fieldHitGeometry(field).kind"
+                >
+                  <path
+                    class="designer-field-hit-path"
+                    :d="fieldHitGeometry(field).path"
+                    :fill-rule="fieldHitGeometry(field).fillRule"
+                    :clip-rule="fieldHitGeometry(field).fillRule"
+                  ></path>
+                </svg>
+                <input
+                  v-if="isInlineEditing(field) && field.kind !== 'text'"
+                  class="designer-inline-control designer-inline-data-editor"
+                  :style="inlineDataEditorStyle(field)"
+                  :value="inlineEdit?.value ?? ''"
+                  type="text"
+                  :aria-label="inlineDataEditorLabel(field)"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @input="updateInlineText"
+                  @keydown="handleInlineTextKeydown"
+                  @select="syncInlineSelection"
+                  @click.stop
+                  @pointerdown.stop
+                  @pointermove.stop
+                  @dblclick.stop
+                  @blur="handleInlineBlur"
+                />
+                <span
+                  v-else-if="isInlineEditing(field)"
+                  class="designer-inline-control designer-inline-editor"
+                  :class="{ 'uses-rendered-caret': hasRenderedCaret(field) }"
+                  :style="inlineEditorStyle(field)"
+                  contenteditable="plaintext-only"
+                  role="textbox"
+                  aria-label="Edit text inline"
+                  spellcheck="false"
+                  @input="updateInlineText"
+                  @keydown="handleInlineTextKeydown"
+                  @click.stop="handleInlineClick($event, field)"
+                  @pointerdown.stop="beginInlineSelection($event, field)"
+                  @pointermove.stop
+                  @dblclick.stop="handleInlineDoubleClick($event, field)"
+                  @blur="handleInlineBlur"
+                ></span>
+                <span v-else class="sr-only">{{ visualFieldLabel(field.kind, field.region.type) }}</span>
+              </div>
               <span
-                v-else-if="isInlineEditing(field)"
-                class="designer-inline-control designer-inline-editor"
-                :class="{ 'uses-rendered-caret': hasRenderedCaret(field) }"
-                :style="inlineEditorStyle(field)"
-                contenteditable="plaintext-only"
-                role="textbox"
-                aria-label="Edit text inline"
-                spellcheck="false"
-                @input="updateInlineText"
-                @keydown="handleInlineTextKeydown"
-                @click.stop="placeInlineCaret($event, field)"
-                @pointerdown.stop
-                @pointermove.stop
-                @dblclick.stop
-                @blur="finishInlineEdit"
+                v-for="segment in inlineSelectionSegments"
+                :key="`${segment.start}-${segment.end}`"
+                class="designer-inline-selection"
+                :style="segment.style"
+                :data-selection-start="segment.start"
+                :data-selection-end="segment.end"
+                data-testid="inline-selection-segment"
+                aria-hidden="true"
               ></span>
-              <span v-else class="sr-only">{{ visualFieldLabel(field.kind, field.region.type) }}</span>
+              <span
+                v-if="inlineCaretStyle"
+                class="designer-inline-caret"
+                :style="inlineCaretStyle"
+                :data-caret-offset="inlineEdit?.selectionStart"
+                data-testid="inline-caret"
+                aria-hidden="true"
+              ></span>
+              <div
+                v-if="selectedField?.origin"
+                class="designer-origin-marker pointer-events-none absolute z-20"
+                :style="originMarkerStyle"
+                aria-hidden="true"
+              ></div>
             </div>
-            <span
-              v-if="inlineCaretStyle"
-              class="designer-inline-caret"
-              :style="inlineCaretStyle"
-              :data-caret-offset="inlineEdit?.selectionStart"
-              data-testid="inline-caret"
-              aria-hidden="true"
-            ></span>
-            <div
-              v-if="selectedField?.origin"
-              class="designer-origin-marker pointer-events-none absolute z-20"
-              :style="originMarkerStyle"
-              aria-hidden="true"
-            ></div>
           </div>
 
           <div v-else-if="renderFailure" class="max-w-md rounded-xl border border-rose-200 bg-white p-4 text-sm text-rose-700 shadow-sm dark:border-rose-400/20 dark:bg-zinc-950 dark:text-rose-200">
@@ -686,6 +720,10 @@ import {
   sourceEditForVariableBinding,
   type VariableColumn,
 } from "../variableData";
+import {
+  visualFieldHitGeometry as buildVisualFieldHitGeometry,
+  type VisualHitGeometry,
+} from "../visualEditorHitTesting";
 
 const props = defineProps<{
   source: string;
@@ -777,6 +815,14 @@ const primarySelectionKey = ref<SelectionKey>();
 const manualGuides = ref<ManualGuide[]>([]);
 const activeSmartGuides = ref<readonly SnapGuide[]>([]);
 const fields = computed(() => collectVisualFields(props.source, props.label?.highlightRegions ?? []));
+const fieldHitGeometries = computed(() => {
+  const raster = props.label?.raster;
+  if (!raster) return new Map<string, VisualHitGeometry>();
+  return new Map(fields.value.map((field) => [
+    field.id,
+    buildVisualFieldHitGeometry(field, raster, canvasScale.value),
+  ]));
+});
 const hiddenFields = computed(() => collectHiddenVisualFields(props.source)
   .filter((field) => field.labelIndex === props.activeLabelIndex));
 const sourceOrderedFields = computed(() => [...fields.value].sort((left, right) => left.sourceSpan.start - right.sourceSpan.start));
@@ -871,6 +917,12 @@ interface InlineEditState {
   selectionEnd: number;
 }
 
+interface InlineSelectionDragState {
+  fieldId: string;
+  editor: HTMLElement;
+  anchor: number;
+}
+
 interface MarqueeState {
   startClientX: number;
   startClientY: number;
@@ -908,6 +960,7 @@ let pressedFieldId: string | undefined;
 let pressedFieldResetTimer: number | undefined;
 let pendingDataDoublePress: { fieldId: string; clientX: number; clientY: number; at: number } | undefined;
 let pendingInlineOpenTimer: number | undefined;
+let inlineSelectionDragState: InlineSelectionDragState | undefined;
 
 function selectionOffset(field: VisualField): number {
   return field.origin?.command.span.start ?? field.sourceSpan.start;
@@ -1042,16 +1095,33 @@ function visualBoundsFor(field: VisualField): VisualBounds {
   return { ...field.bounds, x: field.bounds.x + offsetX, y: field.bounds.y + offsetY };
 }
 
-function boundsStyle(bounds: VisualBounds, rounded = false): CSSProperties {
+interface PixelBounds {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function pixelBounds(bounds: VisualBounds): PixelBounds {
   const rawWidth = Math.max(1, bounds.width * canvasScale.value);
   const rawHeight = Math.max(1, bounds.height * canvasScale.value);
   const width = Math.max(8, rawWidth);
   const height = Math.max(8, rawHeight);
   return {
-    left: `${bounds.x * canvasScale.value - (width - rawWidth) / 2}px`,
-    top: `${bounds.y * canvasScale.value - (height - rawHeight) / 2}px`,
-    width: `${width}px`,
-    height: `${height}px`,
+    left: bounds.x * canvasScale.value - (width - rawWidth) / 2,
+    top: bounds.y * canvasScale.value - (height - rawHeight) / 2,
+    width,
+    height,
+  };
+}
+
+function boundsStyle(bounds: VisualBounds, rounded = false): CSSProperties {
+  const frame = pixelBounds(bounds);
+  return {
+    left: `${frame.left}px`,
+    top: `${frame.top}px`,
+    width: `${frame.width}px`,
+    height: `${frame.height}px`,
     borderRadius: rounded ? "9999px" : undefined,
   };
 }
@@ -1088,6 +1158,29 @@ function fieldStyle(field: VisualField): CSSProperties {
   // selectable instead of being intercepted by a full-label box overlay.
   const hitPriority = 10 + Math.round((1 - Math.min(1, fieldArea / labelArea)) * 50);
   return { ...style, zIndex: isSelected(field) ? 1_000 : hitPriority };
+}
+
+function fieldHitGeometry(field: VisualField): VisualHitGeometry {
+  return fieldHitGeometries.value.get(field.id) ?? {
+    fillRule: "nonzero",
+    kind: "paint",
+    padding: 0,
+    path: "",
+    viewBox: `0 0 ${field.bounds.width} ${field.bounds.height}`,
+  };
+}
+
+function fieldHitTargetStyle(field: VisualField): CSSProperties {
+  const geometry = fieldHitGeometry(field);
+  const displayed = visualBoundsFor(field);
+  const frame = pixelBounds(displayed);
+  const scale = canvasScale.value;
+  return {
+    left: `${displayed.x * scale - geometry.padding * scale - frame.left}px`,
+    top: `${displayed.y * scale - geometry.padding * scale - frame.top}px`,
+    width: `${(displayed.width + geometry.padding * 2) * scale}px`,
+    height: `${(displayed.height + geometry.padding * 2) * scale}px`,
+  };
 }
 
 function inlineEditorStyle(field: VisualField): CSSProperties {
@@ -1184,6 +1277,58 @@ const inlineCaretStyle = computed<CSSProperties | undefined>(() => {
   };
 });
 
+interface InlineSelectionSegment {
+  start: number;
+  end: number;
+  style: CSSProperties;
+}
+
+function inlineSelectionSegment(
+  start: TextCaretStop,
+  end: TextCaretStop
+): InlineSelectionSegment {
+  const scale = canvasScale.value;
+  const points = [
+    { x: start.x * scale, y: start.y * scale },
+    { x: end.x * scale, y: end.y * scale },
+    { x: end.endX * scale, y: end.endY * scale },
+    { x: start.endX * scale, y: start.endY * scale },
+  ];
+  const left = Math.min(...points.map(({ x }) => x));
+  const top = Math.min(...points.map(({ y }) => y));
+  const right = Math.max(...points.map(({ x }) => x));
+  const bottom = Math.max(...points.map(({ y }) => y));
+  return {
+    start: start.offset,
+    end: end.offset,
+    style: {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${Math.max(1, right - left)}px`,
+      height: `${Math.max(1, bottom - top)}px`,
+      clipPath: `polygon(${points.map(({ x, y }) => `${x - left}px ${y - top}px`).join(", ")})`,
+    },
+  };
+}
+
+const inlineSelectionSegments = computed<InlineSelectionSegment[]>(() => {
+  const state = inlineEdit.value;
+  if (!state || state.selectionStart === state.selectionEnd) return [];
+  const field = fields.value.find(({ id }) => id === state.fieldId);
+  const stops = field?.region.textCaretStops;
+  if (!stops || stops.length < 2) return [];
+  const ordered = [...stops].sort((left, right) => left.offset - right.offset);
+  const segments: InlineSelectionSegment[] = [];
+  for (let index = 0; index + 1 < ordered.length; index++) {
+    const start = ordered[index]!;
+    const end = ordered[index + 1]!;
+    if (start.offset < state.selectionEnd && end.offset > state.selectionStart) {
+      segments.push(inlineSelectionSegment(start, end));
+    }
+  }
+  return segments;
+});
+
 const originMarkerStyle = computed<CSSProperties | undefined>(() => {
   const field = selectedField.value;
   if (!field?.origin) return undefined;
@@ -1209,7 +1354,7 @@ function resizeHandleAt(event: PointerEvent, field: VisualField): ResizeHandle |
   if (!(target instanceof HTMLElement)) return undefined;
   const rect = target.getBoundingClientRect();
   if (rect.width <= 0 || rect.height <= 0) return undefined;
-  const edge = Math.min(7, Math.max(2.5, Math.min(rect.width, rect.height) / 4));
+  const edge = Math.min(3, Math.max(2, Math.min(rect.width, rect.height) / 6));
   const x = event.clientX - rect.left;
   const y = event.clientY - rect.top;
   const west = x <= edge;
@@ -1550,6 +1695,152 @@ function setInlineSelection(editor: HTMLElement, start: number, end = start): vo
   state.selectionEnd = selectionEnd;
 }
 
+function stopInlineSelectionDrag(): void {
+  inlineSelectionDragState = undefined;
+  window.removeEventListener("pointermove", continueInlineSelection, true);
+  window.removeEventListener("pointerup", finishInlineSelection);
+  window.removeEventListener("pointercancel", cancelInlineSelectionDrag);
+}
+
+function inlineWordRange(value: string, offset: number): { start: number; end: number } {
+  const characters: Array<{ start: number; end: number; kind: string }> = [];
+  let position = 0;
+  for (const character of value) {
+    const start = position;
+    position += character.length;
+    const kind = /\s/u.test(character)
+      ? "space"
+      : /[\p{L}\p{M}\p{N}_]/u.test(character) ? "word" : "punctuation";
+    characters.push({ start, end: position, kind });
+  }
+  if (characters.length === 0) return { start: 0, end: 0 };
+  const target = characters.find((character) => offset >= character.start && offset < character.end) ??
+    characters.at(-1)!;
+  let first = characters.indexOf(target);
+  let last = first;
+  while (first > 0 && characters[first - 1]!.kind === target.kind) first--;
+  while (last + 1 < characters.length && characters[last + 1]!.kind === target.kind) last++;
+  return { start: characters[first]!.start, end: characters[last]!.end };
+}
+
+function inlineLineRange(value: string, offset: number): { start: number; end: number } {
+  const boundedOffset = Math.max(0, Math.min(value.length, Math.trunc(offset)));
+  let start = 0;
+  let end = value.length;
+  for (const match of value.matchAll(/\r\n|\r|\n|\\&/gu)) {
+    const breakStart = match.index;
+    const breakEnd = breakStart + match[0].length;
+    if (breakStart < boundedOffset) {
+      start = breakEnd;
+      continue;
+    }
+    end = breakStart;
+    break;
+  }
+  return { start: Math.min(start, end), end };
+}
+
+function selectInlineTextAt(
+  event: MouseEvent,
+  field: VisualField,
+  unit: "word" | "line"
+): boolean {
+  if (field.kind !== "text") return false;
+  const editor = event.currentTarget;
+  if (!(editor instanceof HTMLElement)) return false;
+  const offset = renderedCaretOffsetAt(field, event.clientX, event.clientY);
+  const state = inlineEdit.value;
+  if (offset === undefined || !state) return false;
+  event.preventDefault();
+  stopInlineSelectionDrag();
+  editor.focus({ preventScroll: true });
+  const range = unit === "word"
+    ? inlineWordRange(state.value, offset)
+    : inlineLineRange(state.value, offset);
+  setInlineSelection(editor, range.start, range.end);
+  return true;
+}
+
+function updateInlineSelectionAt(clientX: number, clientY: number): void {
+  const drag = inlineSelectionDragState;
+  if (!drag) return;
+  const field = fields.value.find(({ id }) => id === drag.fieldId);
+  if (!field) return;
+  const offset = renderedCaretOffsetAt(field, clientX, clientY);
+  if (offset === undefined) return;
+  setInlineSelection(drag.editor, Math.min(drag.anchor, offset), Math.max(drag.anchor, offset));
+}
+
+function continueInlineSelection(event: PointerEvent): void {
+  if (!inlineSelectionDragState) return;
+  event.preventDefault();
+  updateInlineSelectionAt(event.clientX, event.clientY);
+}
+
+function finishInlineSelection(event: PointerEvent): void {
+  const editor = inlineSelectionDragState?.editor;
+  updateInlineSelectionAt(event.clientX, event.clientY);
+  editor?.focus({ preventScroll: true });
+  stopInlineSelectionDrag();
+}
+
+function cancelInlineSelectionDrag(): void {
+  stopInlineSelectionDrag();
+}
+
+function beginInlineSelection(event: PointerEvent, field: VisualField): void {
+  if (event.button !== 0 || field.kind !== "text") return;
+  const editor = event.currentTarget;
+  if (!(editor instanceof HTMLElement)) return;
+  const offset = renderedCaretOffsetAt(field, event.clientX, event.clientY);
+  if (offset === undefined) return;
+  event.preventDefault();
+  stopInlineSelectionDrag();
+  editor.focus({ preventScroll: true });
+  const state = inlineEdit.value;
+  if (!state) return;
+  if (event.detail >= 3) {
+    const line = inlineLineRange(state.value, offset);
+    setInlineSelection(editor, line.start, line.end);
+    return;
+  }
+  if (event.detail === 2) {
+    const word = inlineWordRange(state.value, offset);
+    setInlineSelection(editor, word.start, word.end);
+    return;
+  }
+  let anchor = offset;
+  if (event.shiftKey) {
+    anchor = Math.abs(offset - state.selectionStart) >= Math.abs(offset - state.selectionEnd)
+      ? state.selectionStart
+      : state.selectionEnd;
+  }
+  setInlineSelection(editor, Math.min(anchor, offset), Math.max(anchor, offset));
+  inlineSelectionDragState = { fieldId: field.id, editor, anchor };
+  window.addEventListener("pointermove", continueInlineSelection, true);
+  window.addEventListener("pointerup", finishInlineSelection);
+  window.addEventListener("pointercancel", cancelInlineSelectionDrag);
+}
+
+function handleInlineClick(event: MouseEvent, field: VisualField): void {
+  if (event.detail >= 3 && selectInlineTextAt(event, field, "line")) return;
+  if (event.detail === 2 && selectInlineTextAt(event, field, "word")) return;
+  placeInlineCaret(event, field);
+}
+
+function handleInlineDoubleClick(event: MouseEvent, field: VisualField): void {
+  if (!selectInlineTextAt(event, field, "word")) syncInlineSelection();
+}
+
+function handleInlineBlur(event: FocusEvent): void {
+  const editor = event.currentTarget;
+  if (editor instanceof HTMLElement && inlineSelectionDragState?.editor === editor) {
+    void nextTick(() => editor.focus({ preventScroll: true }));
+    return;
+  }
+  finishInlineEdit();
+}
+
 function selectionOffsetWithin(editor: HTMLElement, node: Node, offset: number): number | undefined {
   if (node !== editor && !editor.contains(node)) return undefined;
   try {
@@ -1649,6 +1940,7 @@ function updateInlineText(event: Event): void {
 
 function finishInlineEdit(): void {
   if (!inlineEdit.value) return;
+  stopInlineSelectionDrag();
   inlineEdit.value = undefined;
   void nextTick(() => surface.value?.querySelector<HTMLElement>(".designer-field.selected")?.focus({ preventScroll: true }));
 }
@@ -1656,6 +1948,7 @@ function finishInlineEdit(): void {
 function cancelInlineEdit(): void {
   const editState = inlineEdit.value;
   if (!editState) return;
+  stopInlineSelectionDrag();
   if (editState.fieldNumber) {
     emit("updateFieldValue", editState.fieldNumber, editState.originalValue);
     inlineEdit.value = undefined;
@@ -2329,6 +2622,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
+  stopInlineSelectionDrag();
   window.removeEventListener("keydown", handleDesignerKeydown);
   window.removeEventListener("copy", handleVisualCopy);
   window.removeEventListener("paste", handleVisualPaste);
@@ -2421,6 +2715,7 @@ onBeforeUnmount(() => {
 .designer-icon-button:hover, .designer-icon-button.active, .designer-zoom-button:hover { background: rgb(244 244 245); color: rgb(24 24 27); }
 .designer-icon-button:disabled { cursor: not-allowed; opacity: 0.35; }
 
+.designer-arrange-slot { width: 1.8rem; height: 1.8rem; flex: 0 0 1.8rem; }
 .designer-arrange > summary { list-style: none; }
 .designer-arrange > summary::-webkit-details-marker { display: none; }
 .designer-arrange[open] > summary { background: rgb(244 244 245); color: rgb(24 24 27); }
@@ -2438,6 +2733,7 @@ onBeforeUnmount(() => {
   font-size: 0.65rem;
   box-shadow: 0 14px 35px rgb(24 24 27 / 0.18);
 }
+.designer-selection-popover { right: auto; left: 50%; transform: translateX(-50%); }
 .designer-arrange-popover button {
   min-height: 1.8rem;
   border: 1px solid rgb(228 228 231);
@@ -2485,6 +2781,8 @@ onBeforeUnmount(() => {
 .designer-marquee { border: 1px solid rgb(37 99 235); background: rgb(59 130 246 / 0.12); }
 .designer-group-selection { border: 1px dashed rgb(37 99 235); box-shadow: 0 0 0 1px rgb(255 255 255 / 0.75); }
 .designer-ruler {
+  position: absolute;
+  z-index: 30;
   pointer-events: auto;
   overflow: hidden;
   background: rgb(255 255 255 / 0.82);
@@ -2493,8 +2791,34 @@ onBeforeUnmount(() => {
   font-size: 7px;
   backdrop-filter: blur(2px);
 }
-.designer-ruler-x { height: 13px; border-bottom: 1px solid rgb(161 161 170 / 0.55); cursor: crosshair; }
-.designer-ruler-y { width: 13px; border-right: 1px solid rgb(161 161 170 / 0.55); cursor: crosshair; }
+.designer-ruler-corner {
+  position: absolute;
+  right: 100%;
+  bottom: 100%;
+  z-index: 30;
+  width: 13px;
+  height: 13px;
+  border-right: 1px solid rgb(161 161 170 / 0.55);
+  border-bottom: 1px solid rgb(161 161 170 / 0.55);
+  background: rgb(255 255 255 / 0.82);
+  backdrop-filter: blur(2px);
+}
+.designer-ruler-x {
+  right: 0;
+  bottom: 100%;
+  left: 0;
+  height: 13px;
+  border-bottom: 1px solid rgb(161 161 170 / 0.55);
+  cursor: crosshair;
+}
+.designer-ruler-y {
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  width: 13px;
+  border-right: 1px solid rgb(161 161 170 / 0.55);
+  cursor: crosshair;
+}
 .designer-ruler > span { position: absolute; }
 .designer-ruler-x > span { top: 0; height: 100%; border-left: 1px solid rgb(113 113 122 / 0.65); }
 .designer-ruler-y > span { left: 0; width: 100%; border-top: 1px solid rgb(113 113 122 / 0.65); }
@@ -2503,6 +2827,7 @@ onBeforeUnmount(() => {
 
 .designer-field {
   z-index: 10;
+  pointer-events: none;
   cursor: grab;
   border: 1px dashed transparent;
   background: transparent;
@@ -2515,6 +2840,18 @@ onBeforeUnmount(() => {
 .designer-field.resizing { cursor: default; border-style: solid; background: rgb(59 130 246 / 0.14); transition: none; }
 .designer-field.locked { cursor: pointer; }
 .designer-field.locked.selected { border-color: rgb(245 158 11); background: rgb(245 158 11 / 0.09); }
+.designer-field-hit-target {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  cursor: inherit;
+}
+.designer-field-hit-path {
+  fill: transparent;
+  pointer-events: fill;
+  cursor: inherit;
+}
+.designer-inline-control { pointer-events: auto; }
 
 .designer-inline-editor {
   position: absolute;
@@ -2537,6 +2874,7 @@ onBeforeUnmount(() => {
   user-select: text;
 }
 .designer-inline-editor::selection { background: rgb(59 130 246 / 0.22); }
+.designer-inline-editor.uses-rendered-caret::selection { background: transparent; }
 .designer-inline-editor.uses-rendered-caret { caret-color: transparent; }
 .designer-inline-data-editor {
   position: absolute;
@@ -2555,6 +2893,12 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 12px rgb(24 24 27 / 0.18);
 }
 .designer-inline-data-editor::selection { background: rgb(59 130 246 / 0.22); }
+.designer-inline-selection {
+  position: absolute;
+  z-index: 1090;
+  pointer-events: none;
+  background: rgb(59 130 246 / 0.3);
+}
 .designer-inline-caret {
   position: absolute;
   z-index: 1100;
@@ -2913,7 +3257,7 @@ label.designer-property-control > span {
   .designer-arrange-popover { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(212 212 216); }
   .designer-arrange-popover button, .designer-hidden-row button { border-color: rgb(255 255 255 / 0.1); }
   .designer-arrange-popover button:hover:not(:disabled), .designer-hidden-row button:hover { background: rgb(255 255 255 / 0.08); color: white; }
-  .designer-ruler { background: rgb(9 9 11 / 0.82); color: rgb(212 212 216); }
+  .designer-ruler, .designer-ruler-corner { background: rgb(9 9 11 / 0.82); color: rgb(212 212 216); }
   .designer-inline-data-editor { border-color: rgb(96 165 250); background: rgb(24 24 27 / 0.98); color: rgb(244 244 245); caret-color: rgb(147 197 253); }
   .designer-inspector.is-open { border-color: rgb(255 255 255 / 0.1); }
   .designer-sidebar-tabs { border-color: rgb(255 255 255 / 0.1); }

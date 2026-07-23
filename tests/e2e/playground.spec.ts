@@ -1,5 +1,44 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+
+async function paintedFieldPosition(field: Locator): Promise<{ x: number; y: number }> {
+  return field.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    let best: { x: number; y: number; distance: number } | undefined;
+    let fallback: { x: number; y: number; distance: number } | undefined;
+    for (let y = 0.5; y < bounds.height; y++) {
+      for (let x = 0.5; x < bounds.width; x++) {
+        const target = document.elementFromPoint(bounds.left + x, bounds.top + y);
+        if (target?.closest(".designer-field") !== element) continue;
+        const distance = Math.hypot(x - bounds.width / 2, y - bounds.height / 2);
+        if (!fallback || distance < fallback.distance) fallback = { x, y, distance };
+        const edgeDistance = Math.min(x, y, bounds.width - x, bounds.height - y);
+        if (edgeDistance > 3 && (!best || distance < best.distance)) best = { x, y, distance };
+      }
+    }
+    const position = best ?? fallback;
+    if (!position) throw new Error("The visual field has no painted hit target.");
+    return { x: position.x, y: position.y };
+  });
+}
+
+async function paintedHorizontalEdgePosition(field: Locator): Promise<{ x: number; y: number }> {
+  return field.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const rows = Array.from(
+      { length: Math.max(1, Math.ceil(bounds.height)) },
+      (_, index) => index + 0.5,
+    ).sort((left, right) =>
+      Math.abs(left - bounds.height / 2) - Math.abs(right - bounds.height / 2));
+    for (const x of [0.5, bounds.width - 0.5, 1.5, bounds.width - 1.5, 2.5, bounds.width - 2.5]) {
+      for (const y of rows) {
+        const target = document.elementFromPoint(bounds.left + x, bounds.top + y);
+        if (target?.closest(".designer-field") === element) return { x, y };
+      }
+    }
+    throw new Error("The visual field has no painted horizontal resize edge.");
+  });
+}
 
 test("renders locally and links to the dedicated editor route", async ({ page, request }) => {
   await page.goto("/");
@@ -140,7 +179,8 @@ test("keeps code and WYSIWYG content and selection synchronized", async ({ page 
   await expect(page.getByText(/Ln 4, Col \d+/)).toBeVisible();
   await expect(visualField).toHaveClass(/selected/);
 
-  await visualField.click();
+  await visualField.focus();
+  await visualField.press("Space");
   await expect(page.locator(".designer-root footer")).toContainText("selected");
   const content = page.getByRole("textbox", { name: "Field content", exact: true });
   await content.fill("Visual sync");
@@ -195,18 +235,21 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
 
   const textField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
   await expect(textField).toBeVisible();
-  await textField.click();
+  await textField.focus();
+  await textField.press("Space");
   await expect(page.locator(".designer-root footer")).toContainText("selected");
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toHaveValue("40");
   await expect(canvas.locator("[data-resize-handle]")).toHaveCount(0);
   const textBounds = await textField.boundingBox();
   expect(textBounds).not.toBeNull();
-  await page.mouse.move(textBounds!.x + textBounds!.width - 1, textBounds!.y + textBounds!.height / 2);
+  const textResizeEdge = await paintedHorizontalEdgePosition(textField);
+  await page.mouse.move(textBounds!.x + textResizeEdge.x, textBounds!.y + textResizeEdge.y);
   await expect.poll(() => textField.evaluate((element) => getComputedStyle(element).cursor)).toBe("ew-resize");
-  await page.mouse.move(textBounds!.x + textBounds!.width / 2, textBounds!.y + textBounds!.height / 2);
+  const textPaint = await paintedFieldPosition(textField);
+  await page.mouse.move(textBounds!.x + textPaint.x, textBounds!.y + textPaint.y);
   await expect.poll(() => textField.evaluate((element) => getComputedStyle(element).cursor)).toBe("grab");
 
-  await textField.dblclick();
+  await page.mouse.dblclick(textBounds!.x + textPaint.x, textBounds!.y + textPaint.y);
   const inlineText = page.getByRole("textbox", { name: "Edit text inline", exact: true });
   await expect(inlineText).toBeVisible();
   await expect(page.locator(".designer-inline-text")).toHaveCount(0);
@@ -218,7 +261,8 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await page.locator(".designer-viewport").click({ position: { x: 5, y: 5 } });
   await expect(page.getByRole("tab", { name: "Layers", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).toBeHidden();
-  await textField.click();
+  await textField.focus();
+  await textField.press("Space");
 
   const content = page.getByRole("textbox", { name: "Field content", exact: true });
   await content.fill("Visual label");
@@ -259,9 +303,9 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await expect.poll(async () => Number(await boxHeight.inputValue())).toBeGreaterThan(120);
   const bounds = await box.boundingBox();
   expect(bounds).not.toBeNull();
-  await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+  await page.mouse.move(bounds!.x + 4, bounds!.y + bounds!.height / 2);
   await page.mouse.down();
-  await page.mouse.move(bounds!.x + bounds!.width / 2 + 20, bounds!.y + bounds!.height / 2 + 10, { steps: 5 });
+  await page.mouse.move(bounds!.x + 24, bounds!.y + bounds!.height / 2 + 10, { steps: 5 });
   await page.mouse.up();
   await expect(page.getByRole("spinbutton", { name: "X dots", exact: true })).not.toHaveValue("360");
 
@@ -291,7 +335,8 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   });
   const barcode = canvas.locator('[data-visual-kind="barcode"]');
   await expect(barcode).toHaveCount(1);
-  await barcode.click();
+  await barcode.focus();
+  await barcode.press("Space");
   const barcodeType = page.getByRole("combobox", { name: "Barcode type", exact: true });
   await expect(barcodeType).toHaveValue("^BC");
   await barcodeType.selectOption("^B3");
@@ -306,6 +351,62 @@ test("combines Code and WYSIWYG editing with visual source edits", async ({ page
   await expect(page.locator(".designer-root footer")).toContainText("selected");
 });
 
+test("selects fields only near their painted output", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Control+N");
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("Control+A");
+  await page.keyboard.press("Meta+A");
+  await page.keyboard.insertText([
+    "^XA",
+    "^PW300",
+    "^LL200",
+    "^FO10,10^GB280,180,6,B,0^FS",
+    "^FO40,40^A0N,30,30^FDA   B^FS",
+    "^XZ",
+  ].join("\n"));
+  await page.keyboard.press("Escape");
+
+  const canvas = page.getByTestId("visual-label-canvas");
+  const box = page.getByRole("button", { name: "Box at 10, 10", exact: true });
+  const text = page.getByRole("button", { name: "Text at 40, 40", exact: true });
+  await expect(box).toBeVisible();
+  await expect(text).toBeVisible();
+  await expect(box.locator('[data-hit-geometry="outline"]')).toHaveCount(1);
+  await expect(text.locator('[data-hit-geometry="text"]')).toHaveCount(1);
+
+  const initialBounds = await box.boundingBox();
+  expect(initialBounds).not.toBeNull();
+  await box.click({ position: { x: 2, y: initialBounds!.height / 2 } });
+  await expect(box).toHaveClass(/selected/);
+
+  const selectedBounds = await box.boundingBox();
+  expect(selectedBounds).not.toBeNull();
+  const center = {
+    x: selectedBounds!.x + selectedBounds!.width / 2,
+    y: selectedBounds!.y + selectedBounds!.height / 2,
+  };
+  await page.mouse.click(center.x, center.y);
+  await expect(box).not.toHaveClass(/selected/);
+  await expect.poll(() => page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest(".designer-field")?.getAttribute("data-field-id") ?? null,
+    center,
+  )).toBeNull();
+
+  const deselectedBounds = await box.boundingBox();
+  expect(deselectedBounds).toEqual(selectedBounds);
+  const textBounds = await text.boundingBox();
+  expect(textBounds).not.toBeNull();
+  await page.mouse.click(
+    textBounds!.x + textBounds!.width / 2,
+    textBounds!.y + textBounds!.height / 2,
+  );
+  await expect(text).toHaveClass(/selected/);
+});
+
 test("positions the inline caret from rendered glyph advances", async ({ page }) => {
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
@@ -316,12 +417,16 @@ test("positions the inline caret from rendered glyph advances", async ({ page })
   await expect(field).toBeVisible();
   const initialBounds = await field.boundingBox();
   expect(initialBounds).not.toBeNull();
-  await field.click();
-  await page.getByRole("textbox", { name: "Field content", exact: true }).fill("WiWi");
+  await field.focus();
+  await field.press("Space");
+  await page.getByRole("textbox", { name: "Field content", exact: true }).fill("Wi word");
   await expect.poll(async () => (await field.boundingBox())?.width ?? initialBounds!.width)
-    .toBeLessThan(initialBounds!.width * 0.75);
+    .toBeLessThan(initialBounds!.width * 0.85);
 
-  await field.dblclick({ position: { x: 2, y: Math.max(2, initialBounds!.height / 2) } });
+  const inlineBounds = await field.boundingBox();
+  expect(inlineBounds).not.toBeNull();
+  const inlinePaint = await paintedFieldPosition(field);
+  await page.mouse.dblclick(inlineBounds!.x + inlinePaint.x, inlineBounds!.y + inlinePaint.y);
   const editor = page.getByRole("textbox", { name: "Edit text inline", exact: true });
   const caret = page.getByTestId("inline-caret");
   await expect(editor).toBeVisible();
@@ -334,7 +439,9 @@ test("positions the inline caret from rendered glyph advances", async ({ page })
     };
   });
   expect(selectionFrame).toEqual({ borderWidth: "1px", outlineStyle: "none", boxShadow: "none" });
-  await editor.press("Home");
+  const editorBounds = await editor.boundingBox();
+  expect(editorBounds).not.toBeNull();
+  await editor.click({ position: { x: 1, y: editorBounds!.height / 2 } });
   await expect(caret).toHaveAttribute("data-caret-offset", "0");
   const first = await caret.boundingBox();
   expect(first).not.toBeNull();
@@ -352,6 +459,159 @@ test("positions the inline caret from rendered glyph advances", async ({ page })
   const wideAdvance = afterWideGlyph!.x - first!.x;
   const narrowAdvance = afterNarrowGlyph!.x - afterWideGlyph!.x;
   expect(wideAdvance).toBeGreaterThan(narrowAdvance * 1.5);
+
+  await editor.press("ArrowRight");
+  await expect(caret).toHaveAttribute("data-caret-offset", "3");
+  const afterSpace = await caret.boundingBox();
+  expect(afterSpace).not.toBeNull();
+  const spaceAdvance = afterSpace!.x - afterNarrowGlyph!.x;
+  expect(spaceAdvance).toBeGreaterThan(1);
+
+  await page.mouse.move(first!.x + first!.width / 2 + 2, first!.y + first!.height / 2);
+  await page.mouse.down();
+  const selectionSegments = page.getByTestId("inline-selection-segment");
+  try {
+    await page.mouse.move(
+      afterSpace!.x + afterSpace!.width / 2 + 1,
+      afterSpace!.y + afterSpace!.height / 2,
+      { steps: 6 },
+    );
+    await expect(selectionSegments).toHaveCount(3);
+  } finally {
+    await page.mouse.up();
+  }
+  await expect(selectionSegments).toHaveCount(3);
+  await expect(selectionSegments.nth(0)).toHaveAttribute("data-selection-start", "0");
+  await expect(selectionSegments.nth(1)).toHaveAttribute("data-selection-start", "1");
+  await expect(selectionSegments.nth(2)).toHaveAttribute("data-selection-start", "2");
+  const segmentBounds = await Promise.all([
+    selectionSegments.nth(0).boundingBox(),
+    selectionSegments.nth(1).boundingBox(),
+    selectionSegments.nth(2).boundingBox(),
+  ]);
+  expect(segmentBounds.every(Boolean)).toBe(true);
+  expect(Math.abs(segmentBounds[0]!.width - wideAdvance)).toBeLessThan(2);
+  expect(Math.abs(segmentBounds[1]!.width - narrowAdvance)).toBeLessThan(2);
+  expect(Math.abs(segmentBounds[2]!.width - spaceAdvance)).toBeLessThan(2);
+
+  await page.mouse.click(
+    editorBounds!.x + editorBounds!.width - 1,
+    editorBounds!.y + editorBounds!.height / 2,
+  );
+  await expect(caret).toHaveAttribute("data-caret-offset", "7");
+  await editor.press("ArrowLeft");
+  await expect(caret).toHaveAttribute("data-caret-offset", "6");
+  const wordPoint = await caret.boundingBox();
+  expect(wordPoint).not.toBeNull();
+  const selectionText = () => editor.evaluate(() => window.getSelection()?.toString() ?? "");
+  await page.mouse.dblclick(
+    wordPoint!.x + wordPoint!.width / 2,
+    wordPoint!.y + wordPoint!.height / 2,
+  );
+  await expect.poll(selectionText).toBe("word");
+  await expect(selectionSegments).toHaveCount(4);
+  await expect(selectionSegments.first()).toHaveAttribute("data-selection-start", "3");
+  await expect(selectionSegments.last()).toHaveAttribute("data-selection-end", "7");
+
+  await page.mouse.click(
+    wordPoint!.x + wordPoint!.width / 2,
+    wordPoint!.y + wordPoint!.height / 2,
+    { clickCount: 3 },
+  );
+  await expect.poll(selectionText).toBe("Wi word");
+  await expect(selectionSegments).toHaveCount(7);
+  await expect(selectionSegments.first()).toHaveAttribute("data-selection-start", "0");
+  await expect(selectionSegments.last()).toHaveAttribute("data-selection-end", "7");
+});
+
+test("aligns inline carets with centered and right-aligned field-block text", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+
+  const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
+  await editorSurface.click({ position: { x: 80, y: 40 } });
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText([
+    "^XA",
+    "^PW320",
+    "^LL140",
+    "^FO20,20^A0N,30,30^FB260,1,0,C^FDWiW\\&^FS",
+    "^FO20,80^A0N,30,30^FB260,1,0,R^FDWiW\\&^FS",
+    "^XZ",
+  ].join("\n"));
+
+  const fields = page.locator('.designer-field[data-visual-kind="text"]');
+  await expect(fields).toHaveCount(2);
+  const editor = page.getByRole("textbox", { name: "Edit text inline", exact: true });
+  const caret = page.getByTestId("inline-caret");
+
+  for (const [index, alignment] of ["center", "right"].entries()) {
+    const field = fields.nth(index);
+    let fieldBounds = await field.boundingBox();
+    expect(fieldBounds).not.toBeNull();
+    await field.focus();
+    await field.press("Space");
+    await expect(field).toHaveClass(/selected/);
+    fieldBounds = await field.boundingBox();
+    expect(fieldBounds).not.toBeNull();
+    await field.press("Enter");
+    await expect(editor).toBeVisible();
+    await expect(caret).toBeVisible();
+
+    await page.mouse.click(
+      fieldBounds!.x + 2,
+      fieldBounds!.y + fieldBounds!.height / 2,
+    );
+    await expect(caret).toHaveAttribute("data-caret-offset", "0");
+    const start = await caret.boundingBox();
+    expect(start).not.toBeNull();
+    await page.mouse.click(
+      fieldBounds!.x + fieldBounds!.width - 2,
+      fieldBounds!.y + fieldBounds!.height / 2,
+    );
+    await expect(caret).toHaveAttribute("data-caret-offset", "3");
+    const end = await caret.boundingBox();
+    expect(end).not.toBeNull();
+
+    const startX = start!.x + start!.width / 2;
+    const endX = end!.x + end!.width / 2;
+    if (alignment === "center") {
+      expect((startX + endX) / 2).toBeCloseTo(
+        fieldBounds!.x + fieldBounds!.width / 2,
+        0,
+      );
+    } else {
+      expect(endX).toBeCloseTo(fieldBounds!.x + fieldBounds!.width, 0);
+    }
+    await editor.press("Escape");
+    await expect(editor).toHaveCount(0);
+  }
+});
+
+test("keeps the WYSIWYG toolbar stable while selecting and deselecting", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+
+  const designer = page.getByRole("region", { name: "WYSIWYG label editor", exact: true });
+  const header = designer.locator("header").first();
+  const zoom = page.getByTitle("Fit label", { exact: true });
+  await page.getByTitle("Open layers panel", { exact: true }).click();
+  await page.getByTestId("visual-layers").locator("button").first().click();
+  await expect(page.getByTitle(/Arrange 1 selected layer/)).toBeVisible();
+  const selectedHeader = await header.boundingBox();
+  const selectedZoom = await zoom.boundingBox();
+  expect(selectedHeader).not.toBeNull();
+  expect(selectedZoom).not.toBeNull();
+
+  await page.locator(".designer-viewport").click({ position: { x: 5, y: 5 } });
+  await expect(page.getByTitle(/Arrange 1 selected layer/)).toHaveCount(0);
+  const deselectedHeader = await header.boundingBox();
+  const deselectedZoom = await zoom.boundingBox();
+  expect(deselectedHeader).not.toBeNull();
+  expect(deselectedZoom).not.toBeNull();
+  expect(deselectedHeader!.height).toBe(selectedHeader!.height);
+  expect(deselectedZoom!.x).toBeCloseTo(selectedZoom!.x, 0);
+  expect(deselectedZoom!.y).toBeCloseTo(selectedZoom!.y, 0);
 });
 
 test("edits barcode and QR payloads in inline input boxes", async ({ page }) => {
@@ -389,7 +649,8 @@ test("edits barcode and QR payloads in inline input boxes", async ({ page }) => 
   }).toBeGreaterThan(1);
   const barcodeBounds = await barcode.boundingBox();
   expect(barcodeBounds).not.toBeNull();
-  await barcode.dblclick({ position: { x: barcodeBounds!.width / 2, y: barcodeBounds!.height / 2 } });
+  const barcodePaint = await paintedFieldPosition(barcode);
+  await page.mouse.dblclick(barcodeBounds!.x + barcodePaint.x, barcodeBounds!.y + barcodePaint.y);
   const barcodeInput = page.getByRole("textbox", { name: "Edit barcode data inline", exact: true });
   await expect(barcodeInput).toBeVisible();
   await expect(barcodeInput).toHaveValue("1234567890");
@@ -400,7 +661,8 @@ test("edits barcode and QR payloads in inline input boxes", async ({ page }) => 
 
   const qrBounds = await qrCode.boundingBox();
   expect(qrBounds).not.toBeNull();
-  await qrCode.dblclick({ position: { x: qrBounds!.width / 2, y: qrBounds!.height / 2 } });
+  const qrPaint = await paintedFieldPosition(qrCode);
+  await page.mouse.dblclick(qrBounds!.x + qrPaint.x, qrBounds!.y + qrPaint.y);
   const qrInput = page.getByRole("textbox", { name: "Edit qr code data inline", exact: true });
   await expect(qrInput).toBeVisible();
   await expect(qrInput).toHaveValue("https://example.com");
@@ -408,6 +670,44 @@ test("edits barcode and QR payloads in inline input boxes", async ({ page }) => 
   await expect(editorSurface).toContainText("^FDQA,https://zplr.dev/labels^FS");
   await qrInput.press("Enter");
   await expect(qrInput).toBeHidden();
+});
+
+test("keeps rulers outside and aligned with the label canvas", async ({ page }) => {
+  await page.goto("/editor");
+  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+
+  const canvas = page.getByTestId("visual-label-canvas");
+  const horizontal = page.getByLabel("Horizontal ruler", { exact: true });
+  const vertical = page.getByLabel("Vertical ruler", { exact: true });
+  await expect(canvas).toBeVisible();
+  await expect(horizontal).toBeVisible();
+  await expect(vertical).toBeVisible();
+
+  const expectOutsideAndAligned = async () => {
+    const [canvasBounds, horizontalBounds, verticalBounds] = await Promise.all([
+      canvas.boundingBox(),
+      horizontal.boundingBox(),
+      vertical.boundingBox(),
+    ]);
+    expect(canvasBounds).not.toBeNull();
+    expect(horizontalBounds).not.toBeNull();
+    expect(verticalBounds).not.toBeNull();
+    expect(horizontalBounds!.y + horizontalBounds!.height)
+      .toBeLessThanOrEqual(canvasBounds!.y + 0.5);
+    expect(verticalBounds!.x + verticalBounds!.width)
+      .toBeLessThanOrEqual(canvasBounds!.x + 0.5);
+    expect(horizontalBounds!.x).toBeCloseTo(canvasBounds!.x, 0);
+    expect(horizontalBounds!.width).toBeCloseTo(canvasBounds!.width, 0);
+    expect(verticalBounds!.y).toBeCloseTo(canvasBounds!.y, 0);
+    expect(verticalBounds!.height).toBeCloseTo(canvasBounds!.height, 0);
+  };
+
+  await expectOutsideAndAligned();
+  await page.getByTitle("Zoom in", { exact: true }).click();
+  await expectOutsideAndAligned();
+  await horizontal.dblclick();
+  await expect(page.getByRole("separator", { name: /Vertical guide at \d+ dots/ }))
+    .toHaveCount(1);
 });
 
 test("zooms around the pointer and pans with touchpad wheel gestures", async ({ page }) => {
@@ -512,7 +812,7 @@ test("uses distinct snapline colors for the label and other objects", async ({ p
   expect(canvasBounds).not.toBeNull();
   expect(initialBoxBounds).not.toBeNull();
   await page.mouse.move(
-    initialBoxBounds!.x + initialBoxBounds!.width / 2,
+    initialBoxBounds!.x + 4,
     initialBoxBounds!.y + initialBoxBounds!.height / 2,
   );
   await page.mouse.down();
@@ -540,7 +840,7 @@ test("uses distinct snapline colors for the label and other objects", async ({ p
   expect(snappedBoxBounds).not.toBeNull();
   expect(textBounds).not.toBeNull();
   await page.mouse.move(
-    snappedBoxBounds!.x + snappedBoxBounds!.width / 2,
+    snappedBoxBounds!.x + 4,
     snappedBoxBounds!.y + snappedBoxBounds!.height / 2,
   );
   await page.mouse.down();
@@ -580,7 +880,9 @@ test("scrolls the code editor to a field revealed from WYSIWYG", async ({ page }
   await expect(editorSurface).not.toContainText("Reveal");
 
   await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
-  await page.getByRole("button", { name: "Text at 40, 900", exact: true }).click();
+  const revealField = page.getByRole("button", { name: "Text at 40, 900", exact: true });
+  await revealField.focus();
+  await revealField.press("Space");
   await page.getByRole("button", { name: "Reveal field in ZPL", exact: true }).click();
 
   await expect(page.getByTestId("zpl-editor")).toBeVisible();
@@ -716,8 +1018,11 @@ test("arranges, locks, and hides a multi-layer visual selection", async ({ page 
   const box = page.getByRole("button", { name: "Box at 360, 580", exact: true });
   await expect(box).toBeVisible();
 
-  await textField.click();
-  await box.click({ modifiers: ["Shift"] });
+  await textField.focus();
+  await textField.press("Space");
+  const boxBounds = await box.boundingBox();
+  expect(boxBounds).not.toBeNull();
+  await box.click({ position: { x: 2, y: boxBounds!.height / 2 }, modifiers: ["Shift"] });
   const visualFooter = page.locator(".designer-root footer");
   await expect(visualFooter).toContainText("2 layers selected");
   await page.getByLabel("WYSIWYG grid snap").selectOption("10");
@@ -757,7 +1062,9 @@ test("binds visual text to live variable-data records", async ({ page }) => {
   await dataDialog.getByLabel("Field 1 for Record 1", { exact: true }).fill("Ada Lovelace");
   await dataDialog.getByTitle("Close variable data").click();
 
-  await page.getByRole("button", { name: "Text at 40, 40", exact: true }).click();
+  const variableField = page.getByRole("button", { name: "Text at 40, 40", exact: true });
+  await variableField.focus();
+  await variableField.press("Space");
   await page.getByRole("combobox", { name: "Field binding", exact: true }).selectOption("1");
   const editorSurface = page.getByTestId("zpl-editor").locator(".monaco-editor .view-lines");
   await expect(editorSurface).toContainText("^FN1");
