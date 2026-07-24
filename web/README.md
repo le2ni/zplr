@@ -17,7 +17,7 @@ pnpm run size:check
 pnpm run test:e2e
 ```
 
-The deployable build requires Playwright Chromium. It captures paired light- and dark-mode versions of the real generated editor at fixed viewports, validates current-run provenance and color-scheme metadata, writes the images into the static artifact, and finalizes CSP hashes and release metadata. `screenshots:update` copies a successful capture into `public/screenshots` for ordinary development mode.
+The deployable build ensures Playwright's pinned Chromium binary is installed, then captures paired light- and dark-mode versions of the real generated editor at fixed viewports. It validates current-run provenance and color-scheme metadata, writes the images into the static artifact, and finalizes CSP hashes and release metadata. GitHub workflows still preinstall browser system dependencies; direct Cloudflare Pages builds can bootstrap the missing browser binary themselves. `screenshots:update` copies a successful capture into `public/screenshots` for ordinary development mode.
 
 The UI uses the 0.3 job API, structured diagnostics, required browser canvases, `HighlightRegion.sourceSpan`, and `findHighlightRegionAtPoint`. The landing page shows the package version and the build exposes release metadata through the generated `version.json`.
 
