@@ -104,9 +104,10 @@ If stabilization reveals another necessary break, it will ship as 0.4.0 and rest
 
 ```bash
 pnpm install
+pnpm exec playwright install chromium firefox webkit
 pnpm run verify
 pnpm run test:e2e
-pnpm run audit:prod
+pnpm run audit
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [SUPPORT.md](./SUPPORT.md). Bundled-font terms are in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).

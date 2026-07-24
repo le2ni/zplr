@@ -114,5 +114,5 @@
     "skipLibCheck": true /* Skip type checking all .d.ts files. */
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "web", "vite.config.ts"]
+  "exclude": ["node_modules", "dist", "web"]
 }

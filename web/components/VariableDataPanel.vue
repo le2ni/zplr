@@ -23,7 +23,7 @@
         <button type="button" @click="importInput?.click()">Import CSV / JSON</button>
         <button type="button" :disabled="!activeDataset" @click="exportCsv">Export CSV</button>
         <button class="data-primary" type="button" :disabled="!activeDataset?.records.length" @click="emit('batchPreview')">Batch PNGs</button>
-        <input ref="importInput" class="sr-only" type="file" accept=".csv,.json,text/csv,application/json" @change="importFile" />
+        <input ref="importInput" class="sr-only" type="file" accept=".csv,.json,text/csv,application/json" aria-label="Import variable data file" @change="importFile" />
       </div>
 
       <div v-if="activeDataset" class="data-body">
@@ -362,6 +362,20 @@ function exportCsv(): void {
   .data-toolbar, .data-table thead { background: rgb(24 24 27); }
   .data-toolbar button, .data-toolbar select, .data-welcome button, .data-sidebar input { border-color: rgb(255 255 255 / 0.12); background: rgb(24 24 27); color: rgb(228 228 231); }
   .data-select-icon { color: rgb(212 212 216); }
+  .data-header p,
+  .data-sidebar > label,
+  .data-section-title,
+  .data-empty-note,
+  .data-empty-table,
+  .data-welcome,
+  .data-table-actions,
+  .data-table thead th,
+  .data-table thead th > label { color: rgb(161 161 170); }
+  .data-binding-list li { border-color: rgb(255 255 255 / 0.1); }
+  .data-binding-list code { color: rgb(96 165 250); }
+  .data-binding-list small { color: rgb(251 113 133); }
+  .data-table-actions button { color: rgb(212 212 216); }
+  .data-danger, .data-row-delete { color: rgb(251 113 133); }
   .data-column-delete:hover, .data-row-delete:hover { background: rgb(255 255 255 / 0.08); color: white; }
   .data-toolbar .data-primary { border-color: white; background: white; color: rgb(9 9 11); }
   .data-table input:focus, .data-table textarea:focus { background: rgb(24 24 27); color: white; }

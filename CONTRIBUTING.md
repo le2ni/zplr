@@ -4,9 +4,10 @@ Use Node 24 and the pinned pnpm version. Node 22 remains a CI compatibility targ
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm exec playwright install chromium firefox webkit
 pnpm run verify
 pnpm run test:e2e
-pnpm run audit:prod
+pnpm run audit
 ```
 
 Add parser, semantic, and raster evidence when changing command behavior. Update the capability catalog only when all rendering-affecting behavior is complete; device-only commands must remain byte-for-byte raster-neutral. Run the documentation generators rather than editing generated command, diagnostic, or conformance files.

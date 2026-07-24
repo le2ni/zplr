@@ -30,14 +30,22 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run build:web
       - name: Deploy PR preview
-        run: pnpm dlx wrangler@4.112.0 pages deploy dist-playground --project-name zplr --branch "pr-${{ github.event.pull_request.number }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
+        run: pnpm dlx wrangler@4.112.0 pages deploy .output/public --project-name zplr --branch "pr-${{ github.event.pull_request.number }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - run: node scripts/verify-deployment.mjs "${PREVIEW_URL}" "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"
-      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec playwright test --project chromium
         env:
           E2E_BASE_URL: ${{ env.PREVIEW_URL }}
+      - name: Upload screenshot diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-screenshot-diagnostics-${{ github.sha }}
+          path: .screenshots
+          include-hidden-files: true
+          if-no-files-found: ignore

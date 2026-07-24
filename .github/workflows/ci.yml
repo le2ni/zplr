@@ -17,7 +17,7 @@ env:
 
 jobs:
   verify:
-    name: Verify / Node ${{ matrix.node }}
+    name: Core verify / Node ${{ matrix.node }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,7 +32,40 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run verify
+      - run: pnpm run verify:core
+
+  web-build:
+    name: Prerender, capture, and validate web artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run build
+      - run: pnpm run build:web
+      - run: pnpm run size:check
+      - run: pnpm run test:seo
+      - name: Upload immutable static artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zplr-static-${{ github.sha }}
+          path: .output
+          include-hidden-files: true
+          retention-days: 7
+      - name: Upload screenshot diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-diagnostics-${{ github.sha }}
+          path: .screenshots
+          include-hidden-files: true
+          if-no-files-found: ignore
 
   native-node-smoke:
     name: Native smoke / ${{ matrix.os }}
@@ -55,6 +88,7 @@ jobs:
 
   browser:
     name: Browser / ${{ matrix.browser }}
+    needs: web-build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -69,8 +103,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - name: Download generated static artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zplr-static-${{ github.sha }}
+          path: .output
       - run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
       - run: pnpm exec playwright test --project ${{ matrix.browser }}
+        env:
+          E2E_PREBUILT: "1"
 
   fresh-consumer:
     name: Fresh tarball / ${{ matrix.manager }}
@@ -92,7 +133,7 @@ jobs:
       - run: node scripts/ci-fresh-consumer.mjs ${{ matrix.manager }}
 
   production-security:
-    name: Production audit
+    name: Dependency audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -104,4 +145,4 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm run license:check
-      - run: pnpm run audit:prod
+      - run: pnpm run audit

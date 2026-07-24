@@ -5,6 +5,10 @@ node_modules
 # Build output
 dist
 dist-playground
+.nuxt
+.output
+.screenshots
+.lighthouseci
 
 # TypeScript
 *.tsbuildinfo

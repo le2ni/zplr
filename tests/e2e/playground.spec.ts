@@ -41,24 +41,65 @@ async function paintedHorizontalEdgePosition(field: Locator): Promise<{ x: numbe
 }
 
 test("renders locally and links to the dedicated editor route", async ({ page, request }) => {
-  await page.goto("/");
-  await expect(page.getByRole("heading", { name: "ZPLr", exact: true })).toBeVisible();
-  await expect(page.getByTestId("local-only-notice")).toContainText("never leave this browser");
-  await expect(page.getByAltText("Rendered shipping label preview")).toBeVisible({ timeout: 30_000 });
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
 
-  const editorLink = page.getByRole("link", { name: "Open ZPL editor", exact: true });
+  const landingResponse = await page.goto("/");
+  expect(landingResponse?.headers()["content-security-policy"]).toMatch(/script-src 'self' 'sha256-/);
+  await expect(page.getByRole("heading", { name: "Free Online ZPL Editor, Viewer & Visual Designer", exact: true })).toBeVisible();
+  await expect(page.getByTestId("local-only-notice")).toContainText("never leave this browser");
+  await expect(page.getByAltText("ZPLr online ZPL editor showing ZPL code beside a rendered shipping label preview")).toBeVisible({ timeout: 30_000 });
+  for (const alt of [
+    "Visual ZPL label designer with a drag-and-drop canvas, layers, guides, and field properties",
+    "ZPL variable data manager previewing records imported from CSV or JSON for batch label export",
+  ]) {
+    const screenshot = page.getByAltText(alt);
+    await screenshot.evaluate((image) => {
+      image.scrollIntoView({ behavior: "instant", block: "center" });
+    });
+    await expect(screenshot).toBeVisible();
+    await expect.poll(() =>
+      screenshot.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
+    ).toBe(true);
+  }
+  await page.emulateMedia({ colorScheme: "dark" });
+  for (const alt of [
+    "ZPLr online ZPL editor showing ZPL code beside a rendered shipping label preview",
+    "Online ZPL viewer with source code, diagnostics, and a live label preview",
+    "Visual ZPL label designer with a drag-and-drop canvas, layers, guides, and field properties",
+    "ZPL variable data manager previewing records imported from CSV or JSON for batch label export",
+  ]) {
+    const screenshot = page.getByAltText(alt);
+    await expect.poll(() =>
+      screenshot.evaluate((image: HTMLImageElement) => new URL(image.currentSrc).pathname),
+    ).toMatch(/-dark\.png$/);
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+
+  const editorLink = page.getByRole("link", { name: "Open the free ZPL editor", exact: true }).first();
   await expect(editorLink).toHaveAttribute("href", "/editor");
 
   const versionResponse = await request.get("/version.json");
   expect(versionResponse.ok()).toBe(true);
   const version = await versionResponse.json();
   expect(version).toMatchObject({ name: "zplr", api: "0.3.0", profile: "zpl-ii-2025" });
-  await expect(page.getByText("Rendering", { exact: true })).toBeVisible();
-  await expect(page.getByText("Local-only", { exact: true })).toBeVisible();
+  await expect(page.getByText("Node.js + browser", { exact: true })).toBeVisible();
+  await expect(page.getByText("100% local", { exact: true })).toBeVisible();
+
+  const editorShellResponse = await request.get("/editor");
+  expect(editorShellResponse.ok()).toBe(true);
+  const editorShell = await editorShellResponse.text();
+  expect(editorShell).toContain("Opening the local ZPL editor");
+  expect(editorShell).toContain('name="robots" content="noindex, follow"');
+  expect((await request.get("/not-a-zplr-route")).status()).toBe(404);
 
   await editorLink.click();
   await expect(page).toHaveURL(/\/editor$/);
   await expect(page.getByRole("heading", { name: "ZPL Editor" })).toBeVisible();
+  expect(browserErrors).toEqual([]);
 });
 
 test("opens directly as a full IDE and links diagnostics to source", async ({ page }) => {
@@ -89,7 +130,39 @@ test("opens directly as a full IDE and links diagnostics to source", async ({ pa
   await expect(page.locator(".monaco-editor .squiggly-warning, .monaco-editor .squiggly-error")).not.toHaveCount(0);
 });
 
+test("keeps the loading shell visible until the asynchronous editor is ready", async ({ page }) => {
+  let chunkRequested = false;
+  let releaseChunk = (): void => {};
+  const chunkGate = new Promise<void>((resolve) => {
+    releaseChunk = resolve;
+  });
+  await page.route("**/_nuxt/*.js", async (route) => {
+    const response = await route.fetch();
+    const body = await response.body();
+    const source = body.toString("utf8");
+    if (source.includes("editor-workspace")) {
+      chunkRequested = true;
+      await chunkGate;
+    }
+    await route.fulfill({ response, body });
+  });
+
+  try {
+    await page.goto("/editor", { waitUntil: "domcontentloaded" });
+    await expect.poll(() => chunkRequested).toBe(true);
+    await expect(page.getByRole("status")).toHaveText("Opening the local ZPL editor…");
+  } finally {
+    releaseChunk();
+  }
+
+  await expect(page.getByTestId("editor-workspace")).toBeVisible({ timeout: 30_000 });
+});
+
 test("uses the system color scheme as the default editor theme", async ({ page }) => {
+  // Firefox creates a new browsing context group when the first navigation
+  // receives COOP, which clears Playwright's page-level media emulation.
+  // Enter the protected origin before setting the simulated OS preference.
+  await page.goto("/");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
@@ -481,6 +554,9 @@ test("positions the inline caret from rendered glyph advances", async ({ page })
     await page.mouse.up();
   }
   await expect(selectionSegments).toHaveCount(3);
+  await expect.poll(() => editor.evaluate(
+    (element) => getComputedStyle(element, "::selection").color,
+  )).toBe("rgba(0, 0, 0, 0)");
   await expect(selectionSegments.nth(0)).toHaveAttribute("data-selection-start", "0");
   await expect(selectionSegments.nth(1)).toHaveAttribute("data-selection-start", "1");
   await expect(selectionSegments.nth(2)).toHaveAttribute("data-selection-start", "2");
@@ -906,6 +982,7 @@ test("offers quick fixes and configurable live WYSIWYG rendering", async ({ page
   const diagnostic = page.getByRole("button", { name: /UNKNOWN_COMMAND/i });
   await expect(diagnostic).toBeVisible();
   await diagnostic.click();
+  await expect(page.getByLabel("ZPL source editor")).toBeFocused();
   await page.keyboard.press("Alt+Enter");
   await expect(page.locator(".actionList")).toBeVisible();
   await expect(page.locator(".actionList")).toContainText(/Change to \^[A-Z0-9~]{2}/);
@@ -1000,6 +1077,7 @@ test("completes parameter values and offers parameter quick fixes", async ({ pag
   const diagnostic = page.getByRole("button", { name: /INVALID_PARAMETER_VALUE/i });
   await expect(diagnostic).toContainText("Expected N, R, I, B");
   await diagnostic.click();
+  await expect(page.getByLabel("ZPL source editor")).toBeFocused();
   await page.keyboard.press("Alt+Enter");
   await expect(page.locator(".actionList")).toBeVisible();
   await expect(page.locator(".actionList")).toContainText("Change rotate field to N");
@@ -1110,49 +1188,105 @@ test("imports, places, and atomically renames an image resource", async ({ page 
   await expect(page.getByTestId("visual-label-canvas").locator('[data-visual-kind="graphic"]')).toHaveCount(1);
 });
 
-test("has no serious automated accessibility violations", async ({ page }) => {
-  await page.goto("/");
-  let results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  expect(results.violations).toEqual([]);
+for (const colorScheme of ["light", "dark"] as const) {
+  test(`has no serious automated accessibility violations in ${colorScheme} mode`, async ({ page }) => {
+    await page.goto("/");
+    await page.emulateMedia({ colorScheme });
+    await expect.poll(() => page.evaluate(() =>
+      window.matchMedia("(prefers-color-scheme: dark)").matches,
+    )).toBe(colorScheme === "dark");
+    let results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+    expect(results.violations).toEqual([]);
 
-  await page.goto("/editor");
-  await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
-  results = await new AxeBuilder({ page })
-    .exclude(".monaco-editor")
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+    await page.goto("/editor");
+    await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
 
-  await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
-  results = await new AxeBuilder({ page })
-    .exclude(".monaco-editor")
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+    await page.getByRole("button", { name: "Commands", exact: true }).click();
+    await page.getByLabel("Search all ZPL commands and parameters").fill("code 128");
+    await page.getByRole("button", { name: /\^BC.*Code 128 Barcode/ }).click();
+    await expect(page.getByRole("heading", { name: "Code 128 Barcode (Subsets A, B, and C)" })).toBeVisible();
+    await expect(page.getByTestId("visual-label-canvas")).toBeVisible();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
 
-  await page.getByRole("button", { name: "Open layers panel", exact: true }).click();
-  await page.getByTestId("visual-layers").getByRole("button").first().click();
-  await page.getByRole("tab", { name: "Properties", exact: true }).click();
-  await expect(page.getByRole("tabpanel", { name: "Properties", exact: true })).toBeVisible();
-  results = await new AxeBuilder({ page })
-    .exclude(".monaco-editor")
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
+    await page.getByRole("button", { name: "Files", exact: true }).click();
+    await page.getByRole("button", { name: "Open layers panel", exact: true }).click();
+    await page.getByTestId("visual-layers").getByRole("button").first().click();
+    await page.getByRole("tab", { name: "Properties", exact: true }).click();
+    await expect(page.getByRole("tabpanel", { name: "Properties", exact: true })).toBeVisible();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
 
-  await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "WYSIWYG shortcuts", exact: true })).toBeVisible();
-  results = await new AxeBuilder({ page })
-    .exclude(".monaco-editor")
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
-});
+    await page.getByRole("button", { name: "Keyboard shortcuts", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "WYSIWYG shortcuts", exact: true })).toBeVisible();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+
+    await page.getByTitle("Close shortcuts").click();
+    await page.getByTitle("Variable data and batch preview").click();
+    const dataDialog = page.getByRole("dialog", { name: "Variable data", exact: true });
+    await expect(dataDialog).toBeVisible();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+
+    await dataDialog.locator(".data-welcome").getByRole("button", { name: "New dataset", exact: true }).click();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+
+    await dataDialog.getByTitle("Close variable data").click();
+    await page.getByTitle("Import and manage images and fonts").click();
+    const resourceDialog = page.getByRole("dialog", { name: "Images & fonts", exact: true });
+    await expect(resourceDialog).toBeVisible();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+
+    await resourceDialog.getByTitle("Close resource manager").click();
+    await page.getByTitle("Editor and printer settings (⌘,)").click();
+    await expect(page.getByRole("dialog", { name: "Editor & printer settings", exact: true })).toBeVisible();
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/editor");
+    await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
+    results = await new AxeBuilder({ page })
+      .exclude(".monaco-editor")
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(results.violations).toEqual([]);
+  });
+}
 
 test("remains usable at a narrow mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "Open ZPL editor" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open the free ZPL editor", exact: true }).first()).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
   await page.goto("/editor");

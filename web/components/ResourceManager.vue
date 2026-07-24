@@ -52,7 +52,7 @@
             <div class="resource-drop" @click="imageInput?.click()" @dragover.prevent @drop.prevent="dropImage">
               <strong>{{ imageFile?.name || "Choose a PNG, JPEG, WebP, GIF, BMP, or SVG" }}</strong>
               <span>Images are converted locally to a 1-bit printer bitmap.</span>
-              <input ref="imageInput" class="sr-only" type="file" accept="image/*,.svg" @change="pickImage" />
+              <input ref="imageInput" class="sr-only" type="file" accept="image/*,.svg" aria-label="Choose image file" @change="pickImage" />
             </div>
 
             <div class="resource-image-grid">
@@ -81,7 +81,7 @@
             <div class="resource-drop" @click="fontInput?.click()" @dragover.prevent @drop.prevent="dropFont">
               <strong>{{ fontFile?.name || "Choose a .ttf OpenType font" }}</strong>
               <span>The original font is validated locally before generating a compressed <code>~DY</code> resource.</span>
-              <input ref="fontInput" class="sr-only" type="file" accept=".ttf,font/ttf,application/x-font-ttf" @change="pickFont" />
+              <input ref="fontInput" class="sr-only" type="file" accept=".ttf,font/ttf,application/x-font-ttf" aria-label="Choose TrueType font file" @change="pickFont" />
             </div>
             <div class="resource-font-form">
               <label>Printer resource name<input v-model="fontName" /></label>
@@ -436,6 +436,21 @@ onBeforeUnmount(() => {
   .resource-list > button:hover, .resource-summary, .resource-font-details { background: rgb(255 255 255 / 0.06); }
   .resource-list > button.active { border-color: rgb(59 130 246 / 0.35); background: rgb(59 130 246 / 0.12); }
   .resource-kind { background: rgb(255 255 255 / 0.08); color: rgb(212 212 216); }
+  .resource-header p,
+  .resource-list-heading,
+  .resource-list > button small,
+  .resource-originals small,
+  .resource-empty,
+  .resource-tabs button,
+  .resource-drop span,
+  .resource-controls label > span,
+  .resource-summary,
+  .resource-font-details,
+  .resource-note { color: rgb(161 161 170); }
+  .resource-selected-actions label,
+  .resource-controls > label,
+  .resource-font-form label { color: rgb(212 212 216); }
+  .resource-selected-actions .resource-danger { color: rgb(251 113 133); }
   .resource-tabs button.active { border-bottom-color: white; color: white; }
   .resource-drop { border-color: rgb(255 255 255 / 0.2); background: rgb(24 24 27); }
   .resource-drop:hover { border-color: rgb(96 165 250); background: rgb(59 130 246 / 0.08); }

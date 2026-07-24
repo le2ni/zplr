@@ -14,6 +14,7 @@ concurrency:
 
 env:
   CI: "true"
+  E2E_PREBUILT: "1"
 
 jobs:
   publish:
@@ -38,6 +39,13 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: pnpm run release:verify
       - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
+      - name: Upload exact static release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zplr-static-${{ github.sha }}
+          path: .output
+          include-hidden-files: true
+          retention-days: 30
       - name: Record the exact source revision in the package
         run: node scripts/write-release-metadata.mjs
       - run: node scripts/ci-fresh-consumer.mjs npm --require-release
@@ -95,9 +103,13 @@ jobs:
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
-      - run: pnpm run build:web
+      - name: Download exact static release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zplr-static-${{ github.sha }}
+          path: .output
       - name: Deploy immutable candidate build to Cloudflare Pages
-        run: pnpm dlx wrangler@4.112.0 pages deploy dist-playground --project-name zplr --branch "${{ needs.publish.outputs.preview_branch }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
+        run: pnpm dlx wrangler@4.112.0 pages deploy .output/public --project-name zplr --branch "${{ needs.publish.outputs.preview_branch }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -105,7 +117,7 @@ jobs:
         run: node scripts/verify-deployment.mjs "https://${{ needs.publish.outputs.preview_branch }}.zplr.pages.dev" "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"
 
   deploy-production:
-    name: Deploy exact tagged playground
+    name: Deploy exact tagged site
     needs: [publish, verify-published]
     if: needs.publish.outputs.dist_tag == 'latest'
     runs-on: ubuntu-latest
@@ -126,9 +138,13 @@ jobs:
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
-      - run: pnpm run build:web
+      - name: Download exact static release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: zplr-static-${{ github.sha }}
+          path: .output
       - name: Deploy immutable build to Cloudflare Pages
-        run: pnpm dlx wrangler@4.112.0 pages deploy dist-playground --project-name zplr --branch main --commit-hash "${GITHUB_SHA}" --commit-dirty=false
+        run: pnpm dlx wrangler@4.112.0 pages deploy .output/public --project-name zplr --branch main --commit-hash "${GITHUB_SHA}" --commit-dirty=false
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,10 +1,12 @@
 # Cloudflare Pages deployment
 
-The Pages project is `zplr`, with production branch `main`, custom domain `zplr.de`, build command `pnpm run build:web`, and output directory `dist-playground`. `wrangler.jsonc` records the project and output directory. The full-screen IDE is served at `https://zplr.de/editor`; Cloudflare Pages' SPA fallback must return the application shell for a direct request to that path.
+The Pages project is `zplr`, with production branch `main`, custom domain `zplr.de`, build command `pnpm run build:web`, and output directory `.output/public`. Nuxt prerenders the SEO landing page and the `/editor` loading shell. Cloudflare serves only the generated static assets; no Pages Function or production server is required.
 
-Pull requests from the repository deploy to `pr-<number>.zplr.pages.dev` through `.github/workflows/preview.yml`, using Cloudflare's [preview-deployment model](https://developers.cloudflare.com/pages/configuration/preview-deployments/). Fork previews do not receive deployment secrets. The workflow verifies `version.json`, security headers, the direct `/editor` route, a Chromium IDE pass, responsive behavior, and accessibility after deployment; normal CI independently covers Chromium, Firefox, and WebKit.
+The deployable build requires Playwright Chromium. It type-checks the Nuxt application, runs `nuxt generate`, starts a temporary local preview, captures paired light- and dark-mode editor screenshots used by the landing page, and finalizes the static artifact. The landing page selects the matching image through `prefers-color-scheme`. The build fails if any of the eight screenshots is absent, stale, associated with another commit/run, assigned to the wrong color scheme, or has unexpected dimensions. `pnpm run screenshots:update` intentionally refreshes the committed development baselines after a successful build.
 
-Release tags are deployed only after the exact npm publish and post-publish verification succeed. `.github/workflows/publish.yml` checks out the immutable tag again and builds with `pnpm run build:web`. Prereleases published under `next` deploy to a versioned `release-<semver>.zplr.pages.dev` preview. Stable releases published under `latest` deploy to zplr.de. Both paths deploy with the tag commit SHA and verify that `version.json` contains the same version and commit; a prerelease can never enter the production deployment job.
+Pull requests from the repository deploy to `pr-<number>.zplr.pages.dev` through `.github/workflows/preview.yml`, using Cloudflare's [preview-deployment model](https://developers.cloudflare.com/pages/configuration/preview-deployments/). Fork previews do not receive deployment secrets. The workflow verifies prerendered SEO content, screenshot provenance, static metadata, security headers, the direct `/editor` route, hydration, responsive behavior, and accessibility. Normal CI independently covers Chromium, Firefox, and WebKit against the same generated artifact.
+
+Release tags are deployed only after the exact npm publish and post-publish verification succeed. `.github/workflows/publish.yml` builds and captures the static site once, uploads `.output` as an immutable commit-specific artifact, and reuses it for deployment. Prereleases published under `next` deploy to a versioned `release-<semver>.zplr.pages.dev` preview. Stable releases published under `latest` deploy to zplr.de. Both paths deploy with the tag commit SHA, verify the version and commit in `version.json`, and require the screenshot manifest to carry that same commit; a prerelease can never enter the production deployment job.
 
 The generated manifest is machine-readable:
 
@@ -14,10 +16,15 @@ The generated manifest is machine-readable:
   "version": "0.3.0",
   "commit": "<full git SHA>",
   "api": "0.3.0",
-  "profile": "zpl-ii-2025"
+  "profile": "zpl-ii-2025",
+  "screenshots": {
+    "source": "captured",
+    "runId": "<unique build run>",
+    "manifest": "/screenshots/manifest.json"
+  }
 }
 ```
 
-Cloudflare copies `public/_headers` into the deployment. Hashed assets are immutable; `version.json` is never cached. Preview deployments should retain Cloudflare's `X-Robots-Tag: noindex` behavior.
+The finalizer augments `public/_headers` with hashes for Nuxt's executable inline scripts, preserving the strict CSP without `unsafe-inline`. Hashed Nuxt assets are immutable, stable screenshot URLs revalidate, and deployment metadata is never cached. Preview deployments should retain Cloudflare's `X-Robots-Tag: noindex` behavior.
 
 Rollback is a Cloudflare control-plane operation. Roll back the site only to an already verified production deployment; do not rebuild an old tag. npm releases are immutable and require a corrective version rather than replacement.

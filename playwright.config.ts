@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const externalBaseUrl = process.env.E2E_BASE_URL;
+const prebuiltOutput = process.env.E2E_PREBUILT === "1";
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -22,7 +23,9 @@ export default defineConfig({
     ? undefined
     : {
         command:
-          "pnpm run build:web && pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort",
+          prebuiltOutput
+            ? "node scripts/serve-static.mjs 4173 --headers"
+            : "pnpm run build:web && node scripts/serve-static.mjs 4173 --headers",
         url: "http://127.0.0.1:4173",
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,

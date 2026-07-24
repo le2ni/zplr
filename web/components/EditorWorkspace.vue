@@ -1,6 +1,7 @@
 <template>
   <div
     class="ide-shell flex h-dvh min-h-[560px] flex-col overflow-hidden bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100"
+    data-testid="editor-workspace"
     @dragover.prevent
     @drop.prevent="handleDrop"
   >
@@ -484,16 +485,16 @@
       </section>
     </div>
 
-    <footer class="flex h-6 shrink-0 items-center bg-zinc-900 px-2 text-[10px] text-zinc-300 dark:bg-white dark:text-zinc-700">
+    <footer class="flex h-6 shrink-0 items-center border-t border-zinc-200 bg-zinc-100 px-2 text-[10px] text-zinc-600 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-300">
       <button class="status-button" type="button" :aria-label="`Problems: ${errorCount} errors, ${warningCount} warnings`" :aria-expanded="problemsOpen" @click="problemsOpen = !problemsOpen">
         <IconAlertCircleOutline class="size-3" aria-hidden="true" />
         <span>{{ errorCount }}</span>
-        <span class="ml-1 text-zinc-400 dark:text-zinc-500">△ {{ warningCount }}</span>
+        <span class="ml-1 text-zinc-600 dark:text-zinc-400">△ {{ warningCount }}</span>
       </button>
       <span class="ml-auto">Ln {{ cursorState.line }}, Col {{ cursorState.column }}</span>
       <span v-if="cursorState.selectionLength" class="ml-3 hidden sm:inline">{{ cursorState.selectionLength }} selected</span>
       <button class="status-button ml-3" type="button" @click="sidebarMode = 'commands'">ZPL II</button>
-      <span class="ml-3 flex items-center gap-1 text-emerald-300 dark:text-emerald-700"><span class="size-1.5 rounded-full bg-current"></span> Local-only</span>
+      <span class="ml-3 flex items-center gap-1 text-emerald-700 dark:text-emerald-400"><span class="size-1.5 rounded-full bg-current"></span> Local-only</span>
     </footer>
 
     <input ref="fileInput" class="sr-only" type="file" accept=".zpl,.prn,.zip,text/plain,application/zip" multiple aria-label="Open ZPL files or a ZPLr workspace" @change="handleFileInput" />
@@ -2079,7 +2080,7 @@ onBeforeUnmount(() => {
 .compact-select:focus, .compact-input:focus { border-color: rgb(113 113 122); box-shadow: 0 0 0 2px rgb(228 228 231); }
 
 .status-button { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 0.2rem; padding-inline: 0.25rem; }
-.status-button:hover { background: rgb(255 255 255 / 0.12); }
+.status-button:hover { background: rgb(0 0 0 / 0.06); }
 
 .settings-field, .settings-toggle {
   display: flex;
@@ -2117,11 +2118,13 @@ kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radiu
 
 @media (prefers-color-scheme: dark) {
   .toolbar-button { color: rgb(161 161 170); }
+  .icon-button-small, .mobile-pane-tab, .open-editor-row, .editor-tab, .command-back, .command-doc-heading { color: rgb(161 161 170); }
   .record-navigator { border-color: rgb(255 255 255 / 0.1); background: rgb(24 24 27); }
   .record-select-wrap { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); }
   .record-navigator select, .record-select-icon { color: rgb(212 212 216); }
   .toolbar-button:hover:not(:disabled), .icon-button-small:hover { background: rgb(255 255 255 / 0.06); color: white; }
   .mobile-pane-tab.active { background: rgb(39 39 42); color: white; }
+  .sidebar-tab { color: rgb(161 161 170); }
   .sidebar-tab.active { border-bottom-color: white; color: white; }
   .sidebar-heading { color: rgb(161 161 170); }
   .file-row { color: rgb(161 161 170); }
@@ -2139,8 +2142,9 @@ kbd { border: 1px solid rgb(212 212 216); border-bottom-width: 2px; border-radiu
   .diagnostic-row:hover:not(:disabled) { background: rgb(255 255 255 / 0.04); }
   .compact-select, .compact-input { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(161 161 170); }
   .compact-select:focus, .compact-input:focus { border-color: rgb(113 113 122); box-shadow: 0 0 0 2px rgb(255 255 255 / 0.08); }
-  .status-button:hover { background: rgb(0 0 0 / 0.08); }
+  .status-button:hover { background: rgb(255 255 255 / 0.08); }
   .settings-field strong, .settings-toggle strong { color: rgb(228 228 231); }
+  .settings-field small, .settings-toggle small { color: rgb(161 161 170); }
   .settings-select { border-color: rgb(255 255 255 / 0.1); background: rgb(9 9 11); color: rgb(212 212 216); }
   .settings-select:focus { border-color: rgb(113 113 122); box-shadow: 0 0 0 2px rgb(255 255 255 / 0.08); }
   .settings-toggle input { accent-color: white; }

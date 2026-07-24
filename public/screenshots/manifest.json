@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "source": "captured",
+  "runId": "6a824fd4-6161-4385-b282-54d9c3bf28fb",
+  "commit": "ae37cf91b81e4891a0a5c24d6798e21870b28f6b",
+  "capturedAt": "2026-07-23T21:53:25.101Z",
+  "files": {
+    "zpl-editor-overview.png": {
+      "width": 1440,
+      "height": 900,
+      "colorScheme": "light",
+      "sha256": "dc137e362e3ed7a487201f4ab2e5a80cee584a915e2878084d958e214ea4671b",
+      "bytes": 284366
+    },
+    "zpl-visual-designer.png": {
+      "width": 1440,
+      "height": 900,
+      "colorScheme": "light",
+      "sha256": "99e89c7831660abc2790eb52de689d513729966e33e9b5aade6bdcb2ae8c0adf",
+      "bytes": 334910
+    },
+    "zpl-variable-data.png": {
+      "width": 1440,
+      "height": 900,
+      "colorScheme": "light",
+      "sha256": "fad5c0842be09cd874e7940634b5549819eef2981a3989d8f2a666aa2047ff87",
+      "bytes": 139396
+    },
+    "zpl-editor-social.png": {
+      "width": 1200,
+      "height": 630,
+      "colorScheme": "light",
+      "sha256": "f722d006858bee6c5ab0970e5db2f078eee466bc228f7727487e867709155225",
+      "bytes": 162908
+    },
+    "zpl-editor-overview-dark.png": {
+      "width": 1440,
+      "height": 900,
+      "colorScheme": "dark",
+      "sha256": "4fc2303c3d7e3387c097819ae4601df21cf6d19d58bf6623e0d2aa6c80e83ffc",
+      "bytes": 274891
+    },
+    "zpl-visual-designer-dark.png": {
+      "width": 1440,
+      "height": 900,
+      "colorScheme": "dark",
+      "sha256": "4859c47404feda857c41c07846cdcd5d73c8364aae386f5e585727562dd23b92",
+      "bytes": 328258
+    },
+    "zpl-variable-data-dark.png": {
+      "width": 1440,
+      "height": 900,
+      "colorScheme": "dark",
+      "sha256": "170ff66d8c75671944682086b6d5023e69937cd824d6dfe0d6c68c6caee82601",
+      "bytes": 131023
+    },
+    "zpl-editor-social-dark.png": {
+      "width": 1200,
+      "height": 630,
+      "colorScheme": "dark",
+      "sha256": "b30c1abe46d2f05c653ed024c767f70599d7b7b7757492e79df43ea14e7cdd44",
+      "bytes": 157105
+    }
+  }
+}

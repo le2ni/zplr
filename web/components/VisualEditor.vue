@@ -625,7 +625,7 @@
             <IconClose class="size-4" aria-hidden="true" /><span class="sr-only">Close shortcuts</span>
           </button>
         </header>
-        <div class="designer-shortcut-list">
+        <div class="designer-shortcut-list" tabindex="0" aria-label="WYSIWYG keyboard shortcuts">
           <div v-for="shortcut in shortcuts" :key="shortcut.action" class="designer-shortcut-row">
             <span>{{ shortcut.action }}</span>
             <span class="flex flex-wrap justify-end gap-1">
@@ -2873,7 +2873,7 @@ onBeforeUnmount(() => {
   cursor: text;
   user-select: text;
 }
-.designer-inline-editor::selection { background: rgb(59 130 246 / 0.22); }
+.designer-inline-editor::selection { background: rgb(59 130 246 / 0.22); color: transparent; }
 .designer-inline-editor.uses-rendered-caret::selection { background: transparent; }
 .designer-inline-editor.uses-rendered-caret { caret-color: transparent; }
 .designer-inline-data-editor {
@@ -3157,6 +3157,9 @@ label.designer-property-control > span {
   backdrop-filter: blur(2px);
 }
 .designer-shortcuts-dialog {
+  display: flex;
+  max-height: 100%;
+  flex-direction: column;
   width: min(27rem, 100%);
   overflow: hidden;
   border: 1px solid rgb(228 228 231);
@@ -3164,7 +3167,7 @@ label.designer-property-control > span {
   background: white;
   box-shadow: 0 24px 60px rgb(24 24 27 / 0.25);
 }
-.designer-shortcut-list { padding: 0.55rem 1rem 0.8rem; }
+.designer-shortcut-list { min-height: 0; overflow-y: auto; padding: 0.55rem 1rem 0.8rem; }
 .designer-shortcut-row {
   display: flex;
   min-height: 2.25rem;
@@ -3194,6 +3197,7 @@ label.designer-property-control > span {
 .designer-field:focus-visible,
 .designer-layer-row:focus-visible,
 .designer-sidebar-tab:focus-visible,
+.designer-shortcut-list:focus-visible,
 .designer-icon-button:focus-visible,
 .designer-zoom-button:focus-visible,
 .designer-secondary-action:focus-visible,
@@ -3261,19 +3265,22 @@ label.designer-property-control > span {
   .designer-inline-data-editor { border-color: rgb(96 165 250); background: rgb(24 24 27 / 0.98); color: rgb(244 244 245); caret-color: rgb(147 197 253); }
   .designer-inspector.is-open { border-color: rgb(255 255 255 / 0.1); }
   .designer-sidebar-tabs { border-color: rgb(255 255 255 / 0.1); }
+  .designer-sidebar-tab { color: rgb(161 161 170); }
   .designer-sidebar-tab:hover { color: white; }
   .designer-sidebar-tab.active { background: rgb(255 255 255 / 0.08); color: white; }
   .designer-layer-row:hover { background: rgb(255 255 255 / 0.06); color: white; }
   .designer-layer-row.selected { border-color: rgb(59 130 246 / 0.35); background: rgb(59 130 246 / 0.12); color: rgb(147 197 253); }
   .designer-layer-icon { background: rgb(255 255 255 / 0.06); color: rgb(161 161 170); }
   .designer-layer-row.selected .designer-layer-icon { background: rgb(59 130 246 / 0.15); color: rgb(147 197 253); }
-  .designer-layer-row small, .designer-layer-index { color: rgb(161 161 170); }
+  .designer-layer-row small, .designer-layer-index, .designer-hidden-layers h3, .designer-hidden-row small { color: rgb(161 161 170); }
   .designer-hidden-layers { border-color: rgb(255 255 255 / 0.1); }
   .designer-hidden-row { color: rgb(212 212 216); }
   .designer-property-section { border-color: rgb(255 255 255 / 0.1); }
+  .designer-property-section h4, .designer-property-note, .designer-command-summary, .designer-property-help summary { color: rgb(161 161 170); }
   .designer-property-label > span { color: rgb(161 161 170); }
   .designer-property-label input, .designer-content-input, .designer-property-control > input, .designer-property-control > select { border-color: rgb(255 255 255 / 0.1); background: rgb(24 24 27); color: rgb(244 244 245); }
   .designer-command-header h4, .designer-property-control > label, label.designer-property-control > span, .designer-property-help p { color: rgb(212 212 216); }
+  .designer-command-header code { color: rgb(96 165 250); }
   .designer-property-control + .designer-property-control { border-color: rgb(255 255 255 / 0.06); }
   .designer-doc-link { border-color: rgb(255 255 255 / 0.1); color: rgb(161 161 170); }
   .designer-doc-link:hover { background: rgb(255 255 255 / 0.08); color: white; }
