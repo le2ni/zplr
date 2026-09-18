@@ -21,8 +21,7 @@ const buffer = fontBytes.buffer.slice(
 const font = opentype.parse(buffer);
 
 // TeX Gyre Heros Condensed Bold is an open-source Helvetica-compatible face.
-// Its dimensions are calibrated against isolated physical-printer preview
-// rasters.
+// Its dimensions are calibrated for the renderer's 8 dpmm dot grid.
 const advanceScale = 0.7;
 const verticalScale = 1.071429;
 const topOffsetRatio = -1 / 42;

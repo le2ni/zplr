@@ -26,10 +26,14 @@ import {
   glyphAdvance,
   hasPinnedBitmapGlyph,
   isResidentFontKey,
+  proportionalFontAdvance,
+  proportionalFontCalibration,
+  proportionalFontWidth,
   rasterizeGlyph,
   residentAdvanceWidth,
   residentCharacter,
   residentInkWidth,
+  residentUsesProportionalFace,
   residentUsesOutlineFace,
 } from "./bitmapFont";
 import { OpenTypeFontEngine } from "./fontEngine";
@@ -279,12 +283,18 @@ function orientTextCaretStops(
 }
 
 function measureText(value: string, font: LayoutFont): number {
-  const proportional = font.key === "0" || font.name !== undefined;
+  const proportionalResident = residentUsesProportionalFace(font.key);
+  const proportional =
+    font.key === "0" ||
+    font.name !== undefined ||
+    proportionalResident;
   return [...value].reduce(
-    (width, character) =>
-      width +
+    (total, character) =>
+      total +
       (proportional
-        ? glyphAdvance(character, font.width, true)
+        ? font.name !== undefined
+          ? glyphAdvance(character, font.width, true)
+          : proportionalFontAdvance(font.key, character, font.width)
         : residentAdvanceWidth(font.key, font.width)),
     0
   );
@@ -686,9 +696,19 @@ async function glyphFor(
     }
     engine = snapshotEngine;
   }
-  const proportional = font.key === "0" || font.name !== undefined;
+  const proportionalResident = residentUsesProportionalFace(font.key);
+  const proportional =
+    font.key === "0" ||
+    font.name !== undefined ||
+    proportionalResident;
+  const proportionalWidth =
+    font.name !== undefined
+      ? font.width
+      : proportionalFontWidth(font.key, font.width);
   const advance = proportional
-    ? glyphAdvance(character, font.width, true)
+    ? font.name !== undefined
+      ? glyphAdvance(character, proportionalWidth, true)
+      : proportionalFontAdvance(font.key, character, font.width)
     : residentAdvanceWidth(font.key, font.width);
   allocate.assert(advance, Math.max(1, font.height));
   if (font.name) {
@@ -756,11 +776,14 @@ async function glyphFor(
       };
     }
     if (residentUsesOutlineFace(font.key) || !hasPinnedBitmapGlyph(resident)) {
-      const inkWidth = residentInkWidth(font.key, font.width);
+      const inkWidth = proportional
+        ? advance
+        : residentInkWidth(font.key, font.width);
       const outline = await engine.rasterizeBuiltIn(
         resident,
         inkWidth,
-        font.height
+        font.height,
+        proportionalFontCalibration(font.key)
       );
       if (outline) {
         const cell = allocate(advance, Math.max(1, font.height));

@@ -1,5 +1,8 @@
 import { SPLEEN_5X8_ROWS } from "@/assets/spleen5x8.generated";
-import { TEX_GYRE_HEROS_ADVANCE_RATIOS } from "@/assets/texGyreHerosCondensed.generated";
+import {
+  TEX_GYRE_HEROS_ADVANCE_RATIOS,
+  TEX_GYRE_HEROS_ADVANCE_SCALE,
+} from "@/assets/texGyreHerosCondensed.generated";
 import type { MonochromeRaster } from "@/types/RenderJob";
 import { createMonochromeRaster, setDot } from "./raster";
 
@@ -28,6 +31,60 @@ export interface ResidentFontMetrics {
   readonly uppercaseOnly: boolean;
   readonly outlineFace: boolean;
 }
+
+interface ProportionalFontCalibration {
+  readonly widthScale: number;
+  readonly advanceScale: number;
+  readonly verticalScale: number;
+  readonly topOffsetRatio: number;
+}
+
+const PROPORTIONAL_FONT_CALIBRATION: Readonly<
+  Record<string, ProportionalFontCalibration>
+> = {
+  P: {
+    widthScale: 0.8,
+    advanceScale: 0.8,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.06,
+  },
+  Q: {
+    widthScale: 0.9,
+    advanceScale: 0.75,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.14,
+  },
+  R: {
+    widthScale: 0.9,
+    advanceScale: 0.75,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.14,
+  },
+  S: {
+    widthScale: 0.9,
+    advanceScale: 0.75,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.1,
+  },
+  T: {
+    widthScale: 0.9,
+    advanceScale: 0.75,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.1,
+  },
+  U: {
+    widthScale: 0.85,
+    advanceScale: 0.75,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.1,
+  },
+  V: {
+    widthScale: 0.95,
+    advanceScale: 0.7,
+    verticalScale: 0.95,
+    topOffsetRatio: 0.1,
+  },
+};
 
 const RESIDENT_FONT_KEYS = new Set<ResidentFontKey>([
   "A",
@@ -135,6 +192,45 @@ export function residentUsesOutlineFace(key: string): boolean {
   return residentFontMetrics(key)?.outlineFace ?? false;
 }
 
+/** P–V use the legacy proportional resident faces rather than fixed cells. */
+export function residentUsesProportionalFace(key: string): boolean {
+  return key > "O" && key < "W";
+}
+
+export function proportionalFontCalibration(
+  key: string
+): ProportionalFontCalibration | undefined {
+  return PROPORTIONAL_FONT_CALIBRATION[key];
+}
+
+export function proportionalFontWidth(
+  key: string,
+  requestedWidth: number
+): number {
+  const calibration = proportionalFontCalibration(key);
+  return Math.max(
+    1,
+    Math.round(requestedWidth * (calibration?.widthScale ?? 1))
+  );
+}
+
+export function proportionalFontAdvance(
+  key: string,
+  character: string,
+  requestedWidth: number
+): number {
+  const calibration = proportionalFontCalibration(key);
+  const width = proportionalFontWidth(key, requestedWidth);
+  const advance = glyphAdvance(character, width, true);
+  if (!calibration) return advance;
+  return Math.max(
+    1,
+    Math.round(
+      advance * (calibration.advanceScale / TEX_GYRE_HEROS_ADVANCE_SCALE)
+    )
+  );
+}
+
 export function residentAcceptsCharacter(key: string, character: string): boolean {
   return residentCharacter(key, character) !== undefined;
 }
@@ -146,6 +242,11 @@ export function residentCharacter(
 ): string | undefined {
   const metrics = residentFontMetrics(key);
   if (!metrics?.uppercaseOnly) return character;
+  if (key === "H") {
+    return character.length === 1 && character === character.toUpperCase()
+      ? character
+      : undefined;
+  }
   const uppercase = character.toUpperCase();
   return [...uppercase].length === 1 ? uppercase : undefined;
 }

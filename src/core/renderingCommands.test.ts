@@ -24,6 +24,16 @@ function bounds(raster: MonochromeRaster) {
   return { minX, minY, maxX, maxY };
 }
 
+function darkDots(raster: MonochromeRaster): number {
+  let total = 0;
+  for (let y = 0; y < raster.height; y++) {
+    for (let x = 0; x < raster.width; x++) {
+      if (getDot(raster, x, y)) total++;
+    }
+  }
+  return total;
+}
+
 function binaryString(bytes: Uint8Array): string {
   let result = "";
   for (let offset = 0; offset < bytes.length; offset += 8192) {
@@ -107,6 +117,29 @@ describe("additional rendering commands", () => {
     );
     expect(lowercaseOnly.labels[0].raster.data.some((byte) => byte !== 0)).toBe(
       true
+    );
+  });
+
+  it("uses proportional legacy faces and keeps Font H uppercase-only", async () => {
+    const proportional = await renderZpl(
+      "^XA^PW200^LL40^FO0,0^APN,20,18^FDABCxyz^FS^XZ",
+      { printDensity: 8 }
+    );
+    const proportionalText = proportional.labels[0].highlightRegions.find(
+      (region) => region.type === "text"
+    );
+    expect(proportionalText).toMatchObject({ width: 50, height: 20 });
+
+    const lower = await renderZpl(
+      "^XA^PW200^LL30^FO0,0^AHN,21,13^FDABCxyz0123^FS^XZ",
+      { printDensity: 8 }
+    );
+    const upper = await renderZpl(
+      "^XA^PW200^LL30^FO0,0^AHN,21,13^FDABCXYZ0123^FS^XZ",
+      { printDensity: 8 }
+    );
+    expect(darkDots(lower.labels[0].raster)).toBeLessThan(
+      darkDots(upper.labels[0].raster)
     );
   });
 

@@ -127,9 +127,20 @@ export class OpenTypeFontEngine {
   rasterizeBuiltIn(
     character: string,
     width: number,
-    height: number
+    height: number,
+    calibration?: Readonly<{
+      verticalScale?: number;
+      topOffsetRatio?: number;
+    }>
   ): Promise<MonochromeRaster | undefined> {
-    const key = `0:${character}:${width}:${height}`;
+    const key = [
+      "0",
+      character,
+      width,
+      height,
+      calibration?.verticalScale ?? "default",
+      calibration?.topOffsetRatio ?? "default",
+    ].join(":");
     return this.cachedGlyph(key, width, height, () =>
       this.builtIn.then((font) =>
         font
@@ -139,8 +150,11 @@ export class OpenTypeFontEngine {
               width,
               height,
               {
-                verticalScale: TEX_GYRE_HEROS_VERTICAL_SCALE,
-                topOffsetRatio: TEX_GYRE_HEROS_TOP_OFFSET_RATIO,
+                verticalScale:
+                  calibration?.verticalScale ?? TEX_GYRE_HEROS_VERTICAL_SCALE,
+                topOffsetRatio:
+                  calibration?.topOffsetRatio ??
+                  TEX_GYRE_HEROS_TOP_OFFSET_RATIO,
               }
             )
           : undefined
