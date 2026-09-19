@@ -118,7 +118,7 @@
     "@vite-pwa/nuxt": "^1.1.1",
     "@zxing/library": "0.23.0",
     "monaco-editor": "^0.54.0",
-    "nuxt": "4.5.0",
+    "nuxt": "4.5.1",
     "postcss": "^8.5.22",
     "publint": "^0.3.21",
     "skia-canvas": "^3.0.8",
