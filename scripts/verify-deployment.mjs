@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { assertIndexableHtml } from "./seo-assertions.mjs";
 
 const expectedScreenshots = {
   "zpl-editor-overview.png": [1440, 900],
@@ -47,6 +48,10 @@ for (let attempt = 1; attempt <= 12; attempt++) {
     assert.match(page.headers.get("content-security-policy") ?? "", /script-src 'self' 'sha256-/);
     assert.equal(page.headers.get("x-content-type-options"), "nosniff");
     const pageHtml = await page.text();
+    assertIndexableHtml(pageHtml, "https://zplr.de/");
+    if (new URL(baseUrl).hostname === "zplr.de") {
+      assert.doesNotMatch(page.headers.get("x-robots-tag") ?? "", /\b(noindex|none)\b/i, "production homepage must allow indexing");
+    }
     assert.match(pageHtml, /Free Online ZPL Viewer &amp; Editor/);
     assert.match(pageHtml, /aria-label="Interactive ZPL viewer"/);
     assert.match(pageHtml, /rel="canonical" href="https:\/\/zplr\.de\/"/);
@@ -106,7 +111,19 @@ for (let attempt = 1; attempt <= 12; attempt++) {
     assert.match(await robotsResponse.text(), /Sitemap: https:\/\/zplr\.de\/sitemap\.xml/);
     const sitemapResponse = await fetch(new URL("/sitemap.xml", baseUrl), { cache: "no-store" });
     assert.equal(sitemapResponse.ok, true, `sitemap.xml returned ${sitemapResponse.status}`);
-    assert.match(await sitemapResponse.text(), /<loc>https:\/\/zplr\.de\/<\/loc>/);
+    const sitemap = await sitemapResponse.text();
+    assert.match(sitemap, /<loc>https:\/\/zplr\.de\/<\/loc>/);
+    assert.match(sitemap, /<loc>https:\/\/zplr\.de\/editor<\/loc>/);
+
+    for (const route of ["/api/zpl-documentation.json", "/api/zpl-documentation/caret-fo.json"]) {
+      const response = await fetch(new URL(route, baseUrl), { cache: "no-store" });
+      assert.equal(response.ok, true, `${route} returned ${response.status}`);
+      assert.match(response.headers.get("content-type") ?? "", /^application\/json/);
+      const data = await response.json();
+      assert.equal(data.coverage.commands, 223, `${route} contains an incomplete catalog`);
+      if (route.endsWith("caret-fo.json")) assert.equal(data.guide.slug, "caret-fo");
+      else assert.equal(data.directory.length, 223);
+    }
 
     // The editor is prerendered as an extensionless static Pages route and
     // hydrates the browser-only IDE from its local loading shell.
@@ -114,8 +131,12 @@ for (let attempt = 1; attempt <= 12; attempt++) {
     assert.equal(editorPage.ok, true, `/editor returned ${editorPage.status}`);
     assert.match(editorPage.headers.get("content-security-policy") ?? "", /default-src 'self'/);
     const editorHtml = await editorPage.text();
-    assert.match(editorHtml, /name="robots" content="noindex, follow"/);
+    assertIndexableHtml(editorHtml, "https://zplr.de/editor");
+    if (new URL(baseUrl).hostname === "zplr.de") {
+      assert.doesNotMatch(editorPage.headers.get("x-robots-tag") ?? "", /\b(noindex|none)\b/i, "production editor must allow indexing");
+    }
     assert.match(editorHtml, /Opening the local ZPL editor/);
+    assert.match(editorHtml, /How to edit and export a ZPL label/);
     console.log(`Verified deployed version ${expectedVersion} at ${baseUrl}.`);
     process.exit(0);
   } catch (error) {

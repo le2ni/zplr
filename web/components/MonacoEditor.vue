@@ -443,6 +443,10 @@ onMounted(async () => {
   for (const document of props.workspaceDocuments) {
     getOrCreateModel(document.id, document.filename, document.source);
   }
+  // A shared label can change the active document while loader.init() is
+  // pending. The document watcher cannot switch an editor that does not yet
+  // exist, so read the current id again before choosing the initial model.
+  currentDocumentId = props.documentId;
   model = getOrCreateModel(currentDocumentId, props.filename, props.modelValue);
   editor = monaco.editor.create(editorContainer.value, {
     model,

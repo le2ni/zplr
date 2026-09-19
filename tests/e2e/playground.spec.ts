@@ -117,7 +117,8 @@ test("renders locally and links to the dedicated editor route", async ({ page, r
   expect(editorShellResponse.ok()).toBe(true);
   const editorShell = await editorShellResponse.text();
   expect(editorShell).toContain("Opening the local ZPL editor");
-  expect(editorShell).toContain('name="robots" content="noindex, follow"');
+  expect(editorShell).toContain('name="robots" content="index, follow"');
+  expect(editorShell).toContain("How to edit and export a ZPL label");
   expect((await request.get("/not-a-zplr-route")).status()).toBe(404);
 
   await editorLink.click();
@@ -1368,6 +1369,9 @@ for (const colorScheme of ["light", "dark"] as const) {
     await expect.poll(() => page.evaluate(() =>
       window.matchMedia("(prefers-color-scheme: dark)").matches,
     )).toBe(colorScheme === "dark");
+    // Inspect a page loaded in the requested theme, not an intermediate frame
+    // of the header's color transition after switching the system preference.
+    await page.reload();
     let results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
     expect(results.violations).toEqual([]);
 

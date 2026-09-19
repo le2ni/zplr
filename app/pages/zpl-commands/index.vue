@@ -209,7 +209,7 @@ interface CommandIndexPayload {
 }
 
 const { data: documentation, error: documentationError } = await useFetch<CommandIndexPayload>(
-  "/api/zpl-documentation",
+  "/api/zpl-documentation.json",
   { key: "zpl-documentation-index" },
 );
 if (documentationError.value || !documentation.value) {

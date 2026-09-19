@@ -69,6 +69,27 @@
         </dl>
       </section>
 
+      <section id="view-zpl" aria-labelledby="viewer-guide-title" class="landing-modes scroll-mt-24">
+        <div class="mx-auto max-w-[90rem] px-5 py-14 sm:px-7 lg:px-10">
+          <h2 id="viewer-guide-title" class="landing-section-title">How to view a ZPL file online</h2>
+          <ol class="mt-7 grid list-decimal gap-6 pl-5 text-sm/7 md:grid-cols-3 md:gap-10">
+            <li><strong>Open your label.</strong> Choose Open ZPL file in the viewer, or paste code from a .zpl or .txt file. A complete label starts with <NuxtLink to="/zpl-commands/caret-xa" class="underline">^XA</NuxtLink> and ends with <NuxtLink to="/zpl-commands/caret-xz" class="underline">^XZ</NuxtLink>.</li>
+            <li><strong>Check the preview.</strong> Change text, barcodes, or coordinates and the first label updates locally. The quick viewer uses 8 dots/mm (203 dpi). Set other print densities and inspect multiple labels in the full editor.</li>
+            <li><strong>Keep your result.</strong> Download the preview as PNG, or continue editing the same label in the <NuxtLink to="/editor" class="underline">ZPL editor and visual designer</NuxtLink>.</li>
+          </ol>
+          <div class="mt-9 grid gap-6 border-t border-zinc-300 pt-7 text-sm/7 md:grid-cols-2 dark:border-white/15">
+            <div>
+              <h3 class="font-bold">Label blank, too small, or cut off?</h3>
+              <p class="mt-2">Check <NuxtLink to="/zpl-commands/caret-pw" class="underline">^PW label width</NuxtLink>, <NuxtLink to="/zpl-commands/caret-ll" class="underline">^LL label length</NuxtLink>, and <NuxtLink to="/zpl-commands/caret-fo" class="underline">^FO field positions</NuxtLink>. Dimensions are in printer dots. In the editor, match the print density to your printer and review any diagnostics.</p>
+            </div>
+            <div>
+              <h3 class="font-bold">Preview support and printer differences</h3>
+              <p class="mt-2">ZPLr renders supported text, graphics, and barcodes such as <NuxtLink to="/zpl-commands/caret-bc" class="underline">^BC Code 128</NuxtLink> and <NuxtLink to="/zpl-commands/caret-bq" class="underline">^BQ QR codes</NuxtLink>. Some commands are partial or control printer hardware without drawing pixels. Read the <NuxtLink to="/zpl-commands" class="underline">command support notes</NuxtLink> and verify the output on your target printer.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="features" class="landing-modes scroll-mt-24">
         <div class="mx-auto max-w-[90rem] px-5 py-20 sm:px-7 sm:py-28 lg:px-10">
           <div class="landing-section-heading grid gap-6 lg:grid-cols-[0.7fr_1.3fr] lg:items-end">

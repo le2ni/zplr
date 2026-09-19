@@ -5,7 +5,7 @@ import {
 } from "../../../web/zplDocumentation";
 
 export default defineEventHandler((event) => {
-  const slug = getRouterParam(event, "slug") ?? "";
+  const slug = (getRouterParam(event, "slug") ?? "").replace(/\.json$/, "");
   const guide = getZplCommandGuide(slug);
   if (!guide) {
     throw createError({

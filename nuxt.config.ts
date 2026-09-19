@@ -154,6 +154,10 @@ export default defineNuxtConfig({
         "/editor",
         "/zpl-commands",
         ...zplCommandGuides.map(zplCommandRoute),
+        // useFetch needs a real static fallback when a page payload is missing
+        // or stale. The deployed site has no server to answer API requests.
+        "/api/zpl-documentation.json",
+        ...zplCommandGuides.map(({ slug }) => `/api/zpl-documentation/${slug}.json`),
       ],
       autoSubfolderIndex: false,
       crawlLinks: false,

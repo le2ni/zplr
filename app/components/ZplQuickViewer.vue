@@ -10,7 +10,10 @@
         <span class="quick-viewer-dot" aria-hidden="true"></span>
         <strong>Live ZPL viewer</strong>
       </div>
-      <span class="quick-viewer-status" aria-live="polite">{{ statusLabel }}</span>
+      <label class="quick-viewer-open">
+        Open ZPL file
+        <input type="file" accept=".zpl,.txt,text/plain" aria-label="Open ZPL file" @change="openFile" />
+      </label>
     </header>
 
     <div class="quick-viewer-workbench">
@@ -22,6 +25,7 @@
           autocomplete="off"
           autocapitalize="off"
           spellcheck="false"
+          :maxlength="maxSourceLength"
           @focus="activateViewer"
         ></textarea>
       </label>
@@ -57,18 +61,20 @@
     </div>
 
     <footer class="quick-viewer-footer">
-      <span>{{ resultSummary }}</span>
+      <span aria-live="polite">{{ fileError || resultSummary }}</span>
       <div>
+        <a v-if="downloadUrl" :href="downloadUrl" download="zpl-label.png">Download PNG</a>
         <button type="button" :disabled="source === defaultSource" @click="resetSource">
           <IconRestore aria-hidden="true" />
           Reset sample
         </button>
-        <NuxtLink to="/editor">
+        <NuxtLink :to="editorPath">
           Open full editor
           <IconArrowRight aria-hidden="true" />
         </NuxtLink>
       </div>
     </footer>
+    <p v-if="fileError || transferNotice" class="quick-viewer-notice" role="alert">{{ fileError || transferNotice }}</p>
   </section>
 </template>
 
@@ -79,8 +85,12 @@ import {
   IconRestore,
 } from "@iconify-prerendered/vue-mdi";
 import defaultSource from "../../fixtures/zplr.zpl?raw";
+import { encodeSharedLabel, sharedLabelHashPrefix } from "../../web/share";
 
+const maxSourceLength = 256_000;
 const source = ref(defaultSource);
+const fileError = ref("");
+const renderedSource = ref("");
 const previewUrl = ref<string>();
 const failure = ref("Enter a complete ZPL label between ^XA and ^XZ.");
 const width = ref<number>();
@@ -90,11 +100,17 @@ const status = ref<"idle" | "rendering" | "ready" | "error">("idle");
 let renderTimer: ReturnType<typeof setTimeout> | undefined;
 let renderSequence = 0;
 
-const statusLabel = computed(() => {
-  if (status.value === "rendering") return "Rendering locally";
-  if (status.value === "ready") return "Rendered locally";
-  if (status.value === "error") return "Check the ZPL code";
-  return "Runs in your browser";
+const shareToken = computed(() => {
+  if (source.value === defaultSource || !source.value.trim()) return undefined;
+  return encodeSharedLabel({ name: "viewer-label.zpl", source: source.value });
+});
+const editorPath = computed(() => shareToken.value ? `/editor${sharedLabelHashPrefix}${shareToken.value}` : "/editor");
+const transferNotice = computed(() => source.value !== defaultSource && source.value.trim() && !shareToken.value
+  ? "This label is too large to carry in a link. Copy its ZPL into the full editor."
+  : "");
+const downloadUrl = computed(() => {
+  if (status.value === "idle" && source.value === defaultSource) return "/screenshots/zpl-label-preview.png";
+  return status.value === "ready" && renderedSource.value === source.value ? previewUrl.value : undefined;
 });
 
 const resultSummary = computed(() => {
@@ -157,6 +173,7 @@ async function renderSource(): Promise<void> {
       return;
     }
     previewUrl.value = label.canvas.toDataURL("image/png");
+    renderedSource.value = source.value;
     width.value = label.width;
     height.value = label.height;
     failure.value = "";
@@ -173,11 +190,41 @@ async function renderSource(): Promise<void> {
 }
 
 function resetSource(): void {
+  fileError.value = "";
   source.value = defaultSource;
   scheduleRender(0);
 }
 
-watch(source, () => scheduleRender());
+async function openFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  fileError.value = "";
+  if (file.size > maxSourceLength) {
+    fileError.value = "The quick viewer accepts files up to 256 KB. Open larger labels in the full editor.";
+    return;
+  }
+  try {
+    const text = await file.text();
+    if (!text.trim()) {
+      fileError.value = "This file is empty. Choose a ZPL label or paste its code.";
+      return;
+    }
+    source.value = text;
+    scheduleRender(0);
+  } catch {
+    fileError.value = "This file could not be read. Try opening it again or paste its ZPL code.";
+  }
+}
+
+watch(source, () => {
+  // Invalidate an in-flight render immediately so its old preview cannot be
+  // offered as a download while the next edit is still being debounced.
+  renderSequence += 1;
+  fileError.value = "";
+  scheduleRender();
+}, { flush: "sync" });
 
 onBeforeUnmount(() => {
   renderSequence += 1;
@@ -187,6 +234,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .quick-viewer {
+  position: relative;
   display: grid;
   overflow: hidden;
   aspect-ratio: 8 / 5;
@@ -196,6 +244,42 @@ onBeforeUnmount(() => {
   background: white;
   box-shadow: 0 18px 45px rgb(24 24 27 / 0.13);
   color: rgb(24 24 27);
+}
+
+.quick-viewer-open {
+  position: relative;
+  cursor: pointer;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  padding: 0.25rem 0.4rem;
+  font-weight: 700;
+}
+
+.quick-viewer-open input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.quick-viewer-open:focus-within {
+  outline: 2px solid rgb(37 99 235);
+  outline-offset: 2px;
+}
+
+.quick-viewer-notice {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 3rem;
+  left: 0.5rem;
+  border: 1px solid rgb(161 98 7);
+  border-radius: 0.25rem;
+  padding: 0.5rem;
+  background: rgb(254 249 195);
+  color: rgb(113 63 18);
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 .quick-viewer-toolbar,

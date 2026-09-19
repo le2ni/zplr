@@ -364,7 +364,7 @@ const {
   data: documentation,
   error: documentationError,
 } = await useFetch<CommandDocumentationPayload>(
-  `/api/zpl-documentation/${encodeURIComponent(slug ?? "")}`,
+  `/api/zpl-documentation/${encodeURIComponent(slug ?? "")}.json`,
   { key: `zpl-documentation-${slug ?? "unknown"}` },
 );
 if (documentationError.value || !documentation.value) {

@@ -10,6 +10,43 @@ test.beforeEach(async ({ page, context }) => {
   });
 });
 
+test("serves documentation data on the static host", async ({ request }) => {
+  const index = await request.get("/api/zpl-documentation.json");
+  expect(index.status()).toBe(200);
+  expect(index.headers()["content-type"]).toContain("application/json");
+  const catalog = await index.json();
+  expect(catalog.coverage.commands).toBe(223);
+  expect(catalog.directory).toHaveLength(223);
+
+  const response = await request.get("/api/zpl-documentation/caret-fo.json");
+  expect(response.status()).toBe(200);
+  const { guide } = await response.json();
+  expect(guide.slug).toBe("caret-fo");
+  expect(guide.canonical).toBe("^FO");
+  expect((await request.get("/api/zpl-documentation/not-a-command.json")).status()).toBe(404);
+});
+
+test("loads command pages when their prerendered payloads are unavailable", async ({ page }) => {
+  // Exercise useFetch's fallback after client navigation. Normal direct loads
+  // can pass using SSR/payload data even when every deployed API URL is 404.
+  await page.route(/\/zpl-commands(?:\/[^/?]+)?\/_payload\.json(?:\?.*)?$/, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[{}]" }));
+  await page.goto("/");
+  const indexResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/api/zpl-documentation.json" && response.status() === 200);
+  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("link", { name: "Commands" }).click();
+  await indexResponse;
+  await expect(page.locator(".command-directory-grid a")).toHaveCount(223);
+
+  const guideResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/api/zpl-documentation/caret-fo.json" && response.status() === 200);
+  await page.locator('.command-directory-grid a[href="/zpl-commands/caret-fo"]').click();
+  await guideResponse;
+  await expect(page.getByRole("heading", { name: "Field Origin" })).toBeVisible();
+  await expect(page.getByText("^FOx,y,z", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Edit in editor/ }).first()).toBeVisible();
+});
+
 test("uses the full site toolbar on command pages", async ({ page }) => {
   for (const path of ["/", "/zpl-commands", "/zpl-commands/caret-fo"]) {
     await page.goto(path);

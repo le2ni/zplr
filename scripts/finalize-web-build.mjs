@@ -4,6 +4,7 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promi
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
+import { assertIndexableHtml } from "./seo-assertions.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputDirectory = path.join(repositoryRoot, ".output", "public");
@@ -153,15 +154,48 @@ const commandIndexData = JSON.parse(
 assert.equal(commandIndexData.length, 223, "generated client command index is incomplete");
 assert.equal(new Set(commandIndexData.map(({ slug }) => slug)).size, 223, "generated client command slugs are not unique");
 
+// Nuxt normally hydrates from page payloads, but a missing or stale payload
+// falls back to useFetch. Those responses must exist on the static host too.
+const documentationIndex = JSON.parse(
+  await readFile(path.join(outputDirectory, "api", "zpl-documentation.json"), "utf8"),
+);
+assert.equal(documentationIndex.coverage.commands, 223, "static documentation API is incomplete");
+assert.deepEqual(
+  documentationIndex.directory.map(({ slug }) => slug).sort(),
+  commandIndexData.map(({ slug }) => slug).sort(),
+  "static documentation API directory does not match the command index",
+);
+for (const { slug } of commandIndexData) {
+  const data = JSON.parse(await readFile(
+    path.join(outputDirectory, "api", "zpl-documentation", `${slug}.json`), "utf8",
+  ));
+  assert.equal(data.guide.slug, slug, `static documentation API is missing ${slug}`);
+}
+// Exact aliases keep cached clients working without redirecting .json targets
+// back to themselves, which a /:slug -> /:slug.json wildcard would do.
+await writeFile(path.join(outputDirectory, "_redirects"), [
+  "# Compatibility for documentation clients using the previous API URLs.",
+  "/api/zpl-documentation /api/zpl-documentation.json 301",
+  ...commandIndexData.map(({ slug }) =>
+    `/api/zpl-documentation/${slug} /api/zpl-documentation/${slug}.json 301`),
+  "",
+].join("\n"));
+
 const sitemapRoutes = htmlFiles.flatMap((filename) => {
   const relative = path.relative(outputDirectory, filename).replaceAll(path.sep, "/");
   if (relative === "index.html") return ["/"];
+  if (relative === "editor.html") return ["/editor"];
   if (relative === "zpl-commands.html") return ["/zpl-commands"];
   if (relative.startsWith("zpl-commands/") && relative.endsWith(".html")) {
     return [`/${relative.slice(0, -".html".length)}`];
   }
   return [];
 }).sort((left, right) => left === "/" ? -1 : right === "/" ? 1 : left.localeCompare(right));
+assert.ok(sitemapRoutes.includes("/editor"), "the public editor must be in the sitemap");
+for (const route of sitemapRoutes) {
+  const filename = route === "/" ? "index.html" : `${route.slice(1)}.html`;
+  assertIndexableHtml(await readFile(path.join(outputDirectory, filename), "utf8"), `${canonicalOrigin}${route}`);
+}
 await writeFile(path.join(outputDirectory, "sitemap.xml"), [
   '<?xml version="1.0" encoding="UTF-8"?>',
   '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
@@ -211,8 +245,9 @@ for (const filename of prefetchedHomepageScripts) {
   assert.ok(size < 250_000, `${filename} is too large to prefetch from the homepage (${size} bytes)`);
 }
 const editorHtml = await readFile(path.join(outputDirectory, "editor.html"), "utf8");
-assert.match(editorHtml, /noindex, follow/);
+assert.match(editorHtml, /name="robots" content="index, follow"/);
 assert.match(editorHtml, /Opening the local ZPL editor/);
+assert.match(editorHtml, /How to edit and export a ZPL label/);
 assert.match(editorHtml, /<link(?=[^>]*rel="icon")(?=[^>]*href="\/favicon-96x96\.png")[^>]*>/);
 const commandIndexHtml = await readFile(path.join(outputDirectory, "zpl-commands.html"), "utf8");
 assert.match(commandIndexHtml, /Every ZPL command, explained and ready to render/);
