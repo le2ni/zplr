@@ -5,6 +5,7 @@
   "description": "TypeScript library for parsing and rendering ZPL label files",
   "main": "./dist/index.node.js",
   "module": "./dist/index.node.js",
+  "browser": "./dist/index.web.js",
   "types": "./dist/index.node.d.ts",
   "type": "module",
   "sideEffects": false,
@@ -24,6 +25,10 @@
   },
   "exports": {
     ".": {
+      "browser": {
+        "types": "./dist/index.web.d.ts",
+        "import": "./dist/index.web.js"
+      },
       "types": "./dist/index.node.d.ts",
       "import": "./dist/index.node.js"
     },

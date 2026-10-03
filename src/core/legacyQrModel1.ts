@@ -1,4 +1,5 @@
-import QRCode, { type GeneratedQRCodeSegment } from "qrcode";
+import QRCode from "qrcode/lib/core/qrcode.js";
+import type { GeneratedQRCodeSegment } from "qrcode";
 import toSJIS from "qrcode/helper/to-sjis.js";
 import type {
   QrInputSegment,

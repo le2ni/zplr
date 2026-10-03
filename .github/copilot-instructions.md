@@ -8,7 +8,7 @@ The only render architecture is:
 source → documentParser → job/session semantics → interpreter → packed raster → host Canvas
 ```
 
-Do not add command classes, a Canvas-geometry renderer, global printer state, host-font rendering, prefixless capability lookup, or any removed 0.2 API. `zplr` and `zplr/node` are the Node surface; `zplr/web` is browser-only. Public API changes must remain compatible with `api/0.3.0.json` throughout 0.3.x.
+Do not add command classes, a Canvas-geometry renderer, global printer state, host-font rendering, prefixless capability lookup, or any removed 0.2 API. `zplr` selects the browser surface under the `browser` export condition and the Node surface otherwise; `zplr/node` and `zplr/web` select their platforms explicitly. Public API changes must remain compatible with `api/0.3.0.json` throughout 0.3.x.
 
 Syntax and semantic failures plus exceeded safety limits use structured diagnostics; documented parameter defaults and ignore rules remain silent. Operational failures from Canvas adapters and user-supplied callbacks/providers reject. Every highlight uses an end-exclusive UTF-16 `sourceSpan`, and every rendered label has a Canvas.
 

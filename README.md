@@ -19,7 +19,7 @@ ZPLr provides typed ESM entry points for backend label jobs and in-browser ZPL p
 
 | | Node.js | Browser |
 | --- | --- | --- |
-| Import | `zplr` or `zplr/node` | `zplr/web` |
+| Import | `zplr` or `zplr/node` | `zplr` or `zplr/web` |
 | Canvas | `skia-canvas` `Canvas` | `HTMLCanvasElement` |
 | PNG | `Buffer[]` | `Blob[]` |
 | Processing | Local and offline | Local and offline |
@@ -48,11 +48,11 @@ Browser applications install only ZPLr:
 pnpm add zplr
 ```
 
-The `zplr/web` entry neither resolves nor bundles `skia-canvas`.
+Browser bundlers select the web entry when importing `zplr`. The explicit `zplr/web` entry also works without browser export conditions. Both keep `skia-canvas` out of the browser bundle.
 
 ## Render ZPL in Node.js
 
-`zplr` is the default Node.js entry. `zplr/node` exposes the same API.
+In Node.js, `zplr` selects the Node entry. `zplr/node` always exposes the Node API.
 
 ```ts
 import { renderZpl } from "zplr";
@@ -95,6 +95,8 @@ const downloadUrl = URL.createObjectURL(png);
 ```
 
 The browser library returns native `HTMLCanvasElement` and `Blob` values and does not send label source to a server.
+
+For TypeScript projects importing the root `zplr` entry in browser code, add `"customConditions": ["browser"]` with `"moduleResolution": "bundler"` to select the matching browser types. Import `zplr/web` to select browser code and types explicitly, including in SSR projects.
 
 ## Library API
 
@@ -244,7 +246,7 @@ Yes. The [online ZPL viewer](https://zplr.de/editor) runs the parser and rendere
 
 ### Can I use ZPLr in both Node.js and a browser application?
 
-Yes. Import `zplr` or `zplr/node` for Node.js and `zplr/web` for browser projects. Both entries expose typed parsing and rendering APIs from the same engine.
+Yes. The `zplr` import selects the browser entry in browser bundlers and the Node entry in Node.js. Use `zplr/node` or `zplr/web` to choose explicitly. Both entries expose typed parsing and rendering APIs from the same engine.
 
 ### Can ZPLr export labels as PNG images?
 

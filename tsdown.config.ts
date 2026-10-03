@@ -30,7 +30,7 @@ export default [
     // Keep the package build within its documented budget while allowing the
     // consumer's browser bundler to deduplicate declared dependencies.
     deps: {
-      alwaysBundle: ["qrcode", "dijkstrajs"],
+      alwaysBundle: [/^qrcode(?:\/|$)/, "dijkstrajs"],
       onlyBundle: ["qrcode", "dijkstrajs"],
     },
   }),

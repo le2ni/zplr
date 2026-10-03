@@ -1,4 +1,4 @@
-import bwipjs from "bwip-js";
+import bwipjs from "bwip-js/generic";
 import type {
   BarcodeLayoutField,
   BitmapLayoutField,

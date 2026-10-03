@@ -1,4 +1,4 @@
-declare module "bwip-js" {
+declare module "bwip-js/generic" {
   export interface RawBarcodeOptions {
     bcid: string;
     text: string;

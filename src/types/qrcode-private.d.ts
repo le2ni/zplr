@@ -1,3 +1,8 @@
+declare module "qrcode/lib/core/qrcode.js" {
+  const value: Pick<typeof import("qrcode"), "create">;
+  export default value;
+}
+
 declare module "qrcode/lib/core/alignment-pattern.js" {
   const value: any;
   export default value;

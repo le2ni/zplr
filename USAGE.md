@@ -2,7 +2,7 @@
 
 ## Node
 
-`zplr` and `zplr/node` expose the same Node API. Install the optional native peer before rendering.
+In Node.js, `zplr` and `zplr/node` expose the same Node API. Install the optional native peer before rendering.
 
 ```bash
 pnpm add zplr skia-canvas
@@ -37,6 +37,8 @@ const url = URL.createObjectURL(png);
 ```
 
 The browser entry returns `HTMLCanvasElement` and `Blob` values and never references the Node Canvas peer.
+
+Browser bundlers also select this entry for `zplr`. When using the root import with TypeScript, set `"customConditions": ["browser"]` and `"moduleResolution": "bundler"` to select browser types. The explicit `zplr/web` import selects browser code and types regardless of export conditions.
 
 ## Variable fields
 

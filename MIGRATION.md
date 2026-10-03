@@ -68,5 +68,5 @@ Do not use promise rejection to detect syntax or semantic failures. Inspect `job
 - Replace legacy command and render-context types with exported AST/job types.
 - Treat result arrays and diagnostics as readonly.
 - Install `skia-canvas` beside `zplr` in Node projects.
-- Use `zplr/web` in browser code so native Node types and modules stay out of the graph.
+- Use `zplr/web` to select browser code and types explicitly. Browser bundlers also select the web entry for `zplr`; TypeScript root imports need the `browser` custom condition to select browser types.
 - Regenerate any API snapshots that previously expected compatibility exports.
