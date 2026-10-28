@@ -197,10 +197,12 @@ describe("documented rendering gaps", () => {
   });
 
   it("formats localized clock text through the existing runtime API", async () => {
-    const formatter = vi.spyOn(Intl, "DateTimeFormat").mockImplementation((_locale, options) => ({
-      format: () => options?.weekday === "short" ? "Day" : options?.weekday === "long"
-        ? "Weekday" : options?.month === "short" ? "Mon" : "Month",
-    }) as Intl.DateTimeFormat);
+    const formatter = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (_locale, options) {
+      return {
+        format: () => options?.weekday === "short" ? "Day" : options?.weekday === "long"
+          ? "Weekday" : options?.month === "short" ? "Mon" : "Month",
+      } as Intl.DateTimeFormat;
+    });
     try {
       const rendered = await renderZpl(label("^KL4^FO10,10^AAN,9,5^FC%^FD%a %A %b %B^FS"),
         { clock: new Date("2026-10-03T12:00:00Z") });
