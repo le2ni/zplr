@@ -27,7 +27,7 @@
           and test on your target printer before a production run.
         </p>
         <p class="mt-6 text-sm/7">
-          For a quick preview, use the <NuxtLink to="/" class="underline">online ZPL viewer</NuxtLink>.
+          For a quick preview, use the <NuxtLink :to="config.public.hasLandingPage ? '/' : `${config.public.siteUrl}/`" class="underline">online ZPL viewer</NuxtLink>.
           The editor needs JavaScript enabled in a modern browser; the instructions and command reference remain readable without it.
         </p>
       </div>

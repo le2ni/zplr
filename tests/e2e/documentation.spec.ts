@@ -31,10 +31,10 @@ test("loads command pages when their prerendered payloads are unavailable", asyn
   // can pass using SSR/payload data even when every deployed API URL is 404.
   await page.route(/\/zpl-commands(?:\/[^/?]+)?\/_payload\.json(?:\?.*)?$/, (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: "[{}]" }));
-  await page.goto("/");
+  await page.goto("/editor");
   const indexResponse = page.waitForResponse((response) =>
     new URL(response.url()).pathname === "/api/zpl-documentation.json" && response.status() === 200);
-  await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("link", { name: "Commands" }).click();
+  await page.getByRole("link", { name: "ZPL command reference and support notes", exact: true }).click();
   await indexResponse;
   await expect(page.locator(".command-directory-grid a")).toHaveCount(223);
 
@@ -48,14 +48,14 @@ test("loads command pages when their prerendered payloads are unavailable", asyn
 });
 
 test("uses the full site toolbar on command pages", async ({ page }) => {
-  for (const path of ["/", "/zpl-commands", "/zpl-commands/caret-fo"]) {
+  for (const path of ["/zpl-commands", "/zpl-commands/caret-fo"]) {
     await page.goto(path);
     const navigation = page.getByRole("navigation", { name: "Primary navigation" });
     await expect(navigation).toBeVisible();
     await expect(navigation.getByText("Label systems", { exact: true })).toBeVisible();
-    await expect(navigation.getByRole("link", { name: "Workflow" })).toHaveAttribute("href", "/#features");
-    await expect(navigation.getByRole("link", { name: "Designer" })).toHaveAttribute("href", "/#designer");
-    await expect(navigation.getByRole("link", { name: "Library" })).toHaveAttribute("href", "/#library");
+    await expect(navigation.getByRole("link", { name: "Workflow" })).toHaveAttribute("href", /^(https:\/\/zplr\.de)?\/#features$/);
+    await expect(navigation.getByRole("link", { name: "Designer" })).toHaveAttribute("href", /^(https:\/\/zplr\.de)?\/#designer$/);
+    await expect(navigation.getByRole("link", { name: "Library" })).toHaveAttribute("href", /^(https:\/\/zplr\.de)?\/#library$/);
     await expect(navigation.getByRole("link", { name: "Commands" })).toHaveAttribute("href", "/zpl-commands");
     await expect(navigation.getByRole("link", { name: "GitHub" })).toBeVisible();
     await expect(navigation.getByRole("link", { name: "Open Editor" })).toHaveAttribute("href", "/editor");

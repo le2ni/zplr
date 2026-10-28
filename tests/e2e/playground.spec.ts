@@ -45,88 +45,6 @@ async function paintedHorizontalEdgePosition(field: Locator): Promise<{ x: numbe
   });
 }
 
-test("renders locally and links to the dedicated editor route", async ({ page, request }) => {
-  const browserErrors: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() === "error") browserErrors.push(message.text());
-  });
-  page.on("pageerror", (error) => browserErrors.push(error.message));
-
-  const landingResponse = await page.goto("/");
-  expect(landingResponse?.headers()["content-security-policy"]).toMatch(/script-src 'self' 'sha256-/);
-  await expect(page.locator('head link[rel="icon"][href="/favicon-96x96.png"]'))
-    .toHaveAttribute("sizes", "96x96");
-  const faviconResponse = await request.get("/favicon-96x96.png");
-  expect(faviconResponse.ok()).toBe(true);
-  expect(faviconResponse.headers()["content-type"]).toMatch(/^image\/png/);
-  const faviconBytes = await faviconResponse.body();
-  expect({ width: faviconBytes.readUInt32BE(16), height: faviconBytes.readUInt32BE(20) })
-    .toEqual({ width: 96, height: 96 });
-  await expect(page.getByRole("heading", { name: "Free Online ZPL Viewer & Editor", exact: true })).toBeVisible();
-  const heroBottom = await page.locator(".landing-hero").evaluate((hero) => hero.getBoundingClientRect().bottom);
-  const viewportHeight = await page.evaluate(() => window.innerHeight);
-  expect(heroBottom).toBeLessThanOrEqual(viewportHeight + 1);
-  await expect(page.getByTestId("local-only-notice")).toContainText("never leave this browser");
-  const quickViewer = page.getByTestId("homepage-zpl-viewer");
-  await expect(quickViewer).toBeVisible();
-  const quickViewerSource = quickViewer.getByLabel("ZPL code to preview");
-  await expect(quickViewerSource).toHaveValue(/\^XA/);
-  await expect(quickViewer.getByAltText("Rendered shipping label preview from the sample ZPL code")).toBeVisible();
-  await quickViewerSource.fill("^XA\n^PW200\n^LL100\n^FO10,10^A0N,24,24^FDViewer test^FS\n^XZ");
-  await expect(quickViewer.getByAltText("Live ZPL viewer preview of the current label code")).toBeVisible({ timeout: 30_000 });
-  await expect(quickViewer).toContainText("200 × 100 dots", { timeout: 30_000 });
-  for (const alt of [
-    "Visual ZPL label designer with a drag-and-drop canvas, layers, guides, and field properties",
-    "ZPL variable data manager previewing records imported from CSV or JSON for batch label export",
-  ]) {
-    const screenshot = page.getByAltText(alt);
-    await screenshot.evaluate((image) => {
-      image.scrollIntoView({ behavior: "instant", block: "center" });
-    });
-    await expect(screenshot).toBeVisible();
-    await expect.poll(() =>
-      screenshot.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0),
-    ).toBe(true);
-  }
-  await page.emulateMedia({ colorScheme: "dark" });
-  for (const alt of [
-    "Rendered shipping label in the live ZPL preview canvas",
-    "Visual ZPL label designer with a drag-and-drop canvas, layers, guides, and field properties",
-    "ZPL variable data manager previewing records imported from CSV or JSON for batch label export",
-  ]) {
-    const screenshot = page.getByAltText(alt);
-    await expect.poll(() =>
-      screenshot.evaluate((image: HTMLImageElement) =>
-        image.currentSrc ? new URL(image.currentSrc).pathname : "",
-      ),
-    ).toMatch(/-dark\.png$/);
-  }
-  await page.emulateMedia({ colorScheme: "light" });
-
-  const editorLink = page.getByRole("link", { name: "Open the full ZPL editor", exact: true }).first();
-  await expect(editorLink).toHaveAttribute("href", "/editor");
-
-  const versionResponse = await request.get("/version.json");
-  expect(versionResponse.ok()).toBe(true);
-  const version = await versionResponse.json();
-  expect(version).toMatchObject({ name: "zplr", api: "0.3.0", profile: "zpl-ii-2025" });
-  await expect(page.getByText("Node.js + browser", { exact: true })).toBeVisible();
-  await expect(page.getByText("100% local", { exact: true })).toBeVisible();
-
-  const editorShellResponse = await request.get("/editor");
-  expect(editorShellResponse.ok()).toBe(true);
-  const editorShell = await editorShellResponse.text();
-  expect(editorShell).toContain("Opening the local ZPL editor");
-  expect(editorShell).toContain('name="robots" content="index, follow"');
-  expect(editorShell).toContain("How to edit and export a ZPL label");
-  expect((await request.get("/not-a-zplr-route")).status()).toBe(404);
-
-  await editorLink.click();
-  await expect(page).toHaveURL(/\/editor$/);
-  await expect(page.getByRole("heading", { name: "ZPL Editor" })).toBeVisible();
-  expect(browserErrors).toEqual([]);
-});
-
 test("opens directly as a full IDE and links diagnostics to source", async ({ page }) => {
   await page.goto("/editor");
   await expect(page).toHaveURL(/\/editor$/);
@@ -194,7 +112,7 @@ test("uses the system color scheme as the default editor theme", async ({ page }
   // Firefox creates a new browsing context group when the first navigation
   // receives COOP, which clears Playwright's page-level media emulation.
   // Enter the protected origin before setting the simulated OS preference.
-  await page.goto("/");
+  await page.goto("/zpl-commands");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/editor");
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
@@ -1364,20 +1282,14 @@ for (const colorScheme of ["light", "dark"] as const) {
   test(`has no serious automated accessibility violations in ${colorScheme} mode`, async ({ page }) => {
     test.slow();
 
-    await page.goto("/");
+    await page.goto("/zpl-commands");
     await page.emulateMedia({ colorScheme });
     await expect.poll(() => page.evaluate(() =>
       window.matchMedia("(prefers-color-scheme: dark)").matches,
     )).toBe(colorScheme === "dark");
-    // Inspect a page loaded in the requested theme, not an intermediate frame
-    // of the header's color transition after switching the system preference.
-    await page.reload();
-    let results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
-    expect(results.violations).toEqual([]);
-
     await page.goto("/editor");
     await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });
-    results = await new AxeBuilder({ page })
+    let results = await new AxeBuilder({ page })
       .exclude(".monaco-editor")
       .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
       .analyze();
@@ -1463,10 +1375,6 @@ for (const colorScheme of ["light", "dark"] as const) {
 
 test("remains usable at a narrow mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/");
-  await expect(page.getByRole("link", { name: "Open the full ZPL editor", exact: true }).first()).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
-
   await page.goto("/editor");
   await expect(page.getByRole("button", { name: "Code", exact: true })).toBeVisible();
   await expect(page.getByTestId("zpl-editor")).toBeVisible({ timeout: 30_000 });

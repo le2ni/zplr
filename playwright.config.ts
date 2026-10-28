@@ -5,6 +5,7 @@ const prebuiltOutput = process.env.E2E_PREBUILT === "1";
 
 export default defineConfig({
   testDir: "tests/e2e",
+  testIgnore: process.env.ZPLR_HAS_LANDING_PAGE === "1" ? "**/standalone.spec.ts" : undefined,
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

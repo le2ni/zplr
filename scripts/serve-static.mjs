@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const publicDirectory = path.join(repositoryRoot, ".output", "public");
+const publicDirectory = path.resolve(process.env.ZPLR_WEB_ROOT ?? repositoryRoot, ".output", "public");
 const portArgument = process.argv.slice(2).find((argument) => /^\d+$/.test(argument));
 const requestedPort = Number(portArgument ?? process.env.PORT ?? 4173);
 const headerRules = process.argv.includes("--headers")

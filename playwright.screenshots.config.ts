@@ -1,8 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
+import { resolve } from "node:path";
 
 export default defineConfig({
   testDir: "tests/screenshots",
-  outputDir: ".screenshots/playwright",
+  outputDir: resolve(process.env.ZPLR_WEB_ROOT ?? ".", ".screenshots/playwright"),
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,

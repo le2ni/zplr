@@ -65,7 +65,6 @@
     "test:watch": "vitest",
     "test:conformance": "vitest run src/core/commandConformance.test.ts src/core/representativeLabels.test.ts src/core/barcodeConformance.test.ts src/core/fuzz.test.ts",
     "test:e2e": "playwright test",
-    "test:seo": "lhci autorun --config=./lighthouserc.cjs",
     "docs:support": "node --import tsx scripts/generate-support-docs.ts",
     "docs:support:check": "node --import tsx scripts/generate-support-docs.ts --check",
     "docs:diagnostics": "node scripts/generate-diagnostic-docs.mjs",
@@ -96,7 +95,7 @@
     "screenshots:web": "playwright test --config=playwright.screenshots.config.ts",
     "screenshots:update": "node scripts/update-screenshot-baselines.mjs",
     "verify:core": "pnpm test && pnpm run docs:support:check && pnpm run docs:diagnostics:check && pnpm run docs:conformance:check && pnpm run docs:commands:check && pnpm run typecheck && pnpm run build && pnpm run api:check && pnpm run package:check && pnpm run size:check:library && pnpm run license:check",
-    "verify": "pnpm run verify:core && pnpm run build:web && pnpm run size:check && pnpm run test:seo",
+    "verify": "pnpm run verify:core && pnpm run build:web && pnpm run size:check",
     "release:verify": "pnpm run verify && pnpm run test:e2e && pnpm run audit"
   },
   "keywords": [
@@ -113,7 +112,6 @@
     "@axe-core/playwright": "^4.10.2",
     "@headlessui/vue": "^1.7.23",
     "@iconify-prerendered/vue-mdi": "^0.28.1737398331",
-    "@lhci/cli": "0.15.1",
     "@monaco-editor/loader": "^1.6.1",
     "@playwright/test": "^1.55.1",
     "@tailwindcss/postcss": "^4.1.14",

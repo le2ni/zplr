@@ -274,6 +274,14 @@ pnpm run audit
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [SUPPORT.md](./SUPPORT.md).
 
+## Website source
+
+This repository contains the open-source library, editor, and command reference.
+The landing page and Cloudflare configuration are maintained separately in the
+private `le2ni/zplr-website` repository. Local development opens the editor at
+`/editor`; see [deployment documentation](./docs/DEPLOYMENT.md) for standalone
+builds and the shared Nuxt layer.
+
 ## License and affiliation
 
 ZPLr is available under the [MIT License](./LICENSE).

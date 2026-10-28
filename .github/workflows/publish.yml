@@ -21,9 +21,6 @@ jobs:
     name: Verify and publish npm package
     runs-on: ubuntu-latest
     environment: production
-    outputs:
-      dist_tag: ${{ steps.release.outputs.dist_tag }}
-      preview_branch: ${{ steps.release.outputs.preview_branch }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -52,9 +49,9 @@ jobs:
       - run: node scripts/ci-fresh-consumer.mjs pnpm --require-release
       - name: Require an OIDC-capable npm CLI
         run: node -e "const v=require('child_process').execFileSync('npm',['--version'],{encoding:'utf8'}).trim().split('.').map(Number); if(v[0]<11 || (v[0]===11 && (v[1]<5 || (v[1]===5 && v[2]<1)))) throw new Error('npm 11.5.1 or newer is required for trusted publishing')"
-      - name: Select npm dist-tag and preview branch
+      - name: Select npm dist-tag
         id: release
-        run: node -e "const v=require('./package.json').version; const tag=v.includes('-')?'next':'latest'; const branch='release-'+v.replace(/[^a-z0-9-]+/gi,'-').toLowerCase(); require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'dist_tag='+tag+'\npreview_branch='+branch+'\n')"
+        run: node -e "const v=require('./package.json').version; const tag=v.includes('-')?'next':'latest'; require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'dist_tag='+tag+'\n')"
       - name: Check whether this exact release is already published
         id: registry
         run: node scripts/check-published-version.mjs
@@ -80,73 +77,3 @@ jobs:
           package-manager-cache: false
       - name: Verify registry install, integrity, and provenance
         run: node scripts/verify-published.mjs
-
-  deploy-candidate:
-    name: Deploy exact tagged candidate preview
-    needs: [publish, verify-published]
-    if: needs.publish.outputs.dist_tag == 'next'
-    runs-on: ubuntu-latest
-    environment:
-      name: preview
-      url: https://${{ needs.publish.outputs.preview_branch }}.zplr.pages.dev
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
-      - name: Download exact static release artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: zplr-static-${{ github.sha }}
-          path: .output
-      - name: Deploy immutable candidate build to Cloudflare Pages
-        run: pnpm dlx wrangler@4.112.0 pages deploy .output/public --project-name zplr --branch "${{ needs.publish.outputs.preview_branch }}" --commit-hash "${GITHUB_SHA}" --commit-dirty=false
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Verify candidate metadata and security headers
-        run: node scripts/verify-deployment.mjs "https://${{ needs.publish.outputs.preview_branch }}.zplr.pages.dev" "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"
-
-  deploy-production:
-    name: Deploy exact tagged site
-    needs: [publish, verify-published]
-    if: needs.publish.outputs.dist_tag == 'latest'
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://zplr.de
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.ref }}
-          fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          package-manager-cache: false
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm run release:check -- "${GITHUB_REF_NAME}"
-      - name: Download exact static release artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: zplr-static-${{ github.sha }}
-          path: .output
-      - name: Deploy immutable build to Cloudflare Pages
-        run: pnpm dlx wrangler@4.112.0 pages deploy .output/public --project-name zplr --branch main --commit-hash "${GITHUB_SHA}" --commit-dirty=false
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Verify production metadata and security headers
-        run: node scripts/verify-deployment.mjs https://zplr.de "$(node -p "require('./package.json').version")" "${GITHUB_SHA}"

@@ -5,7 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
 
-const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// A consuming Nuxt application can reuse the editor's build and screenshot pipeline.
+const editorRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = path.resolve(process.env.ZPLR_WEB_ROOT ?? editorRoot);
 const screenshotDirectory = path.join(repositoryRoot, ".screenshots", "current");
 const runId = randomUUID();
 const commit = suppliedCommit() ?? gitCommit();
@@ -31,9 +33,9 @@ function gitCommit() {
   }
 }
 
-function run(command, args) {
+function run(command, args, cwd = repositoryRoot) {
   const result = spawnSync(command, args, {
-    cwd: repositoryRoot,
+    cwd,
     env: environment,
     stdio: "inherit",
     shell: process.platform === "win32",
@@ -64,5 +66,7 @@ await rm(screenshotDirectory, { recursive: true, force: true });
 run("pnpm", ["run", "typecheck:web"]);
 await ensureChromium();
 run("pnpm", ["exec", "nuxt", "generate"]);
-run("pnpm", ["exec", "playwright", "test", "--config=playwright.screenshots.config.ts"]);
+// Use the editor's runner with its tests, avoiding a second Playwright instance
+// when a separate application consumes the editor as a Nuxt layer.
+run("pnpm", ["exec", "playwright", "test", "--config=playwright.screenshots.config.ts"], editorRoot);
 run("node", ["scripts/finalize-web-build.mjs"]);

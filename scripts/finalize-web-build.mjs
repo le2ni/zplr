@@ -7,7 +7,9 @@ import packageJson from "../package.json" with { type: "json" };
 import { assertIndexableHtml } from "./seo-assertions.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const outputDirectory = path.join(repositoryRoot, ".output", "public");
+const webRoot = path.resolve(process.env.ZPLR_WEB_ROOT ?? repositoryRoot);
+const outputDirectory = path.join(webRoot, ".output", "public");
+const hasLandingPage = process.env.ZPLR_HAS_LANDING_PAGE === "1";
 const captureDirectory = path.resolve(process.env.ZPLR_SCREENSHOT_DIR ?? path.join(repositoryRoot, ".screenshots", "current"));
 const expectedRunId = process.env.ZPLR_SCREENSHOT_RUN_ID;
 const expectedCommit = process.env.ZPLR_COMMIT_SHA ?? process.env.GITHUB_SHA ?? "unknown";
@@ -114,6 +116,7 @@ const versionManifest = {
   name: packageJson.name,
   version: packageJson.version,
   commit: expectedCommit,
+  ...(process.env.ZPLR_EDITOR_COMMIT ? { editorCommit: process.env.ZPLR_EDITOR_COMMIT } : {}),
   api: "0.3.0",
   profile: "zpl-ii-2025",
   screenshots: {
@@ -191,7 +194,7 @@ await writeFile(path.join(outputDirectory, "_redirects"), [
 
 const sitemapRoutes = htmlFiles.flatMap((filename) => {
   const relative = path.relative(outputDirectory, filename).replaceAll(path.sep, "/");
-  if (relative === "index.html") return ["/"];
+  if (relative === "index.html") return hasLandingPage ? ["/"] : [];
   if (relative === "editor.html") return ["/editor"];
   if (relative === "zpl-commands.html") return ["/zpl-commands"];
   if (relative.startsWith("zpl-commands/") && relative.endsWith(".html")) {
@@ -235,23 +238,6 @@ assert.match(outputHeaders, /\/sw\.js\n  Cache-Control: public, max-age=0, must-
 assert.match(outputHeaders, /\/manifest\.webmanifest\n  Cache-Control: public, max-age=0, must-revalidate/, "web manifest must be revalidated on every load");
 await writeFile(path.join(outputDirectory, "_headers"), outputHeaders);
 
-const indexHtml = await readFile(path.join(outputDirectory, "index.html"), "utf8");
-assert.match(indexHtml, /Free Online ZPL Viewer &amp; Editor/);
-assert.match(indexHtml, /aria-label="Interactive ZPL viewer"/);
-assert.match(indexHtml, /rel="canonical" href="https:\/\/zplr\.de\/"/);
-assert.match(indexHtml, /application\/ld\+json/);
-assert.match(indexHtml, /Node\.js ZPL renderer/);
-assert.match(indexHtml, /<link(?=[^>]*rel="icon")(?=[^>]*href="\/favicon-96x96\.png")[^>]*>/);
-assert.doesNotMatch(indexHtml, /<link[^>]*rel="icon"[^>]*href="data:/);
-assert.match(indexHtml, /media="\(prefers-color-scheme: dark\)" srcset="\/screenshots\/zpl-live-preview-dark\.png"/);
-assert.match(indexHtml, /href="\/screenshots\/zpl-label-preview\.png"/);
-assert.match(indexHtml, /<link[^>]*rel="manifest"[^>]*href="\/manifest\.webmanifest"[^>]*>/, "index.html must link the web manifest");
-const prefetchedHomepageScripts = [...indexHtml.matchAll(/<link rel="prefetch" as="script"[^>]*href="\/_nuxt\/([^"]+)"/g)]
-  .map((match) => match[1]);
-for (const filename of prefetchedHomepageScripts) {
-  const { size } = await stat(path.join(outputDirectory, "_nuxt", filename));
-  assert.ok(size < 250_000, `${filename} is too large to prefetch from the homepage (${size} bytes)`);
-}
 const editorHtml = await readFile(path.join(outputDirectory, "editor.html"), "utf8");
 assert.match(editorHtml, /name="robots" content="index, follow"/);
 assert.match(editorHtml, /Opening the local ZPL editor/);

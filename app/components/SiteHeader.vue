@@ -1,16 +1,16 @@
 <template>
   <header class="site-header sticky top-0 z-40">
     <nav class="mx-auto flex h-16 max-w-[90rem] items-center gap-6 px-5 sm:px-7 lg:px-10" aria-label="Primary navigation">
-      <NuxtLink to="/" class="site-wordmark flex shrink-0 items-center gap-2.5" aria-label="ZPLr home">
+      <NuxtLink :to="homeUrl" class="site-wordmark flex shrink-0 items-center gap-2.5" aria-label="ZPLr home">
         <img :src="logoUrl" class="h-8 w-auto dark:invert" alt="" />
         <span class="text-sm font-black tracking-[-0.04em]">ZPLr</span>
         <span class="hidden font-mono text-[9px] tracking-[0.14em] uppercase sm:inline">Label systems</span>
       </NuxtLink>
 
       <div class="mx-auto hidden items-center gap-7 text-xs font-extrabold tracking-[0.08em] uppercase md:flex">
-        <NuxtLink to="/#features" class="site-nav-link">Workflow</NuxtLink>
-        <NuxtLink to="/#designer" class="site-nav-link">Designer</NuxtLink>
-        <NuxtLink to="/#library" class="site-nav-link">Library</NuxtLink>
+        <NuxtLink :to="`${homeUrl}#features`" class="site-nav-link">Workflow</NuxtLink>
+        <NuxtLink :to="`${homeUrl}#designer`" class="site-nav-link">Designer</NuxtLink>
+        <NuxtLink :to="`${homeUrl}#library`" class="site-nav-link">Library</NuxtLink>
         <NuxtLink to="/zpl-commands" class="site-nav-link">Commands</NuxtLink>
       </div>
 
@@ -36,6 +36,8 @@
 <script setup lang="ts">
 import { IconArrowRight, IconGithub } from "@iconify-prerendered/vue-mdi";
 import logoUrl from "../../web/assets/logo.svg";
+const config = useRuntimeConfig();
+const homeUrl = computed(() => config.public.hasLandingPage ? "/" : `${config.public.siteUrl}/`);
 </script>
 
 <style scoped>

@@ -47,7 +47,7 @@ function createCleanUrlManifestTransform() {
     }
     const latest = `${appManifestFolder}latest.json`;
     const latestPath = resolve(
-      fileURLToPath(new URL(".", import.meta.url)),
+      process.cwd(),
       ".output",
       "public",
       latest,
@@ -113,7 +113,7 @@ export default defineNuxtConfig({
       navigateFallback: null,
     },
   },
-  css: ["~/assets/css/main.css"],
+  css: [fileURLToPath(new URL("./app/assets/css/main.css", import.meta.url))],
   postcss: {
     plugins: {
       "@tailwindcss/postcss": {},
@@ -121,6 +121,7 @@ export default defineNuxtConfig({
   },
   alias: {
     "@": fileURLToPath(new URL("./src", import.meta.url)),
+    "#zplr": fileURLToPath(new URL(".", import.meta.url)),
   },
   app: {
     head: {
@@ -143,6 +144,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       siteUrl: "https://zplr.de",
+      hasLandingPage: false,
       packageVersion: packageJson.version,
     },
   },
@@ -173,8 +175,8 @@ export default defineNuxtConfig({
         verbatimModuleSyntax: false,
       },
       include: [
-        "../env.d.ts",
-        "../src/types/**/*.d.ts",
+        fileURLToPath(new URL("./env.d.ts", import.meta.url)),
+        fileURLToPath(new URL("./src/types/**/*.d.ts", import.meta.url)),
       ],
       exclude: [
         "../src/**/*.test.ts",
@@ -188,18 +190,6 @@ export default defineNuxtConfig({
   vite: {
     build: {
       chunkSizeWarningLimit: 2_000,
-    },
-  },
-  hooks: {
-    "build:manifest": (manifest) => {
-      // The homepage viewer loads the renderer after user interaction. Leaving
-      // this dynamic edge in the SSR manifest emits a 500+ kB prefetch hint and
-      // competes with the landing page's critical requests.
-      const homepage = Object.values(manifest).find(({ src }) => src === "pages/index.vue");
-      if (!homepage?.dynamicImports) return;
-      homepage.dynamicImports = homepage.dynamicImports.filter(
-        (id) => manifest[id]?.name !== "index.web",
-      );
     },
   },
 });

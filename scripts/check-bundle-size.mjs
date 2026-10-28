@@ -23,19 +23,19 @@ assert.equal(webTypes.includes("skia-canvas"), false, "Web declarations resolve 
 if (!libraryOnly) {
   const publicDirectory = resolve(".output/public");
   const assetDirectory = resolve(publicDirectory, "_nuxt");
-  const html = await readFile(resolve(publicDirectory, "index.html"), "utf8");
+  const html = await readFile(resolve(publicDirectory, "editor.html"), "utf8");
   const assets = await readdir(assetDirectory);
   const initialScripts = [
     ...html.matchAll(/<script[^>]+src="([^"]+\.js)"/g),
     ...html.matchAll(/<link[^>]+rel="modulepreload"[^>]+href="([^"]+\.js)"/g),
   ].map((match) => resolve(publicDirectory, match[1].replace(/^\//, "")));
-  assert.ok(initialScripts.length > 0, "The prerendered landing page has no JavaScript entry.");
+  assert.ok(initialScripts.length > 0, "The prerendered editor shell has no JavaScript entry.");
   const startupScripts = [...new Set(initialScripts)];
   const startupSize = (await Promise.all(startupScripts.map(gzipSize))).reduce(
     (sum, size) => sum + size,
     0
   );
-  within("Prerendered landing JavaScript", startupSize, 180 * kib);
+  within("Prerendered editor shell JavaScript", startupSize, 180 * kib);
 
   const editorChunks = [];
   for (const name of assets.filter((name) => name.endsWith(".js"))) {
@@ -44,7 +44,7 @@ if (!libraryOnly) {
   }
   assert.ok(editorChunks.length > 0, "The editor did not emit a separately measurable asynchronous chunk.");
   for (const chunk of editorChunks) {
-    assert.equal(html.includes(basename(chunk)), false, `Editor chunk ${basename(chunk)} is loaded on the landing page.`);
+    assert.equal(startupScripts.includes(chunk), false, `Editor chunk ${basename(chunk)} is eagerly loaded by the editor shell.`);
   }
   console.log(`Large editor code remains asynchronous (${editorChunks.map((chunk) => basename(chunk)).join(", ")}).`);
 }

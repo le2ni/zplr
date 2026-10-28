@@ -1,36 +1,59 @@
-# Cloudflare Pages deployment
+# Editor builds and website deployment
 
-The Pages project is `zplr`, with production branch `main`, custom domain `zplr.de`, build command `pnpm run build:web`, and output directory `.output/public`. Nuxt prerenders the landing page, the indexable `/editor` loading shell and usage guide, and the command reference. Cloudflare serves only the generated static assets; no Pages Function or production server is required. The sitemap includes both tool pages and all command guides. The build rejects indexing blocks, missing metadata, or inconsistent canonicals on any sitemap page; production verification also checks indexing headers.
+The public `le2ni/zplr` repository owns the library, editor, and command reference.
+The landing page and Cloudflare deployment configuration live in the private
+`le2ni/zplr-website` repository. Publishing an npm release or opening a pull
+request here does not deploy to `zplr.de`.
 
-The deployable build requires Playwright Chromium. It type-checks the Nuxt application, installs Playwright's pinned Chromium binary when the build image does not already contain it, runs `nuxt generate`, starts a temporary local preview, captures paired light- and dark-mode editor screenshots used by the landing page, and finalizes the static artifact. GitHub workflows preinstall Chromium and its Linux dependencies, so this check is normally a no-op there; it also makes direct Cloudflare Pages builds self-contained. The landing page selects the matching image through `prefers-color-scheme`. The build fails if any of the ten screenshots is absent, stale, associated with another commit/run, assigned to the wrong color scheme, or has unexpected dimensions. `pnpm run screenshots:update` intentionally refreshes the committed development baselines after a successful build.
+## Standalone editor
 
-Pull requests from the repository deploy to `pr-<number>.zplr.pages.dev` through `.github/workflows/preview.yml`, using Cloudflare's [preview-deployment model](https://developers.cloudflare.com/pages/configuration/preview-deployments/). Fork previews do not receive deployment secrets. The workflow verifies prerendered SEO content, screenshot provenance, static metadata, security headers, the direct `/editor` route, hydration, responsive behavior, and accessibility. Normal CI independently covers Chromium, Firefox, and WebKit against the same generated artifact.
-
-Release tags are deployed only after the exact npm publish and post-publish verification succeed. `.github/workflows/publish.yml` builds and captures the static site once, uploads `.output` as an immutable commit-specific artifact, and reuses it for deployment. Prereleases published under `next` deploy to a versioned `release-<semver>.zplr.pages.dev` preview. Stable releases published under `latest` deploy to zplr.de. Both paths deploy with the tag commit SHA, verify the version and commit in `version.json`, and require the screenshot manifest to carry that same commit; a prerelease can never enter the production deployment job.
-
-The static artifact also includes `/license.txt` and `/third-party-notices.txt`,
-copied from the repository license and attribution documents. Preserve these
-files when distributing or hosting the generated website.
-
-The generated manifest is machine-readable:
-
-```json
-{
-  "name": "zplr",
-  "version": "0.3.0",
-  "commit": "<full git SHA>",
-  "api": "0.3.0",
-  "profile": "zpl-ii-2025",
-  "screenshots": {
-    "source": "captured",
-    "runId": "<unique build run>",
-    "manifest": "/screenshots/manifest.json"
-  }
-}
+```sh
+pnpm install --frozen-lockfile
+pnpm run dev:web
+pnpm run build:web
+pnpm run preview:web
 ```
 
-The finalizer augments `public/_headers` with hashes for Nuxt's executable inline scripts, preserving the strict CSP without `unsafe-inline`. Hashed Nuxt assets are immutable, stable screenshot URLs revalidate, and deployment metadata is never cached. Preview deployments should retain Cloudflare's `X-Robots-Tag: noindex` behavior.
+The root route redirects to `/editor`. `/editor`, `/zpl-commands`, all 223 command
+guides, and their static JSON API responses remain available. The standalone
+artifact is `.output/public`; it needs no production server. CI builds it and
+runs the editor, documentation, accessibility, and offline browser suites.
 
-Documentation also prerenders `/api/zpl-documentation.json` and all 223 `/api/zpl-documentation/<slug>.json` responses. Client navigation can request these when a Nuxt payload is unavailable; a static deployment cannot run the source API handlers on demand. The finalizer verifies every JSON response and generates exact Cloudflare `_redirects` aliases for older extensionless API URLs. Deployment verification checks the JSON response type and contents. The local static preview does not emulate Cloudflare redirects; check the old API aliases against a Pages preview or production after deployment.
+The build type-checks the application, ensures Playwright Chromium is available,
+prerenders pages, captures ten light/dark editor screenshots, and validates the
+result. GitHub CI preinstalls Chromium's Linux system dependencies. The committed
+screenshots remain here because the README and editor documentation use them.
+`pnpm run screenshots:update` refreshes those development baselines.
 
-Rollback is a Cloudflare control-plane operation. Roll back the site only to an already verified production deployment; do not rebuild an old tag. npm releases are immutable and require a corrective version rather than replacement.
+The static artifact includes `/license.txt` and `/third-party-notices.txt`,
+copied from this repository. Preserve both when distributing a build. It also
+includes version metadata, a sitemap, CSP hashes for executable inline scripts,
+and exact `_redirects` aliases for older extensionless documentation API URLs.
+The local preview does not emulate those Cloudflare redirects.
+
+## Combined production website
+
+The private website extends this repository as a Nuxt layer. It supplies the
+landing page at `/` and reuses the public editor, documentation, assets, and
+build checks. Shared navigation points to the production website when this
+repository runs standalone and uses local landing-page links in the combined
+application. URLs and the installed PWA's origin remain unchanged.
+
+The consuming application sets `ZPLR_WEB_ROOT` to its own root when reusing
+`scripts/build-web.mjs`. It provides its own finalizer that invokes this
+repository's finalizer, then validates its landing page. `ZPLR_HAS_LANDING_PAGE=1`
+includes `/` in the combined sitemap, and `ZPLR_EDITOR_COMMIT` records the public
+source revision alongside the website commit. Screenshot capture uses this
+repository's Playwright runner to keep tests and dependencies together.
+
+The existing Cloudflare Pages project `zplr` serves `zplr.de`. Its Git source
+must be the private website repository, with the build command and settings
+recorded there. Disable the former public repository's automatic Pages builds
+before pushing this split, so the standalone editor cannot replace the website.
+GitHub release workflows here retain npm publishing and registry verification
+but have no Cloudflare deployment jobs.
+
+Commit and push these public changes before the first private website build.
+The private repository can select a public branch, tag, or full commit SHA and
+records the resolved revision in `version.json`. A stable npm release does not
+automatically promote that editor version into the website.
