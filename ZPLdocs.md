@@ -15,13 +15,41 @@ for parsing, lookup, playground explanations, and the generated
 - **non-rendering** means printer, calibration, networking, or RFID behavior
   is recognized and reported but intentionally has no label-raster effect.
 
-The current catalog contains 94 supported, 11 partial, 2 unsupported, and 116
+The current catalog contains 95 supported, 11 partial, 1 unsupported, and 116
 recognized non-rendering command identities. The generated table is the exact
 source for each limitation.
 
 Unknown commands and commands used with the wrong prefix are separate
 diagnostics. Full identities matter: `^JB` and `~JB` do not collapse to
 the same command.
+
+## Rendering audit — October 3, 2026
+
+The audit compared the implementation and regression tests with Zebra's command
+reference. It began with 11 partial and two unsupported rendering/job commands.
+`^JM` logical-dot scaling is now fully implemented in the preview profile.
+Other fixes improve individual behaviors without claiming full printer-firmware
+equivalence. No new third-party dependency or Unicode data is bundled; text
+segmentation and localized clock names use native runtime APIs.
+
+| Area | Fix and remaining boundary | Evidence |
+| --- | --- | --- |
+| [`^JM`](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/advanced-techniques/set-dots-millimeter.html) | Full/half density, persistent state, logical-dot expansion, physical measurement units, clipping, highlights, and retained-raster composition. Physical `printDensity` remains the output raster's density. | `renderingGaps.test.ts` |
+| [`^SF`](https://docs.zebra.com/us/en/printers/software/zpl-pg/zpl-commands/%5Esf.html) | Masks run after `^FH`/`^CI` decoding, ignore controls and bidi markers, and preserve skipped clusters and mixed-radix carries. Clusters use native `Intl.Segmenter` when available, otherwise code points; Unicode behavior depends on the runtime, so support remains partial. | `renderingGaps.test.ts` |
+| [`^FT`](https://docs.zebra.com/us/en/printers/software/zpl-pg/zpl-commands/%5Eft.html), `^FW` | Continuation of omitted coordinates, resident-font baselines in all rotations, the last possible `^FB` baseline, unclamped clipping, inherited justification, and bottom anchors for graphics/barcodes. Downloaded outline-font baselines still use em-cell metrics. | `renderingGaps.test.ts` |
+| [`^FP`](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/zpl-commands/%5Efp.html) | Reverse/vertical flow, wrapping, and caret offsets preserve grapheme clusters when native `Intl.Segmenter` is available; canonically equivalent accented text then produces the same raster. Contextual shaping and non-composable mark positioning still need a full text-layout engine. | `renderingGaps.test.ts`, `crossPlatform.test.ts` |
+| [`^PA`](https://docs.zebra.com/us/en/printers/software/zpl-pg/zpl-commands/%5Epa.html) | Missing characters use a blank or the selected font's actual default glyph according to the switch; linked fonts are tried first. Bidi, shaping, and OpenType tables remain a subset. | `renderingGaps.test.ts`, `renderingCommands.test.ts` |
+| [`^TB`](https://docs.zebra.com/us/en/printers/software/zpl-pg/zpl-commands/%5Etb.html) | The complete `<< >` literal escape is consumed, wrapping preserves clusters when native segmentation is available, and auto justification follows the script. Other firmware escape instructions and complex layout remain partial. | `renderingGaps.test.ts` |
+| `~DY` PNG images | All standard PNG color types/depths, Adam7 passes, and 16-bit transparency matching are decoded with bounded working memory. Other image formats retain their listed limitations; BAR-ONE AR compression remains unsupported. | `pngDecoder.test.ts`, [PNG specification](https://www.w3.org/TR/png-3/) |
+| `^FC`, `^KL`, `^SL` | Localized names retain the existing native `Intl.DateTimeFormat` behavior. Host locale data and printer-specific translations/abbreviations can differ; no additional vocabulary is bundled. | `renderingGaps.test.ts`, `renderingCommands.test.ts` |
+| [`^CI`](https://docs.zebra.com/us/en/printers/software/zpl-pg/c-zpl-zpl-commands/r-zpl-ci.html) | Resource-dependent Asian encodings require the corresponding downloaded conversion table; ambiguous EUC-CN and non-GB18030 variants are not guessed. No new mapping table is bundled. | `renderingCommands.test.ts` |
+| [`^GF` C](https://docs.zebra.com/content/tcm/us/en/printers/software/zpl-pg/zpl-commands/%5Egf.html) | Zebra identifies a proprietary host compression algorithm without specifying its byte-level decoder on the command page. A verified format description and input/output fixtures are still needed; unsupported data remains diagnosed. | `graphicDecoder.test.ts`, `renderingCommands.test.ts` |
+| [`^SZ` 1](https://docs.zebra.com/us/en/printers/software/zpl-pg/zpl-commands/%5Esz.html) | Selecting original ZPL requires a separate compatibility model and fixtures. It remains explicitly unsupported in this ZPL II profile. | `capabilities.test.ts`, `commandConformance.test.ts` |
+
+The density tests also exposed overlapping edge writes in thick reversed boxes.
+Those writes now visit each dot once, preserving `^FR`/`^LR` XOR behavior.
+The catalog continues to report eleven partial commands and one unsupported
+command; this audit does not claim complete Zebra firmware emulation.
 
 ## Deterministic rendering model
 
@@ -61,7 +89,9 @@ preserves:
 `renderZpl()` creates a fresh session for every job.
 Virtual-printer clock components are read and updated in UTC so a fixed
 `RenderJobOptions.clock` produces the same numeric `^FC` output in every host
-time zone. Localized weekday and month names still depend on host `Intl` data.
+time zone. Localized weekday and month names use native `Intl.DateTimeFormat`;
+runtime locale data and printer firmware can use different wording or
+abbreviations.
 
 ## Text
 

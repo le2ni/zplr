@@ -4,8 +4,17 @@ import { commandCapabilities } from "../src/core/capabilities";
 import type { CommandCapability } from "../src/types/ZplDocument";
 
 const target = resolve("docs/CONFORMANCE.md");
+const renderingGapCommands = new Set([
+  "^FC", "^FP", "^FT", "^FW", "^JM", "^KL", "^PA", "^SF", "^SL", "^TB",
+]);
 
 function semanticEvidence(capability: CommandCapability): string {
+  if (renderingGapCommands.has(capability.canonical)) {
+    return "`renderingGaps.test.ts`, `interpreter.test.ts`, `jobRenderer.test.ts`";
+  }
+  if (capability.canonical === "~DY") {
+    return "`pngDecoder.test.ts`, `graphicDecoder.test.ts`, `jobRenderer.test.ts`";
+  }
   if (capability.status === "unsupported") return "`documentParser.test.ts`";
   if (capability.category === "barcode") {
     return "`interpreter.test.ts`, `extendedBarcodes.test.ts`, specialized encoder suites";
@@ -23,6 +32,12 @@ function semanticEvidence(capability: CommandCapability): string {
 }
 
 function rasterEvidence(capability: CommandCapability): string {
+  if (renderingGapCommands.has(capability.canonical)) {
+    return "`renderingGaps.test.ts`, `crossPlatform.test.ts`, `representativeLabels.test.ts`";
+  }
+  if (capability.canonical === "~DY") {
+    return "`pngDecoder.test.ts`, `jobRenderer.test.ts`";
+  }
   if (capability.status === "unsupported") return "—";
   if (capability.effect === "job") return "`jobRenderer.test.ts`, `representativeLabels.test.ts`";
   if (capability.category === "barcode") {

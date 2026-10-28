@@ -8,6 +8,10 @@ Pull requests from the repository deploy to `pr-<number>.zplr.pages.dev` through
 
 Release tags are deployed only after the exact npm publish and post-publish verification succeed. `.github/workflows/publish.yml` builds and captures the static site once, uploads `.output` as an immutable commit-specific artifact, and reuses it for deployment. Prereleases published under `next` deploy to a versioned `release-<semver>.zplr.pages.dev` preview. Stable releases published under `latest` deploy to zplr.de. Both paths deploy with the tag commit SHA, verify the version and commit in `version.json`, and require the screenshot manifest to carry that same commit; a prerelease can never enter the production deployment job.
 
+The static artifact also includes `/license.txt` and `/third-party-notices.txt`,
+copied from the repository license and attribution documents. Preserve these
+files when distributing or hosting the generated website.
+
 The generated manifest is machine-readable:
 
 ```json

@@ -37,6 +37,7 @@ import type {
 } from "@/types/ZplDocument";
 import { zplDpiConversion } from "./zplNumbers";
 import { parseFieldNumber } from "./fieldNumber";
+import { SERIALIZATION_STEP } from "./serialization";
 
 const PERSISTENT_COMMANDS = new Set([
   "BY",
@@ -44,6 +45,7 @@ const PERSISTENT_COMMANDS = new Set([
   "CI",
   "CV",
   "FW",
+  "JM",
   "LH",
   "LL",
   "LR",
@@ -253,77 +255,6 @@ function serializeNumber(
     ? sign + absolute.padStart(digits.length, "0")
     : next.toString();
   return value.slice(0, digitsStart) + rendered + value.slice(digitsStart + digits.length);
-}
-
-function serializationAlphabet(mask: string): string | undefined {
-  if (mask === "D") return "0123456789";
-  if (mask === "d") return "0123456789";
-  if (mask === "H") return "0123456789ABCDEF";
-  if (mask === "h") return "0123456789abcdef";
-  if (mask === "O") return "01234567";
-  if (mask === "o") return "01234567";
-  if (mask === "A") return "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  if (mask === "a") return "abcdefghijklmnopqrstuvwxyz";
-  if (mask === "N") return "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  if (mask === "n") return "0123456789abcdefghijklmnopqrstuvwxyz";
-  return undefined;
-}
-
-function serializeMasked(
-  value: string,
-  mask: string,
-  increment: string,
-  step: number
-): string {
-  const characters = [...value];
-  const masks = [...mask];
-  const increments = [...increment];
-  const start = characters.length - masks.length;
-  const positions: Array<{
-    characterIndex: number;
-    maskIndex: number;
-    alphabet: string;
-  }> = [];
-  for (let maskIndex = 0; maskIndex < masks.length; maskIndex++) {
-    const alphabet = serializationAlphabet(masks[maskIndex]);
-    const characterIndex = start + maskIndex;
-    if (alphabet && characterIndex >= 0 && characterIndex < characters.length) {
-      positions.push({ characterIndex, maskIndex, alphabet });
-    }
-  }
-  if (positions.length === 0 || step === 0) return value;
-
-  let current = 0n;
-  let addition = 0n;
-  let multiplier = 1n;
-  for (let index = positions.length - 1; index >= 0; index--) {
-    const position = positions[index];
-    const base = BigInt(position.alphabet.length);
-    const currentDigit = Math.max(
-      0,
-      position.alphabet.indexOf(characters[position.characterIndex])
-    );
-    current += BigInt(currentDigit) * multiplier;
-    const incrementIndex = increments.length - masks.length + position.maskIndex;
-    const incrementCharacter = increments[incrementIndex];
-    const incrementDigit =
-      incrementCharacter === "%"
-        ? 0
-        : Math.max(0, position.alphabet.indexOf(incrementCharacter ?? ""));
-    addition += BigInt(incrementDigit) * multiplier;
-    multiplier *= base;
-  }
-  if (!increment.trim()) addition = 1n;
-  let next = (current + addition * BigInt(step)) % multiplier;
-  if (next < 0) next += multiplier;
-  for (let index = positions.length - 1; index >= 0; index--) {
-    const position = positions[index];
-    const base = BigInt(position.alphabet.length);
-    const digit = Number(next % base);
-    next /= base;
-    characters[position.characterIndex] = position.alphabet[digit];
-  }
-  return characters.join("");
 }
 
 function serializationFieldSize(command: ZplCommandNode): number {
@@ -646,14 +577,9 @@ function dynamicLabel(
         lastDataIndex >= 0 &&
         serializationFieldSize(command) <= MAX_SERIALIZATION_FIELD_SIZE
       ) {
-        const data = output[lastDataIndex];
-        const value = serializeMasked(
-          data.rawParameters,
-          args[0] ?? "",
-          args[1] ?? "",
-          serialStep
-        );
-        output[lastDataIndex] = replacementDataCommand(data, value);
+        // Serialize decoded field data in the interpreter, after ^FH and ^CI.
+        // Otherwise masks accidentally count hexadecimal transport bytes.
+        output.push(Object.assign(cloneCommand(command), { [SERIALIZATION_STEP]: serialStep }));
       }
       continue;
     }
@@ -1943,6 +1869,20 @@ function storePersistentCommand(
   diagnostics: ZplDiagnostic[]
 ): void {
   let storedCommand = command;
+  if (command.code === "JM" && !["", "A", "B"].includes(command.parameters[0]?.trim().toUpperCase() ?? "")) return;
+  if (command.code === "FW") {
+    const previous = state.persistent.get("FW")?.command;
+    const orientation = command.parameters[0]?.trim().toUpperCase();
+    const justification = command.parameters[1]?.trim();
+    storedCommand = cloneCommand(command);
+    storedCommand.parameters = [
+      orientation && ["N", "R", "I", "B"].includes(orientation)
+        ? orientation : previous?.parameters[0] ?? "N",
+      justification && ["0", "1", "2"].includes(justification)
+        ? justification : previous?.parameters[1] ?? "0",
+    ];
+    storedCommand.rawParameters = storedCommand.parameters.join(storedCommand.delimiter);
+  }
   if (command.code === "MU") {
     const previous = state.persistent.get("MU")?.command;
     const previousUnit = previous?.parameters[0]?.trim().toUpperCase();

@@ -40,6 +40,14 @@ const expectedPwaIcons = {
 
 assert.ok(expectedRunId, "ZPLR_SCREENSHOT_RUN_ID is required");
 await stat(outputDirectory);
+// The website ships bundled library code and data independently of npm.
+// Include the same license and attribution documents in that artifact.
+for (const [source, destination] of [
+  ["LICENSE", "license.txt"],
+  ["THIRD_PARTY_NOTICES.md", "third-party-notices.txt"],
+]) {
+  await cp(path.join(repositoryRoot, source), path.join(outputDirectory, destination));
+}
 for (const [filename, [width, height]] of Object.entries(expectedFaviconPngs)) {
   const bytes = await readFile(path.join(outputDirectory, filename));
   assert.deepEqual(pngDimensions(bytes), { width, height }, `${filename} has unexpected dimensions`);

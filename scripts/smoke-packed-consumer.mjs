@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -25,6 +25,13 @@ try {
   mkdirSync(packageDirectory, { recursive: true });
   const packed = JSON.parse(run("pnpm", ["pack", "--json", "--pack-destination", temporary]));
   run("tar", ["-xzf", packed.filename, "--strip-components=1", "-C", packageDirectory]);
+  for (const filename of ["LICENSE", "THIRD_PARTY_NOTICES.md"]) {
+    assert.equal(
+      readFileSync(join(packageDirectory, filename), "utf8"),
+      readFileSync(new URL(`../${filename}`, import.meta.url), "utf8"),
+      `Packed ${filename} must retain the complete license and attribution text.`,
+    );
+  }
 
   const pkg = JSON.parse(await import("node:fs/promises").then(({ readFile }) =>
     readFile(new URL("../package.json", import.meta.url), "utf8")

@@ -54,13 +54,7 @@ describe("command capability registry", () => {
         expect.objectContaining({ canonical: "^FP", effect: "raster" }),
         expect.objectContaining({ canonical: "^FT", effect: "raster" }),
         expect.objectContaining({ canonical: "^PA", effect: "raster" }),
-        expect.objectContaining({
-          canonical: "^SF",
-          effect: "raster",
-          limitations: expect.arrayContaining([
-            expect.stringContaining("combining-cluster"),
-          ]),
-        }),
+        expect.objectContaining({ canonical: "^SF", effect: "raster" }),
         expect.objectContaining({ canonical: "^SL", effect: "raster" }),
         expect.objectContaining({ canonical: "^TB", effect: "raster" }),
       ])
@@ -99,11 +93,8 @@ describe("command capability registry", () => {
       ]),
     });
     expect(getCommandCapability("^JM")).toMatchObject({
-      status: "unsupported",
-      effect: "job",
-      limitations: expect.arrayContaining([
-        expect.stringContaining("printDensity"),
-      ]),
+      status: "supported",
+      effect: "raster",
     });
     expect(getCommandCapability("^CW")).toMatchObject({
       status: "supported",

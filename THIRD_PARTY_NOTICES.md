@@ -1,8 +1,8 @@
 # Third-party notices
 
-ZPLr bundles deterministic font data derived from the projects below. These
-font licenses apply to those assets; the surrounding ZPLr source remains MIT
-licensed.
+ZPLr includes third-party code and font assets from the projects below. Their
+licenses apply to those components; the surrounding ZPLr source remains MIT
+licensed. Keep these notices with redistributed bundles.
 
 ## ZXing Aztec high-level encoder
 

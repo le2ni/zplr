@@ -2,6 +2,18 @@
 
 All notable changes follow Keep a Changelog. ZPLr uses semantic versioning from 0.3.0 onward.
 
+## [Unreleased]
+
+### Fixed
+
+- Implemented persistent `^JM` half-density rendering and corrected `^SF` serialization after field decoding.
+- Corrected `^FT` continuation, rotated resident-font baselines, block/graphic/barcode anchors, and inherited `^FW` justification.
+- Kept combining clusters intact during text flow and wrapping using native `Intl.Segmenter` when available, honored `^PA` default glyph selection, and consumed complete `^TB` literal-angle escapes.
+- Added Adam7 and 16-bit PNG download decoding and prevented overlapping reversed-box edges from canceling each other.
+- Preserved license and attribution documents in the static website build and verified that npm packages include them.
+
+The remaining firmware-specific gaps are recorded in the [rendering audit](./ZPLdocs.md#rendering-audit--october-3-2026) and command capability catalog.
+
 ## [0.3.0] - 2026-07-27
 
 ### Added

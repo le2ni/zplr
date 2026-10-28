@@ -154,9 +154,20 @@ test("renders visual examples lazily and keeps device commands code-only", async
   await expect(page.getByText(/does not produce a standalone label image/)).toBeVisible();
   await expect(page.getByText("Renderer", { exact: true })).toHaveCount(0);
 
-  await page.goto("/zpl-commands/caret-jm");
+  await page.goto("/zpl-commands/caret-sz");
   await expect(page.getByText(/recognized but not implemented/)).toBeVisible();
   await expect(page.getByText("Renderer", { exact: true })).toHaveCount(0);
+});
+
+test("renders both supported ^JM density modes", async ({ page }) => {
+  await page.goto("/zpl-commands/caret-jm");
+  const comparison = page.locator(".example-comparison").first();
+  await comparison.scrollIntoViewIfNeeded();
+  await expect(comparison.getByText("Renderer", { exact: true })).toHaveCount(2);
+  await expect(comparison.locator("img")).toHaveCount(2, { timeout: 30_000 });
+  const sources = await comparison.locator("img").evaluateAll((images) =>
+    images.map((image) => (image as HTMLImageElement).src));
+  expect(new Set(sources).size).toBe(2);
 });
 
 test("renders distinct, resolved ^FC clock examples", async ({ page }) => {

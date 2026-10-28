@@ -1,5 +1,18 @@
 const ZPL_DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 
+/** ^JM is a format-wide logical-dot size selected before the first ^FS. */
+export function zplDotScale(commands: readonly { canonical: string; parameters: readonly string[] }[]): 1 | 2 {
+  let scale: 1 | 2 = 1;
+  for (const command of commands) {
+    if (command.canonical === "^FS") break;
+    if (command.canonical !== "^JM") continue;
+    const mode = command.parameters[0]?.trim().toUpperCase() || "A";
+    if (mode === "A") scale = 1;
+    if (mode === "B") scale = 2;
+  }
+  return scale;
+}
+
 /** Parse the plain decimal syntax accepted by numeric ZPL parameters. */
 export function zplNumber(value: string | undefined): number | undefined {
   const normalized = value?.trim() ?? "";

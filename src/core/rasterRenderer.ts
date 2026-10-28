@@ -6,6 +6,7 @@ import type {
   LabelLayout,
   LayoutFont,
   LayoutFontResources,
+  LayoutField,
   TextLayoutField,
 } from "@/types/LabelLayout";
 import type {
@@ -33,10 +34,12 @@ import {
   residentAdvanceWidth,
   residentCharacter,
   residentInkWidth,
+  residentFontMetrics,
   residentUsesProportionalFace,
   residentUsesOutlineFace,
 } from "./bitmapFont";
 import { OpenTypeFontEngine } from "./fontEngine";
+import { textClusters } from "./textClusters";
 import {
   code39CheckDigit,
   code39Runs,
@@ -65,6 +68,7 @@ import {
   getDot,
   lastDarkRow,
   setDot,
+  scaledRasterTarget,
   strokeCircle,
   strokeEllipse,
   strokeRoundedRect,
@@ -242,16 +246,7 @@ interface IndexedTextCharacter {
   end: number;
 }
 
-function indexedTextCharacters(value: string): IndexedTextCharacter[] {
-  const result: IndexedTextCharacter[] = [];
-  let offset = 0;
-  for (const character of value) {
-    const start = offset;
-    offset += character.length;
-    result.push({ character, start, end: offset });
-  }
-  return result;
-}
+const indexedTextCharacters = textClusters;
 
 function setTextCaretStop(stops: TextCaretStop[], stop: TextCaretStop): void {
   const existing = stops.findIndex(({ offset }) => offset === stop.offset);
@@ -282,14 +277,67 @@ function orientTextCaretStops(
     .sort((left, right) => left.offset - right.offset);
 }
 
+function orientedPoint(
+  orientation: Orientation, width: number, height: number, x: number, y: number
+): { x: number; y: number } {
+  if (orientation === "R") return { x: height - y, y: x };
+  if (orientation === "I") return { x: width - x, y: height - y };
+  if (orientation === "B") return { x: y, y: width - x };
+  return { x, y };
+}
+
+function anchoredPosition(
+  field: LayoutField, width: number, height: number,
+  anchorX = field.originJustification === "R" ? width : 0,
+  anchorY = height
+): { x: number; y: number } {
+  if (field.typeset) {
+    const anchor = orientedPoint(field.orientation, width, height, anchorX, anchorY);
+    return { x: field.x - anchor.x, y: field.y - anchor.y };
+  }
+  return {
+    x: field.x - (field.originJustification === "R"
+      ? orientedSize(field.orientation, width, height).width : 0),
+    y: field.y,
+  };
+}
+
+function textBaseline(font: LayoutFont): number {
+  if (font.name) {
+    const bitmap = findBitmapFont(font.resources?.bitmapFonts,
+      aliasedFontName(font.name, font.resources?.memoryAliases));
+    return bitmap
+      ? Math.round(font.height * bitmap.baseline / Math.max(1, bitmap.cellHeight))
+      : font.height;
+  }
+  const metrics = residentFontMetrics(font.key);
+  return metrics ? Math.round(font.height * metrics.baseline / metrics.height) : font.height;
+}
+
+function textPosition(
+  field: TextLayoutField, width: number, height: number, rightAnchored: boolean,
+  finalCharacterWidth: number, endX: number, endY: number
+): { x: number; y: number; nextPosition: { x: number; y: number } } {
+  const baseline = textBaseline(field.font);
+  const step = Math.max(1, field.font.height + (field.block?.lineSpacing ?? 0));
+  const anchorY = baseline + (field.block?.mode === "FB"
+    ? Math.max(0, field.block.maxLines - 1) * step : 0);
+  const position = field.typeset
+    ? anchoredPosition(field, width, height,
+        rightAnchored ? width - finalCharacterWidth : 0, anchorY)
+    : { x: field.x - (rightAnchored ? orientedSize(field.orientation, width, height).width : 0), y: field.y };
+  const end = orientedPoint(field.orientation, width, height, endX, endY);
+  return { ...position, nextPosition: { x: position.x + end.x, y: position.y + end.y } };
+}
+
 function measureText(value: string, font: LayoutFont): number {
   const proportionalResident = residentUsesProportionalFace(font.key);
   const proportional =
     font.key === "0" ||
     font.name !== undefined ||
     proportionalResident;
-  return [...value].reduce(
-    (total, character) =>
+  return textClusters(value.normalize("NFC")).reduce(
+    (total, { character }) =>
       total +
       (proportional
         ? font.name !== undefined
@@ -301,7 +349,7 @@ function measureText(value: string, font: LayoutFont): number {
 }
 
 function measureFieldText(value: string, field: TextLayoutField): number {
-  const characters = [...value];
+  const characters = textClusters(value);
   return (
     measureText(value, field.font) +
     Math.max(0, characters.length - 1) * Math.max(0, field.characterGap ?? 0)
@@ -416,7 +464,7 @@ function bidiClass(character: string): "L" | "R" | "N" {
 }
 
 function reorderBidirectional(value: string): string {
-  const characters = [...value];
+  const characters = textClusters(value).map(({ character }) => character);
   const base = characters.map(bidiClass).find((value) => value !== "N") ?? "L";
   const runs: Array<{ direction: "L" | "R"; characters: string[] }> = [];
   let direction: "L" | "R" = base;
@@ -479,7 +527,10 @@ function parseTextBlockEscapes(data: string): string {
     }
     if (data[index + 1] === "<") {
       result += "<";
-      index++;
+      // The documented literal escape is << >. Accept the compact <<>
+      // and the existing bare << spelling as well.
+      const literal = /^<<\s*>/.exec(data.slice(index));
+      index += literal ? literal[0].length - 1 : 1;
       continue;
     }
     const end = data.indexOf(">", index + 1);
@@ -498,7 +549,7 @@ function splitLongWord(
   availableWidth: number,
   field: TextLayoutField
 ): { head: string; tail: string } {
-  const characters = [...word];
+  const characters = textClusters(word).map(({ character }) => character);
   let bestSoftHyphen = -1;
   for (let index = 0; index < characters.length; index++) {
     if (characters[index] !== "\u00ad") continue;
@@ -515,7 +566,7 @@ function splitLongWord(
     };
   }
 
-  const visible = [...visibleText(word)];
+  const visible = textClusters(visibleText(word)).map(({ character }) => character);
   let count = 0;
   while (count < visible.length) {
     const candidate = visible.slice(0, count + 1).join("");
@@ -681,8 +732,10 @@ async function glyphFor(
   font: LayoutFont,
   allocate: RasterAllocator,
   bitmapFonts?: ReadonlyMap<string, DownloadedBitmapFont>,
-  fontLinks?: ReadonlyMap<string, readonly string[]>
+  fontLinks?: ReadonlyMap<string, readonly string[]>,
+  defaultGlyph = false
 ): Promise<{ raster: MonochromeRaster; substituted: boolean }> {
+  character = character.normalize("NFC");
   if (font.resources) {
     bitmapFonts = font.resources.bitmapFonts;
     fontLinks = font.resources.fontLinks;
@@ -717,7 +770,7 @@ async function glyphFor(
       font.resources?.memoryAliases
     );
     const bitmap = findBitmapFont(bitmapFonts, lookupName);
-    const bitmapGlyph = bitmap
+    const bitmapGlyph = bitmap && (character === " " || bitmap.glyphs.has(character.codePointAt(0) ?? -1))
       ? rasterizeBitmapFontGlyph(
           bitmap,
           character,
@@ -736,7 +789,7 @@ async function glyphFor(
     if (custom) return { raster: custom, substituted: false };
     for (const linked of linkedFonts(fontLinks, lookupName)) {
       const linkedBitmap = findBitmapFont(bitmapFonts, linked);
-      const linkedGlyph = linkedBitmap
+      const linkedGlyph = linkedBitmap && (character === " " || linkedBitmap.glyphs.has(character.codePointAt(0) ?? -1))
         ? rasterizeBitmapFontGlyph(
             linkedBitmap,
             character,
@@ -754,6 +807,17 @@ async function glyphFor(
       );
       if (linkedOutline) return { raster: linkedOutline, substituted: false };
     }
+    if (bitmap || await engine.hasFont(font.name)) {
+      const missing = defaultGlyph
+        ? bitmap
+          ? rasterizeBitmapFontGlyph(bitmap, "\0", font.width, font.height, allocate)
+          : await engine.rasterize(font.name, "\0", advance, font.height)
+        : undefined;
+      return {
+        raster: missing ?? allocate(advance, Math.max(1, font.height)),
+        substituted: false,
+      };
+    }
     const builtIn = await engine.rasterizeBuiltIn(
       character,
       advance,
@@ -767,6 +831,12 @@ async function glyphFor(
       font.height
     );
     if (builtIn) return { raster: builtIn, substituted: false };
+    return {
+      raster: (defaultGlyph
+        ? await engine.rasterizeBuiltIn("\0", advance, font.height)
+        : undefined) ?? allocate(advance, Math.max(1, font.height)),
+      substituted: false,
+    };
   } else if (isResidentFontKey(font.key)) {
     const resident = residentCharacter(font.key, character);
     if (resident === undefined) {
@@ -789,6 +859,14 @@ async function glyphFor(
         const cell = allocate(advance, Math.max(1, font.height));
         blitRaster(cell, outline, 0, 0);
         return { raster: cell, substituted: false };
+      }
+      if (!hasPinnedBitmapGlyph(resident)) {
+        return {
+          raster: defaultGlyph
+            ? rasterizeGlyph("□", font.width, font.height, proportional, font.key)
+            : allocate(advance, Math.max(1, font.height)),
+          substituted: false,
+        };
       }
     }
     return {
@@ -942,8 +1020,14 @@ async function renderTextField(
   height: number;
   substituted: boolean;
   textCaretStops?: readonly TextCaretStop[];
+  nextPosition?: { x: number; y: number };
 }> {
   const originalData = field.data;
+  if (field.block?.mode === "TB" && field.originJustification === "A") {
+    const rtl = textClusters(originalData)
+      .map(({ character }) => bidiClass(character)).find((value) => value !== "N") === "R";
+    field = { ...field, block: { ...field.block, justification: rtl ? "R" : "L" } };
+  }
   if (field.advancedText) {
     field = {
       ...field,
@@ -953,7 +1037,7 @@ async function renderTextField(
   const textMappingExact = field.data === originalData;
   if (field.direction === "V") {
     const renderedText = parseTextBlockEscapes(field.data);
-    const characters = [...renderedText];
+    const characters = textClusters(renderedText).map(({ character }) => character);
     const mappedCharacters = textMappingExact && renderedText === originalData && !/[\r\n]/.test(renderedText)
       ? indexedTextCharacters(originalData)
       : undefined;
@@ -973,7 +1057,9 @@ async function renderTextField(
     );
     const oriented = orientedSize(field.orientation, logicalWidth, logicalHeight);
     const rightAnchored = field.originJustification === "R";
-    const x = rightAnchored ? field.x - oriented.width : field.x;
+    const { x, y, nextPosition } = textPosition(field, logicalWidth, logicalHeight,
+      rightAnchored, field.font.width, 0, logicalHeight + gap + textBaseline(field.font));
+    field = { ...field, y };
     if (
       rectangleOutsideRaster(
         target,
@@ -988,6 +1074,7 @@ async function renderTextField(
         y: field.y,
         ...oriented,
         substituted: false,
+        nextPosition,
       };
     }
     const textRaster = allocate(logicalWidth, logicalHeight);
@@ -1022,7 +1109,8 @@ async function renderTextField(
         field.font,
         allocate,
         bitmapFonts,
-        fontLinks
+        fontLinks,
+        field.advancedText?.defaultGlyph
       );
       substituted ||= resolved.substituted;
       if (cursor + resolved.raster.height > logicalHeight) break;
@@ -1062,6 +1150,7 @@ async function renderTextField(
       y: field.y,
       ...size,
       substituted,
+      nextPosition,
       ...(textCaretStops.length > 0 ? { textCaretStops } : {}),
     };
   }
@@ -1091,7 +1180,7 @@ async function renderTextField(
     : undefined;
   if (bitmapFont) {
     for (const line of lines) {
-      const characters = [...line.text];
+      const characters = textClusters(line.text).map(({ character }) => character.normalize("NFC"));
       line.width = characters.reduce((width, character, index) => {
         const glyph = bitmapFont.glyphs.get(character.codePointAt(0) ?? -1);
         const nativeAdvance = glyph?.advance ?? bitmapFont.spaceWidth;
@@ -1135,18 +1224,14 @@ async function renderTextField(
   const originRight = field.originJustification === "R" || autoRight;
   const rightAnchored = field.direction === "R" ? !originRight : originRight;
   const finalCharacter = singleLine
-    ? [...singleLine.text].at(-1) ?? ""
+    ? textClusters(singleLine.text).at(-1)?.character ?? ""
     : "";
-  const typesetRightBearing =
-    rightAnchored &&
-    field.typeset === true &&
-    field.orientation === "N" &&
-    finalCharacter !== ""
-      ? measureFieldText(finalCharacter, field)
-      : 0;
-  const x = rightAnchored
-    ? field.x - oriented.width + typesetRightBearing
-    : field.x;
+  const lastLine = lines[lines.length - 1];
+  const { x, y, nextPosition } = textPosition(field, logicalWidth, logicalHeight,
+    rightAnchored, finalCharacter ? measureFieldText(finalCharacter, field) : 0,
+    field.direction === "R" ? 0 : lastLine.indent + lastLine.width,
+    (lines.length - 1) * lineStep + textBaseline(field.font));
+  field = { ...field, y };
   if (
     rectangleOutsideRaster(
       target,
@@ -1161,6 +1246,7 @@ async function renderTextField(
       y: field.y,
       ...oriented,
       substituted: false,
+      nextPosition,
     };
   }
   const textRaster = allocate(logicalWidth, logicalHeight);
@@ -1182,7 +1268,7 @@ async function renderTextField(
     }
     const characters: Array<{ character: string; start?: number; end?: number }> = caretCharacters
       ? caretCharacters.map((character) => ({ ...character }))
-      : [...line.text].map((character) => ({ character }));
+      : textClusters(line.text).map(({ character }) => ({ character }));
     if (field.direction === "R") characters.reverse();
     const spaces = characters.filter(({ character }) => character === " ").length;
     const extraGap =
@@ -1220,7 +1306,8 @@ async function renderTextField(
         field.font,
         allocate,
         bitmapFonts,
-        fontLinks
+        fontLinks,
+        field.advancedText?.defaultGlyph
       );
       substituted ||= resolved.substituted;
       const glyphTop =
@@ -1247,6 +1334,13 @@ async function renderTextField(
         });
       }
       cursor = nextCursor;
+    }
+    if (isLastLine) {
+      const end = orientedPoint(field.orientation, logicalWidth, logicalHeight,
+        field.direction === "R" ? line.indent : cursor,
+        lineIndex * lineStep + textBaseline(field.font));
+      nextPosition.x = x + end.x;
+      nextPosition.y = field.y + end.y;
     }
   };
 
@@ -1278,6 +1372,7 @@ async function renderTextField(
     y: field.y,
     ...size,
     substituted,
+    nextPosition,
     ...(textCaretStops.length > 0 ? { textCaretStops } : {}),
   };
 }
@@ -3590,6 +3685,9 @@ export async function renderLayoutToRaster(
   if (options.initialRaster) {
     blitRaster(raster, options.initialRaster, 0, 0);
   }
+  const physicalRaster = raster;
+  const dotScale = layout.settings?.dotScale ?? 1;
+  raster = scaledRasterTarget(physicalRaster, dotScale);
   const diagnostics = [...layout.diagnostics];
   let highlightRegions: HighlightRegion[] = layout.origins.map((origin) => ({
     type: "origin",
@@ -3598,17 +3696,44 @@ export async function renderLayoutToRaster(
     y: origin.y,
   }));
   const allocate = limitedRasterAllocator(
-    options.maxFieldPixels ?? Math.max(0, width * height)
+    Math.floor((options.maxFieldPixels ?? Math.max(0, width * height)) / (dotScale * dotScale))
   );
   const fontEngine = new OpenTypeFontEngine(
     options.fontProvider,
     allocate.limit
   );
 
-  for (const field of layout.fields) {
+  let nextTextPosition: { x: number; y: number } | undefined;
+  for (const original of layout.fields) {
+    let field = original;
+    if (nextTextPosition && (field.continueX || field.continueY)) {
+      field = {
+        ...field,
+        x: field.continueX ? nextTextPosition.x : field.x,
+        y: field.continueY ? nextTextPosition.y : field.y,
+      };
+      const originIndex = layout.origins.findIndex(
+        (origin) => origin.commandIndex === field.originCommandIndex
+      );
+      if (originIndex >= 0) {
+        highlightRegions[originIndex] = { ...highlightRegions[originIndex], x: field.x, y: field.y };
+      }
+    }
     try {
+      if (field.kind !== "text" && field.kind !== "barcode") {
+        const width = field.kind === "circle" ? field.diameter
+          : field.kind === "bitmap" ? field.width * field.scaleX : field.width;
+        const height = field.kind === "circle" ? field.diameter
+          : field.kind === "bitmap" ? field.height * field.scaleY : field.height;
+        const position = anchoredPosition(field, width, height);
+        if (field.kind === "symbol") {
+          const end = orientedPoint(field.orientation, width, height, width, height);
+          nextTextPosition = { x: position.x + end.x, y: position.y + end.y };
+        }
+        field = { ...field, ...position };
+      }
       if (field.kind === "text") {
-        const { substituted, ...region } = await renderTextField(
+        const { substituted, nextPosition, ...region } = await renderTextField(
           raster,
           field,
           fontEngine,
@@ -3616,6 +3741,7 @@ export async function renderLayoutToRaster(
           options.bitmapFonts,
           options.fontLinks
         );
+        if (nextPosition) nextTextPosition = nextPosition;
         if (
           substituted &&
           !hasFieldDiagnostic(
@@ -3837,7 +3963,14 @@ export async function renderLayoutToRaster(
         let barcodeX = field.x + interpreted.offsetX;
         let barcodeY = field.y + interpreted.offsetY;
         let barcodeOrientation = field.orientation;
-        if (field.symbology === "BQ") {
+        if (field.typeset) {
+          const position = anchoredPosition(field, interpreted.raster.width,
+            interpreted.raster.height,
+            -interpreted.offsetX + (field.originJustification === "R" ? encoded.raster.width : 0),
+            -interpreted.offsetY + encoded.raster.height);
+          barcodeX = position.x;
+          barcodeY = position.y;
+        } else if (field.symbology === "BQ") {
           // The printer keeps QR modules upright. Orientation selects one corner
           // of the square inherited from ^BY height instead of rotating the
           // symbol itself.
@@ -3894,6 +4027,19 @@ export async function renderLayoutToRaster(
     }
   }
 
+  raster = physicalRaster;
+  if (dotScale !== 1) {
+    highlightRegions = highlightRegions.map((region) => ({
+      ...region, x: region.x * dotScale, y: region.y * dotScale,
+      ...(region.width === undefined ? {} : { width: region.width * dotScale }),
+      ...(region.height === undefined ? {} : { height: region.height * dotScale }),
+      ...(region.radius === undefined ? {} : { radius: region.radius * dotScale }),
+      ...(region.textCaretStops ? { textCaretStops: region.textCaretStops.map((stop) => ({
+        ...stop, x: stop.x * dotScale, y: stop.y * dotScale,
+        endX: stop.endX * dotScale, endY: stop.endY * dotScale,
+      })) } : {}),
+    }));
+  }
   if (options.minimumHeight !== undefined) {
     const usedHeight = Math.max(
       Math.max(1, Math.trunc(options.minimumHeight)),

@@ -445,6 +445,11 @@ function previewSource(
     const source = `${labelStart}^FO28,24^GB584,270,3,B,16^FS\n^FO48,125^A0N,42,38^FDEnd format^FS\n${rawCommand}`;
     return { source, cursorOffset: source.lastIndexOf(rawCommand) };
   }
+  if (command === "^JM") {
+    // Half-density mode doubles each logical dot, including label dimensions.
+    const source = `^XA\n^PW300\n^LL170\n${rawCommand}\n^FO14,12^GB272,135,2,B,0^FS\n^FO28,60^A0N,20,16^FDDot density^FS\n^FO14,150^A0N,11,11^FD${zplCaption(command)}^FS\n^XZ`;
+    return { source, cursorOffset: source.indexOf(rawCommand) };
+  }
 
   if (category === "barcode" && command.startsWith("^B") && command !== "^BY") {
     const payload = barcodePayloads[command] ?? "1234567890";

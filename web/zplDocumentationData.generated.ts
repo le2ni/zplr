@@ -4894,7 +4894,7 @@ export const zplCommandDocumentationSeeds = [
     "status": "partial",
     "limitations": [
       "Legacy BAR-ONE AR-compressed (C) payloads are diagnosed but not decoded.",
-      "Image decoding covers non-interlaced 1/2/4/8-bit grayscale or indexed PNG plus 8-bit-per-channel grayscale-alpha, RGB, or RGBA PNG; Windows BMP and OS/2 1.x core-header BMP; and 1-bit planar, 8-bit indexed/grayscale, or 24-bit RGB PCX."
+      "PNG decoding covers all standard color types and bit depths, including Adam7 interlacing. Other formats cover Windows BMP and OS/2 1.x core-header BMP; and 1-bit planar, 8-bit indexed/grayscale, or 24-bit RGB PCX."
     ],
     "signatures": [
       {
@@ -5579,7 +5579,7 @@ export const zplCommandDocumentationSeeds = [
     "scope": "field",
     "status": "partial",
     "limitations": [
-      "Vertical and reverse layout operates on Unicode code points rather than firmware combining semantic clusters."
+      "Vertical and reverse layout uses native Intl.Segmenter when available, otherwise code points. Cluster boundaries can vary with the runtime's Unicode version; contextual shaping and mark positioning remain limited by the text engine."
     ],
     "signatures": [
       {
@@ -5669,7 +5669,7 @@ export const zplCommandDocumentationSeeds = [
     "scope": "field",
     "status": "partial",
     "limitations": [
-      "Explicit text origins and text justification are modeled; omitted-coordinate continuation and printer-specific baseline/justification interactions for every field type are not fully reproduced."
+      "Omitted-coordinate continuation, rotated baselines, block anchoring, and graphic/barcode origins are modeled. Downloaded outline fonts still use an em-cell baseline rather than printer-specific font metrics."
     ],
     "signatures": [
       {
@@ -7941,12 +7941,10 @@ export const zplCommandDocumentationSeeds = [
     "title": "Set Dots per Millimeter",
     "reference": "https://docs.zebra.com/us/en/printers/software/zpl-pg/c-zpl-zpl-commands/r-zpl-jm.html",
     "category": "format",
-    "effect": "job",
+    "effect": "raster",
     "scope": "session",
-    "status": "unsupported",
-    "limitations": [
-      "Changing printhead resolution inside a ZPL job is not modeled; select printDensity in the render options."
-    ],
+    "status": "supported",
+    "limitations": [],
     "signatures": [
       {
         "syntax": "^JMn",
@@ -9571,7 +9569,7 @@ export const zplCommandDocumentationSeeds = [
     "scope": "session",
     "status": "partial",
     "limitations": [
-      "Bidirectional ordering and Arabic shaping use a deterministic subset rather than a full Unicode/OpenType layout engine; the default-glyph switch is not modeled."
+      "The default-glyph switch is implemented. Bidirectional ordering, contextual shaping, and OpenType layout remain a deterministic subset rather than a complete Unicode/OpenType layout engine."
     ],
     "signatures": [
       {
@@ -10547,7 +10545,7 @@ export const zplCommandDocumentationSeeds = [
     "scope": "field",
     "status": "partial",
     "limitations": [
-      "Serialization is Unicode-code-point based; newer printer-firmware combining-cluster and control/bidirectional-character behavior is not modeled."
+      "Serialization runs after field decoding and ignores control/bidi markers. Combining clusters use native Intl.Segmenter when available, otherwise code points; the runtime's Unicode version is not pinned to printer firmware."
     ],
     "signatures": [
       {

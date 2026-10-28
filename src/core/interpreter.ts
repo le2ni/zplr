@@ -35,8 +35,9 @@ import {
   structuredPdf417Parts,
   type StructuredPdf417Part,
 } from "./pdf417Structured";
-import { zplDotConversion, zplNumber } from "./zplNumbers";
+import { zplDotConversion, zplDotScale, zplNumber } from "./zplNumbers";
 import { parseFieldNumber } from "./fieldNumber";
+import { SERIALIZATION_STEP, serializeMasked, type SerializationCommand } from "./serialization";
 
 const MAX_FIELD_BLOCK_DATA = 3 * 1024;
 
@@ -49,6 +50,7 @@ interface BarcodeDefaults {
 interface LabelState {
   defaultFont: LayoutFont;
   defaultOrientation: Orientation;
+  defaultJustification: "L" | "R" | "A";
   barcodeDefaults: BarcodeDefaults;
   homeX: number;
   homeY: number;
@@ -157,6 +159,8 @@ interface FieldState {
   unsupportedSelection?: ZplCommandNode;
   characterSetNode?: ZplCommandNode;
   typeset?: boolean;
+  continueX?: boolean;
+  continueY?: boolean;
   direction?: "H" | "V" | "R";
   characterGap?: number;
   originJustification?: "L" | "R" | "A";
@@ -875,10 +879,12 @@ export function interpretLabel(
     rotate180: false,
     mirror: false,
     reverse: false,
+    dotScale: zplDotScale(label.commands),
   };
   const labelState: LabelState = {
     defaultFont: { key: "A", height: 9, width: 5, orientation: "N" },
     defaultOrientation: "N",
+    defaultJustification: "L",
     barcodeDefaults: { moduleWidth: 2, ratio: 3, height: 10 },
     homeX: 0,
     homeY: 0,
@@ -899,8 +905,8 @@ export function interpretLabel(
   const dotsPerMillimeter =
     dpi === 150 ? 6 : dpi === 200 ? 8 : dpi === 300 ? 12 : 24;
   const measurementScale = (): number => {
-    if (labelState.measurementUnit === "I") return dotsPerMillimeter * 25.4;
-    if (labelState.measurementUnit === "M") return dotsPerMillimeter;
+    if (labelState.measurementUnit === "I") return dotsPerMillimeter * 25.4 / settings.dotScale;
+    if (labelState.measurementUnit === "M") return dotsPerMillimeter / settings.dotScale;
     return labelState.dotConversion;
   };
   const dotValue = (
@@ -974,6 +980,7 @@ export function interpretLabel(
       end: field.spanEnd ?? separator?.span.end ?? label.span.end,
     };
     const reverse = field.reverse || Boolean(field.labelReverse);
+    const firstField = fields.length;
 
     if (field.data !== undefined && field.characterSetNode) {
       diagnostics.push(
@@ -1254,7 +1261,7 @@ export function interpretLabel(
         kind: "text",
         data: field.data,
         x: field.x,
-        y: field.typeset ? Math.max(0, field.y - font.height) : field.y,
+        y: field.y,
         orientation: font.orientation,
         reverse,
         commandIndex,
@@ -1268,6 +1275,17 @@ export function interpretLabel(
         advancedText: { ...labelState.advancedText },
       };
       fields.push(textField);
+    }
+
+    for (let index = firstField; index < fields.length; index++) {
+      fields[index] = {
+        ...fields[index],
+        typeset: field.typeset,
+        originJustification: field.originJustification ?? labelState.defaultJustification,
+        continueX: field.continueX,
+        continueY: field.continueY,
+        originCommandIndex: field.originCommandIndex,
+      };
     }
 
     field = newField();
@@ -1411,6 +1429,10 @@ export function interpretLabel(
           ...labelState.defaultFont,
           orientation: labelState.defaultOrientation,
         };
+        if (["0", "1", "2"].includes(trimmed(args[1]))) {
+          labelState.defaultJustification = trimmed(args[1]) === "1"
+            ? "R" : trimmed(args[1]) === "2" ? "A" : "L";
+        }
         break;
       case "LH":
         labelState.homeX = dotValue(args[0], 0, 0, 32000);
@@ -1462,12 +1484,13 @@ export function interpretLabel(
           settings.top +
           dotValue(args[1], 0, 0, 32000);
         field.typeset = false;
+        field.continueX = field.continueY = false;
         field.originJustification =
           trimmed(args[2]) === "1"
             ? "R"
             : trimmed(args[2]) === "2"
             ? "A"
-            : "L";
+            : trimmed(args[2]) === "0" ? "L" : labelState.defaultJustification;
         field.originCommandIndex = node.index;
         touchField(field, node, labelState.reverse);
         origins.push({
@@ -1481,18 +1504,20 @@ export function interpretLabel(
         field.x =
           labelState.homeX +
           settings.shiftX +
-          dotValue(args[0], field.x, 0, 32000);
+          dotValue(args[0], 0, 0, 32000);
         field.y =
           labelState.homeY +
           settings.top +
-          dotValue(args[1], field.y, 0, 32000);
+          dotValue(args[1], 0, 0, 32000);
         field.typeset = true;
+        field.continueX = trimmed(args[0]) === "";
+        field.continueY = trimmed(args[1]) === "";
         field.originJustification =
           trimmed(args[2]) === "1"
             ? "R"
             : trimmed(args[2]) === "2"
             ? "A"
-            : "L";
+            : trimmed(args[2]) === "0" ? "L" : labelState.defaultJustification;
         field.originCommandIndex = node.index;
         touchField(field, node, labelState.reverse);
         origins.push({
@@ -1579,6 +1604,7 @@ export function interpretLabel(
           ...(field.font ?? labelState.defaultFont),
           orientation,
         };
+        field.originJustification ??= "A";
         field.block = {
           width: dotValue(args[1], 1, 1, 32000),
           height: dotValue(args[2], 1, 1, 32000),
@@ -1677,6 +1703,18 @@ export function interpretLabel(
         }
         field.dataCommandIndex = node.index;
         touchField(field, node, labelState.reverse);
+        break;
+      case "SF":
+        if (field.data !== undefined &&
+            (args[0]?.length ?? 0) + (args[1]?.length ?? 0) <= 3 * 1024) {
+          field.data = serializeMasked(
+            field.data,
+            args[0] ?? "",
+            args[1] ?? "",
+            (node as SerializationCommand)[SERIALIZATION_STEP] ?? 0
+          );
+          touchField(field, node, labelState.reverse);
+        }
         break;
       case "GB": {
         const thickness = dotValue(args[2], 1, 1, 32000);

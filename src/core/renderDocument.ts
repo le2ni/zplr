@@ -21,7 +21,7 @@ import type {
   ZplDocument,
   ZplLabelNode,
 } from "@/types/ZplDocument";
-import { zplDotConversion, zplNumber } from "./zplNumbers";
+import { zplDotConversion, zplDotScale, zplNumber } from "./zplNumbers";
 
 const DEFAULT_LIMITS = {
   maxDimension: 32_768,
@@ -112,6 +112,7 @@ function commandDimension(
   let unit: "D" | "I" | "M" = "D";
   let dotConversion = 1;
   let fieldSeparated = false;
+  const dotScale = zplDotScale(label.commands);
   for (const command of label.commands) {
     if (command.canonical === "^FS") {
       fieldSeparated = true;
@@ -140,7 +141,7 @@ function commandDimension(
           ? printDensity * 25.4
           : unit === "M"
           ? printDensity
-          : dotConversion;
+          : dotConversion * dotScale;
       value = Math.round(precise * scale);
     }
   }
@@ -155,6 +156,7 @@ function variableMediaMaximum(
   let maximum: number | undefined;
   let unit: "D" | "I" | "M" = "D";
   let dotConversion = 1;
+  const dotScale = zplDotScale(label.commands);
   for (const command of label.commands) {
     if (command.canonical === "^MU") {
       const requested = command.parameters[0]?.trim().toUpperCase();
@@ -178,7 +180,7 @@ function variableMediaMaximum(
             ? printDensity * 25.4
             : unit === "M"
             ? printDensity
-            : dotConversion;
+            : dotConversion * dotScale;
         maximum = Math.round(value * scale);
       }
     }

@@ -64,4 +64,16 @@ describe("Node and browser adapters", () => {
       expect(nodePixels[index + 3]).toBe(255);
     }
   });
+
+  it("keeps new typeset, density, and combining-cluster behavior identical", async () => {
+    const source = "^XA^CI28^PW90^LL60^JMB^FT10,20^A0N,12,8^FPH,2^FDa\u0301B^FS" +
+      "^FT^A0N,12,8^FD09e\u0301^SFdd%,1%^FS^PQ2^XZ";
+    const node = await createNodeSession().render(source);
+    const web = await createWebSession().render(source);
+    for (let index = 0; index < node.labels.length; index++) {
+      expect(web.labels[index].raster).toEqual(node.labels[index].raster);
+      expect(web.labels[index].highlightRegions).toEqual(node.labels[index].highlightRegions);
+      expect(web.labels[index].diagnostics).toEqual(node.labels[index].diagnostics);
+    }
+  });
 });

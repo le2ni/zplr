@@ -183,9 +183,9 @@ The `zpl-ii-2025` renderer profile is pinned to the Zebra Programming Guide publ
 
 The current profile contains:
 
-- **94 supported** rendering and job commands.
+- **95 supported** rendering and job commands.
 - **11 partially supported** commands with explicit limitations.
-- **2 unsupported** rendering or job commands.
+- **1 unsupported** rendering or job commands.
 - **116 recognized, raster-neutral** device, network, printer, and RFID commands.
 
 Supported barcode paths include Code 128, Code 39, UPC, EAN, QR Code, Data Matrix, PDF417, Aztec, MaxiCode, Codablock, Code 49, and additional linear, postal, stacked, and 2D formats. Check the generated [command-support table](./docs/COMMAND_SUPPORT.md) and [conformance map](./docs/CONFORMANCE.md) for the exact status and limitations of each command.
@@ -272,10 +272,15 @@ pnpm run test:e2e
 pnpm run audit
 ```
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [SUPPORT.md](./SUPPORT.md). Bundled-font terms are in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md), [SECURITY.md](./SECURITY.md), and [SUPPORT.md](./SUPPORT.md).
 
 ## License and affiliation
 
 ZPLr is available under the [MIT License](./LICENSE).
+
+Third-party code and fonts retain the licenses recorded in
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md). Keep these notices when
+redistributing bundled builds. The npm package includes both documents; the
+static website build includes `/license.txt` and `/third-party-notices.txt`.
 
 ZPL, ZPL II, Zebra, Zebra Programming Language, and related marks belong to Zebra Technologies Corp. ZPLr is an independent open-source project and is not affiliated with, sponsored by, endorsed by, or certified by Zebra Technologies. See [TRADEMARKS.md](./TRADEMARKS.md).

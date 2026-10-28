@@ -3,6 +3,19 @@ import type { Orientation } from "@/types/Orientation";
 
 export type DotOperation = "set" | "clear" | "xor";
 
+const SCALED_TARGET: unique symbol = Symbol("scaled-raster-target");
+type ScaledTarget = MonochromeRaster & {
+  [SCALED_TARGET]?: { raster: MonochromeRaster; scale: number };
+};
+
+/** A drawing-only logical-dot view; the returned surface is never published. */
+export function scaledRasterTarget(raster: MonochromeRaster, scale: number): MonochromeRaster {
+  if (scale === 1) return raster;
+  return Object.assign({ ...raster,
+    width: Math.ceil(raster.width / scale), height: Math.ceil(raster.height / scale),
+  }, { [SCALED_TARGET]: { raster, scale } });
+}
+
 export function createMonochromeRaster(
   width: number,
   height: number
@@ -44,6 +57,8 @@ export function lastDarkRow(raster: MonochromeRaster): number {
 }
 
 export function getDot(raster: MonochromeRaster, x: number, y: number): boolean {
+  const target = (raster as ScaledTarget)[SCALED_TARGET];
+  if (target) return getDot(target.raster, x * target.scale, y * target.scale);
   x = Math.trunc(x);
   y = Math.trunc(y);
   if (x < 0 || y < 0 || x >= raster.width || y >= raster.height) return false;
@@ -57,6 +72,17 @@ export function setDot(
   y: number,
   operation: DotOperation = "set"
 ): void {
+  const target = (raster as ScaledTarget)[SCALED_TARGET];
+  if (target) {
+    const left = Math.trunc(x) * target.scale;
+    const top = Math.trunc(y) * target.scale;
+    for (let dy = 0; dy < target.scale; dy++) {
+      for (let dx = 0; dx < target.scale; dx++) {
+        setDot(target.raster, left + dx, top + dy, operation);
+      }
+    }
+    return;
+  }
   x = Math.trunc(x);
   y = Math.trunc(y);
   if (x < 0 || y < 0 || x >= raster.width || y >= raster.height) return;
@@ -94,6 +120,12 @@ export function strokeRect(
   operation: DotOperation = "set"
 ): void {
   const t = Math.max(1, Math.trunc(thickness));
+  // A filled border must visit each pixel once: overlapping edge rectangles
+  // would cancel their own dots when the operation is XOR (^FR/^LR).
+  if (2 * t >= width || 2 * t >= height) {
+    fillRect(raster, x, y, width, height, operation);
+    return;
+  }
   fillRect(raster, x, y, width, Math.min(t, height), operation);
   fillRect(raster, x, y + Math.max(0, height - t), width, Math.min(t, height), operation);
   fillRect(raster, x, y + t, Math.min(t, width), Math.max(0, height - t * 2), operation);

@@ -41,6 +41,12 @@ interface BaseLayoutField {
   readonly reverse: boolean;
   readonly commandIndex: number;
   readonly sourceSpan: SourceSpan;
+  readonly typeset?: boolean;
+  readonly originJustification?: "L" | "R" | "A";
+  /** Omitted ^FT coordinates are resolved after measuring the preceding text. */
+  readonly continueX?: boolean;
+  readonly continueY?: boolean;
+  readonly originCommandIndex?: number;
 }
 
 export interface TextLayoutField extends BaseLayoutField {
@@ -48,12 +54,9 @@ export interface TextLayoutField extends BaseLayoutField {
   readonly data: string;
   readonly font: LayoutFont;
   readonly block?: LayoutFieldBlock;
-  readonly typeset?: boolean;
   /** ^FP character-flow direction. */
   readonly direction?: "H" | "V" | "R";
   readonly characterGap?: number;
-  /** ^FO/^FT z positions the field relative to its declared origin. */
-  readonly originJustification?: "L" | "R" | "A";
   readonly advancedText?: Readonly<{
     defaultGlyph: boolean;
     bidirectional: boolean;
@@ -236,5 +239,6 @@ export interface LabelLayout {
     rotate180: boolean;
     mirror: boolean;
     reverse: boolean;
+    dotScale?: 1 | 2;
   }>;
 }

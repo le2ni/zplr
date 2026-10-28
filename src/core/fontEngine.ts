@@ -124,6 +124,10 @@ export class OpenTypeFontEngine {
     return loaded;
   }
 
+  async hasFont(name: string): Promise<boolean> {
+    return (await this.load(name)) !== undefined;
+  }
+
   rasterizeBuiltIn(
     character: string,
     width: number,
@@ -189,7 +193,7 @@ function rasterizeOutline(
   }>
 ): MonochromeRaster | undefined {
   const variableFont = font as VariableFont;
-  let glyph = font.charToGlyph(character) as unknown as GlyphOutline;
+  let glyph = (character === "\0" ? font.glyphs.get(0) : font.charToGlyph(character)) as unknown as GlyphOutline;
   if (glyph.index === 0 && character !== "\0") return undefined;
   if (calibration?.variation && variableFont.variation) {
     glyph = variableFont.variation.getTransform(
@@ -211,7 +215,7 @@ function rasterizeOutline(
   const verticalUnits = Math.max(1, font.unitsPerEm);
   const capHeight = Math.max(
     1,
-    font.tables.os2?.sCapHeight ?? Math.round(font.ascender * 0.7)
+    font.tables.os2?.sCapHeight || Math.round(font.ascender * 0.7)
   );
   const scaleX = raster.width / advance;
   const scaleY =

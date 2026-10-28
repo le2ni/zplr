@@ -101,12 +101,13 @@ function paeth(left: number, above: number, upperLeft: number): number {
 }
 
 function sample(row: Uint8Array, bitOffset: number, bitDepth: number): number {
+  if (bitDepth === 16) return row[bitOffset >> 3] * 256 + row[(bitOffset >> 3) + 1];
   if (bitDepth === 8) return row[bitOffset >> 3];
   const shift = 8 - bitDepth - (bitOffset & 7);
   return (row[bitOffset >> 3] >> shift) & ((1 << bitDepth) - 1);
 }
 
-/** Decodes non-interlaced PNGs into Zebra's packed one-bit graphic form. */
+/** Decodes PNG samples and Adam7 passes into packed one-bit graphic data. */
 export function decodePng(data: Uint8Array, maxBytes: number): StoredGraphic {
   const signature = [137, 80, 78, 71, 13, 10, 26, 10];
   if (signature.some((value, index) => data[index] !== value)) {
@@ -232,19 +233,19 @@ export function decodePng(data: Uint8Array, maxBytes: number): StoredGraphic {
     imageDataChunks === 0 ||
     width <= 0 ||
     height <= 0 ||
-    interlace !== 0
+    ![0, 1].includes(interlace)
   ) {
     throw new PngDecodeError(
-      "Only positive-size, non-interlaced PNG images are supported."
+      "Downloaded PNG has invalid dimensions, structure, or interlace method."
     );
   }
   const channels =
     colorType === 0 ? 1 : colorType === 2 ? 3 : colorType === 3 ? 1 : colorType === 4 ? 2 : colorType === 6 ? 4 : 0;
-  if (!channels || ![1, 2, 4, 8].includes(bitDepth)) {
+  if (!channels || ![1, 2, 4, 8, 16].includes(bitDepth) || (colorType === 3 && bitDepth === 16)) {
     throw new PngDecodeError("Downloaded PNG uses an unsupported color type or bit depth.");
   }
-  if (colorType !== 0 && colorType !== 3 && bitDepth !== 8) {
-    throw new PngDecodeError("True-color PNG images must use 8-bit channels.");
+  if (colorType !== 0 && colorType !== 3 && bitDepth !== 8 && bitDepth !== 16) {
+    throw new PngDecodeError("True-color PNG images must use 8-bit or 16-bit channels.");
   }
   if (
     colorType === 3 &&
@@ -272,16 +273,27 @@ export function decodePng(data: Uint8Array, maxBytes: number): StoredGraphic {
       transparency[0] * 256 + transparency[1] > maximumSample) ||
     (colorType === 2 &&
       transparency.length === 6 &&
-      (transparency[0] !== 0 ||
-        transparency[2] !== 0 ||
-        transparency[4] !== 0))
+      [0, 2, 4].some((offset) =>
+        transparency[offset] * 256 + transparency[offset + 1] > maximumSample))
   ) {
     throw new PngDecodeError(
       "Downloaded PNG transparency samples exceed its bit depth."
     );
   }
-  const rowBytes = Math.ceil((width * channels * bitDepth) / 8);
-  const expectedInflated = (rowBytes + 1) * height;
+  // Each Adam7 pass is an independent reduced image. Empty passes carry
+  // neither pixels nor filter bytes; filtering restarts at every pass.
+  const passes = (interlace === 0
+    ? [[0, 0, 1, 1]]
+    : [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4],
+       [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]])
+    .map(([x, y, dx, dy]) => {
+      const columns = Math.max(0, Math.ceil((width - x) / dx));
+      const rows = Math.max(0, Math.ceil((height - y) / dy));
+      return { x, y, dx, dy, columns, rows,
+        rowBytes: Math.ceil(columns * channels * bitDepth / 8) };
+    }).filter(({ columns, rows }) => columns > 0 && rows > 0);
+  const expectedInflated = passes.reduce((sum, pass) =>
+    sum + (pass.rowBytes + 1) * pass.rows, 0);
   const bytesPerRow = Math.ceil(width / 8);
   const outputBytes = bytesPerRow * height;
   if (
@@ -313,80 +325,86 @@ export function decodePng(data: Uint8Array, maxBytes: number): StoredGraphic {
   const inflated = inflatePngData(compressed, expectedInflated);
   const bytesPerPixel = Math.max(1, Math.ceil((channels * bitDepth) / 8));
   const output = new Uint8Array(outputBytes);
-  let previous: Uint8Array | undefined;
   let inputOffset = 0;
-  for (let y = 0; y < height; y++) {
-    const filter = inflated[inputOffset++];
-    const source = inflated.subarray(inputOffset, inputOffset + rowBytes);
-    inputOffset += rowBytes;
-    const row = new Uint8Array(rowBytes);
-    for (let x = 0; x < rowBytes; x++) {
-      const raw = source[x];
-      const left = x >= bytesPerPixel ? row[x - bytesPerPixel] : 0;
-      const above = previous?.[x] ?? 0;
-      const upperLeft = x >= bytesPerPixel ? previous?.[x - bytesPerPixel] ?? 0 : 0;
-      const predictor =
-        filter === 0
-          ? 0
-          : filter === 1
-          ? left
-          : filter === 2
-          ? above
-          : filter === 3
-          ? Math.floor((left + above) / 2)
-          : filter === 4
-          ? paeth(left, above, upperLeft)
-          : Number.NaN;
-      if (!Number.isFinite(predictor)) throw new PngDecodeError("PNG uses an invalid row filter.");
-      row[x] = (raw + predictor) & 0xff;
-    }
-    for (let x = 0; x < width; x++) {
-      let red = 255;
-      let green = 255;
-      let blue = 255;
-      let alpha = 255;
-      if (colorType === 0) {
-        const rawGray = sample(row, x * bitDepth, bitDepth);
-        const gray = Math.round((rawGray * 255) / maximumSample);
-        red = green = blue = gray;
-        if (
-          transparency.length === 2 &&
-          rawGray === (transparency[0] << 8) + transparency[1]
-        ) {
-          alpha = 0;
+  for (const pass of passes) {
+    const rowBytes = pass.rowBytes;
+    let previous: Uint8Array | undefined;
+    for (let passY = 0; passY < pass.rows; passY++) {
+      const y = pass.y + passY * pass.dy;
+      const filter = inflated[inputOffset++];
+      const source = inflated.subarray(inputOffset, inputOffset + rowBytes);
+      inputOffset += rowBytes;
+      const row = new Uint8Array(rowBytes);
+      for (let x = 0; x < rowBytes; x++) {
+        const raw = source[x];
+        const left = x >= bytesPerPixel ? row[x - bytesPerPixel] : 0;
+        const above = previous?.[x] ?? 0;
+        const upperLeft = x >= bytesPerPixel ? previous?.[x - bytesPerPixel] ?? 0 : 0;
+        const predictor =
+          filter === 0
+            ? 0
+            : filter === 1
+            ? left
+            : filter === 2
+            ? above
+            : filter === 3
+            ? Math.floor((left + above) / 2)
+            : filter === 4
+            ? paeth(left, above, upperLeft)
+            : Number.NaN;
+        if (!Number.isFinite(predictor)) throw new PngDecodeError("PNG uses an invalid row filter.");
+        row[x] = (raw + predictor) & 0xff;
+      }
+      for (let x = 0; x < pass.columns; x++) {
+        let red = 255;
+        let green = 255;
+        let blue = 255;
+        let alpha = 255;
+        if (colorType === 0) {
+          const rawGray = sample(row, x * bitDepth, bitDepth);
+          const gray = Math.round((rawGray * 255) / maximumSample);
+          red = green = blue = gray;
+          if (
+            transparency.length === 2 &&
+            rawGray === (transparency[0] << 8) + transparency[1]
+          ) {
+            alpha = 0;
+          }
+        } else if (colorType === 3) {
+          const index = sample(row, x * bitDepth, bitDepth);
+          if (index * 3 + 2 >= palette.length) {
+            throw new PngDecodeError("Indexed PNG pixel refers past its palette.");
+          }
+          red = palette[index * 3];
+          green = palette[index * 3 + 1];
+          blue = palette[index * 3 + 2];
+          alpha = transparency[index] ?? 255;
+        } else {
+          const offset = x * channels * bitDepth;
+          const rawRed = sample(row, offset, bitDepth);
+          const rawGreen = colorType === 4 ? rawRed : sample(row, offset + bitDepth, bitDepth);
+          const rawBlue = colorType === 4 ? rawRed : sample(row, offset + 2 * bitDepth, bitDepth);
+          red = Math.round(rawRed * 255 / maximumSample);
+          green = Math.round(rawGreen * 255 / maximumSample);
+          blue = Math.round(rawBlue * 255 / maximumSample);
+          if (colorType === 4 || colorType === 6) {
+            alpha = Math.round(sample(row, offset + (channels - 1) * bitDepth, bitDepth) * 255 / maximumSample);
+          }
+          if (
+            colorType === 2 && transparency.length === 6 &&
+            rawRed === (transparency[0] << 8) + transparency[1] &&
+            rawGreen === (transparency[2] << 8) + transparency[3] &&
+            rawBlue === (transparency[4] << 8) + transparency[5]
+          ) alpha = 0;
         }
-      } else if (colorType === 3) {
-        const index = sample(row, x * bitDepth, bitDepth);
-        if (index * 3 + 2 >= palette.length) {
-          throw new PngDecodeError("Indexed PNG pixel refers past its palette.");
-        }
-        red = palette[index * 3];
-        green = palette[index * 3 + 1];
-        blue = palette[index * 3 + 2];
-        alpha = transparency[index] ?? 255;
-      } else {
-        const offset = x * channels;
-        red = row[offset];
-        green = colorType === 4 ? red : row[offset + 1];
-        blue = colorType === 4 ? red : row[offset + 2];
-        if (colorType === 4) alpha = row[offset + 1];
-        if (colorType === 6) alpha = row[offset + 3];
-        if (
-          colorType === 2 &&
-          transparency.length === 6 &&
-          red === (transparency[0] << 8) + transparency[1] &&
-          green === (transparency[2] << 8) + transparency[3] &&
-          blue === (transparency[4] << 8) + transparency[5]
-        ) {
-          alpha = 0;
+        const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        if (alpha >= 128 && luminance < 128) {
+          const outputX = pass.x + x * pass.dx;
+          output[y * bytesPerRow + (outputX >> 3)] |= 0x80 >> (outputX & 7);
         }
       }
-      const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-      if (alpha >= 128 && luminance < 128) {
-        output[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
-      }
+      previous = row;
     }
-    previous = row;
   }
   return { data: output, bytesPerRow, width, height };
 }
